@@ -22,17 +22,17 @@ function roundQuotient(num, den)
     return ((q & 1) == 0 ? 1 == cmpflg : -1 < cmpflg) ? q + 1 : q
 end
 
-maxsig(::Type{Float16}) = Int16(2048)
-maxsig(::Type{Float32}) = Int32(16777216)
-maxsig(::Type{Float64}) = Int64(9007199254740992)
+maxsig(::Type{Float16}) = 2048
+maxsig(::Type{Float32}) = 16777216
+maxsig(::Type{Float64}) = 9007199254740992
 
 ceillog5(::Type{Float16}) = 5
 ceillog5(::Type{Float32}) = 11
 ceillog5(::Type{Float64}) = 23
 
-const F16_SHORT_POWERS = [exp10(Float16(x)) for x = 0:ceillog5(Float16)-1]
-const F32_SHORT_POWERS = [exp10(Float32(x)) for x = 0:ceillog5(Float32)-1]
-const F64_SHORT_POWERS = [exp10(Float64(x)) for x = 0:ceillog5(Float64)-1]
+const F16_SHORT_POWERS = [exp10(Float16(x)) for x = 0:2ceillog5(Float16)-1]
+const F32_SHORT_POWERS = [exp10(Float32(x)) for x = 0:2ceillog5(Float32)-1]
+const F64_SHORT_POWERS = [exp10(Float64(x)) for x = 0:2ceillog5(Float64)-1]
 
 pow10(::Type{Float16}, e) = F16_SHORT_POWERS[e+1]
 pow10(::Type{Float32}, e) = F32_SHORT_POWERS[e+1]
@@ -42,13 +42,26 @@ significantbits(::Type{Float16}) = 11
 significantbits(::Type{Float32}) = 24
 significantbits(::Type{Float64}) = 53
 
-bitlength(this) = ceil(Int, log2(this < 0 ? -this : this+1))
+bitlength(this) = Base.GMP.MPZ.sizeinbase(this, 2)
 Base.bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
 
 @inline function scale(::Type{T}, lmant, point) where {T <: Union{Float16, Float32, Float64}}
-    if abs(point) < ceillog5(T) && lmant < maxsig(T)
+    ms = maxsig(T)
+    cl = ceillog5(T)
+    if lmant < ms
         # fastest path
-        return point >= 0 ? T(lmant) * pow10(T, point) : T(lmant) / pow10(T, -point)
+        if 0 <= point < cl
+            return T(lmant) * pow10(T, point)
+        elseif -cl < point < 0
+            return T(lmant) / pow10(T, -point)
+        end
+    end
+    if lmant < 2ms
+        if 0 <= point < 2cl
+            return T(Base.twiceprecision(Base.TwicePrecision{T}(lmant) * pow10(T, point), significantbits(T)))
+        elseif -2cl < point < 0
+            return T(Base.twiceprecision(Base.TwicePrecision{T}(lmant) / pow10(T, -point), significantbits(T)))
+        end
     end
     mant = big(lmant)
     if point >= 0
@@ -82,11 +95,11 @@ function xparse(io::IO, ::Type{T})::Result{T} where {T <: Union{Float16, Float32
     negative = false
     if b == MINUS # check for leading '-' or '+'
         negative = true
-        readbyte(io)
+        incr!(io)
         eof(io) && return Result(T, EOF, b)
         b = peekbyte(io)
     elseif b == PLUS
-        readbyte(io)
+        incr!(io)
         eof(io) && return Result(T, EOF, b)
         b = peekbyte(io)
     end
@@ -94,7 +107,7 @@ function xparse(io::IO, ::Type{T})::Result{T} where {T <: Union{Float16, Float32
     v = zero(Int64)
     parseddigits = false
     while NEG_ONE < b < TEN
-        b = readbyte(io)
+        incr!(io)
         parseddigits = true
         # process digits
         v *= Int64(10)
@@ -164,7 +177,7 @@ function xparse(io::IO, ::Type{T})::Result{T} where {T <: Union{Float16, Float32
                 @goto error
             end
         end
-        readbyte(io)
+        incr!(io)
         b = peekbyte(io)
     elseif b == LITTLE_E || b == BIG_E
         @goto parseexp
@@ -173,7 +186,7 @@ function xparse(io::IO, ::Type{T})::Result{T} where {T <: Union{Float16, Float32
     end
 
     while NEG_ONE < b < TEN
-        b = readbyte(io)
+        incr!(io)
         frac += 1
         # process digits
         v *= Int64(10)

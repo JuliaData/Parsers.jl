@@ -37,6 +37,9 @@ end
     return byte
 end
 
+incr!(io::IOBuffer) = io.ptr += 1
+incr!(io::IO) = readbyte(io)
+
 getio(io::IO) = io
 
 # Result type which includes a ReturnCode
