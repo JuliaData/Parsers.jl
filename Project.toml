@@ -1,0 +1,7 @@
+authors = ["quinnj <quinn.jacobd@gmail.com>"]
+name = "Parsers"
+uuid = "ea579014-6bf0-11e8-2caa-090d489607df"
+version = "0.1.0"
+
+[deps]
+InternedStrings = "7d512f48-7fb1-5a58-b986-67e6dc259f01"
