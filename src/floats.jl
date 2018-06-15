@@ -45,35 +45,38 @@ significantbits(::Type{Float64}) = 53
 bitlength(this) = Base.GMP.MPZ.sizeinbase(this, 2)
 Base.bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
 
-@inline function scale(::Type{T}, lmant, point) where {T <: Union{Float16, Float32, Float64}}
+@inline function scale(::Type{T}, v, exp) where {T <: Union{Float16, Float32, Float64}}
     ms = maxsig(T)
     cl = ceillog5(T)
-    if lmant < ms
+    @info (v=v, exp=exp, res= v == 0)
+    if v < ms
         # fastest path
-        if 0 <= point < cl
-            return T(lmant) * pow10(T, point)
-        elseif -cl < point < 0
-            return T(lmant) / pow10(T, -point)
+        if 0 <= exp < cl
+            return T(v) * pow10(T, exp)
+        elseif -cl < exp < 0
+            return T(v) / pow10(T, -exp)
         end
+    elseif v == 0
+        return zero(T)
     end
-    if lmant < 2ms
-        if 0 <= point < 2cl
-            return T(Base.twiceprecision(Base.TwicePrecision{T}(lmant) * pow10(T, point), significantbits(T)))
-        elseif -2cl < point < 0
-            return T(Base.twiceprecision(Base.TwicePrecision{T}(lmant) / pow10(T, -point), significantbits(T)))
-        end
-    end
-    mant = big(lmant)
-    if point >= 0
-        num = mant * bipows5[point+1]
+    # if v < 2ms
+    #     if 0 <= exp < 2cl
+    #         return T(Base.twiceprecision(Base.TwicePrecision{T}(v) * pow10(T, exp), significantbits(T)))
+    #     elseif -2cl < exp < 0
+    #         return T(Base.twiceprecision(Base.TwicePrecision{T}(v) / pow10(T, -exp), significantbits(T)))
+    #     end
+    # end
+    mant = big(v)
+    if exp >= 0
+        num = mant * bipows5[exp+1]
         bex = bitlength(num) - significantbits(T)
-        bex <= 0 && return ldexp(T(num), point)
+        bex <= 0 && return ldexp(T(num), exp)
         quo = roundQuotient(num, big(1) << bex)
-        return ldexp(T(quo), bex + point)
+        return ldexp(T(quo), bex + exp)
     end
     maxpow = length(bipows5) - 1
-    scl = (-point <= maxpow) ? bipows5[-point+1] :
-        bipows5[maxpow+1] * bipows5[-point-maxpow+1]
+    scl = (-exp <= maxpow) ? bipows5[-exp+1] :
+        bipows5[maxpow+1] * bipows5[-exp-maxpow+1]
     bex = bitlength(mant) - bitlength(scl) - significantbits(T)
     num = mant << -bex
     quo = roundQuotient(num, scl)
@@ -81,11 +84,11 @@ Base.bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
         bex += 1
         quo = roundQuotient(num, scl << 1)
     end
-    return ldexp(T(quo), bex + point)
+    return ldexp(T(quo), bex + exp)
 end
 
-function scale(::Type{T}, lmant, point, neg) where {T <: Union{Float16, Float32, Float64}}
-    result = scale(T, lmant, point)
+function scale(::Type{T}, lmant, exp, neg) where {T <: Union{Float16, Float32, Float64}}
+    result = scale(T, lmant, exp)
     return Result(ifelse(neg, -result, result))
 end
 
