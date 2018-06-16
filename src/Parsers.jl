@@ -55,6 +55,10 @@ Result(x::T) where {T} = Result{T}(x, OK, nothing)
 Result(::Type{T}, r::ReturnCode, b::Union{UInt8, Nothing}=nothing) where {T} = Result{T}(nothing, r, b)
 Result(r::Result{T}, c::ReturnCode=r.code, b::Union{UInt8, Nothing}=r.b) where {T} = Result{T}(r.result, c, b)
 Result(r::Result{T}, x::T, c::ReturnCode) where {T} = Result{T}(x, c, nothing)
+Result(r::Result{T}, x::S, c::ReturnCode) where {T, S} = Result{S}(x, c, nothing)
+Result(r::Result{Union{T, Missing}}, x::S, c::ReturnCode) where {T, S} = Result{Union{S, Missing}}(x, c, nothing)
+Result(r::Result{T}, ::Type{S}) where {T, S} = Result{S}(nothing, r.code, r.b)
+Result(r::Result{Union{T, Missing}}, ::Type{S}) where {T, S} = Result{Union{S, Missing}}(nothing, r.code, r.b)
 
 struct ParserError <: Exception
     result::Result
@@ -226,20 +230,30 @@ end
 include("strings.jl")
 include("floats.jl")
 
-function xparse(io::Union{Delimited, Quoted}, ::Type{T})::Result{T} where {T <: Dates.TimeType}
+function xparse(io::Union{Delimited, Quoted}, ::Type{T};
+            dateformat::Dates.DateFormat=Dates.default_format(T))::Result{T} where {T <: Dates.TimeType}
     res = xparse(io, String)
     if res === OK
-
+        return Result(T(res.result, dateformat), OK)
     else
-        Result{Union{T, Missing}}(result.result, result.code, result.b)
-        return Result{T}(, res.code, res.b)
+        return Result(res, T)
     end
+end
+
+const TRUE = Tries.Trie(["true"], true)
+const FALSE = Tries.Trie(["false"], false)
+
+function xparse(io::IO, ::Type{Bool})::Result{Bool}
+    result = Tries.match(TRUE, io)
+    result !== nothing && return Result(result)
+    result = Tries.match(FALSE, io)
+    result !== nothing && return Result(result)
+    return Result(Bool, INVALID, 0x00)
 end
 
 end # module
 
 #TODO
- #date/datetime parsing
  #custom parsing function
  #Trie tests
  #showerror for ParserError
