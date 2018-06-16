@@ -1,7 +1,7 @@
 __precompile__(true)
 module Parsers
 
-import InternedStrings
+import InternedStrings, Dates
 
 include("Tries.jl")
 using .Tries
@@ -226,13 +226,22 @@ end
 include("strings.jl")
 include("floats.jl")
 
+function xparse(io::Union{Delimited, Quoted}, ::Type{T})::Result{T} where {T <: Dates.TimeType}
+    res = xparse(io, String)
+    if res === OK
+
+    else
+        Result{Union{T, Missing}}(result.result, result.code, result.b)
+        return Result{T}(, res.code, res.b)
+    end
+end
+
 end # module
 
 #TODO
  #date/datetime parsing
  #custom parsing function
  #Trie tests
- #float parsing
  #showerror for ParserError
  #high-level functions
  #go thru csv issues

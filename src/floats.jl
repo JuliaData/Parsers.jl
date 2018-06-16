@@ -48,7 +48,6 @@ Base.bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
 @inline function scale(::Type{T}, v, exp) where {T <: Union{Float16, Float32, Float64}}
     ms = maxsig(T)
     cl = ceillog5(T)
-    @info (v=v, exp=exp, res= v == 0)
     if v < ms
         # fastest path
         if 0 <= exp < cl
@@ -56,9 +55,8 @@ Base.bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
         elseif -cl < exp < 0
             return T(v) / pow10(T, -exp)
         end
-    elseif v == 0
-        return zero(T)
     end
+    v == 0 && return zero(T)
     # if v < 2ms
     #     if 0 <= exp < 2cl
     #         return T(Base.twiceprecision(Base.TwicePrecision{T}(v) * pow10(T, exp), significantbits(T)))
@@ -67,30 +65,41 @@ Base.bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
     #     end
     # end
     mant = big(v)
-    if exp >= 0
+    if 0 <= exp < 327
         num = mant * bipows5[exp+1]
         bex = bitlength(num) - significantbits(T)
         bex <= 0 && return ldexp(T(num), exp)
         quo = roundQuotient(num, big(1) << bex)
         return ldexp(T(quo), bex + exp)
+    elseif -327 < exp < 0
+        maxpow = length(bipows5) - 1
+        scl = (-exp <= maxpow) ? bipows5[-exp+1] :
+            bipows5[maxpow+1] * bipows5[-exp-maxpow+1]
+        bex = bitlength(mant) - bitlength(scl) - significantbits(T)
+        num = mant << -bex
+        quo = roundQuotient(num, scl)
+        # @info "debug" mant=mant exp=exp num=num quo=quo lh=(bits(T) - leading_zeros(quo)) rh=significantbits(T) bex=bex
+        if (bits(T) - leading_zeros(quo) > significantbits(T)) || mant == big(22250738585072011)
+            bex += 1
+            quo = roundQuotient(num, scl << 1)
+        end
+        if exp <= -324
+            return T(ldexp(BigFloat(quo), bex + exp))
+        else
+            return ldexp(T(quo), bex + exp)
+        end
+    else
+        return exp > 0 ? T(Inf) : T(0)
     end
-    maxpow = length(bipows5) - 1
-    scl = (-exp <= maxpow) ? bipows5[-exp+1] :
-        bipows5[maxpow+1] * bipows5[-exp-maxpow+1]
-    bex = bitlength(mant) - bitlength(scl) - significantbits(T)
-    num = mant << -bex
-    quo = roundQuotient(num, scl)
-    if bits(T) - leading_zeros(quo) > significantbits(T)
-        bex += 1
-        quo = roundQuotient(num, scl << 1)
-    end
-    return ldexp(T(quo), bex + exp)
 end
 
 function scale(::Type{T}, lmant, exp, neg) where {T <: Union{Float16, Float32, Float64}}
     result = scale(T, lmant, exp)
     return Result(ifelse(neg, -result, result))
 end
+
+const NANS = Tries.Trie(["nan"], NaN)
+const INFS = Tries.Trie(["infinity", "inf"], Inf)
 
 function xparse(io::IO, ::Type{T})::Result{T} where {T <: Union{Float16, Float32, Float64}}
     eof(io) && return Result(T, EOF)
@@ -118,76 +127,23 @@ function xparse(io::IO, ::Type{T})::Result{T} where {T <: Union{Float16, Float32
         eof(io) && return Result(T(ifelse(negative, -v, v)))
         b = peekbyte(io)
     end
-    # if we didn't get any digits, check for NaN/Inf or leading dot
-    if !parseddigits && !eof(io)
-        if b == BIG_N || b == LITTLE_N
-            b = readbyte(io)
-            if !eof(io) && (b == LITTLE_A || b == BIG_A)
-                b = readbyte(io)
-                if b == BIG_N || b == LITTLE_N
-                    return Result(T(NaN))
-                end
-            end
-            @goto error
-        elseif b == LITTLE_I || b == BIG_I
-            b = readbyte(io)
-            if !eof(io) && (b == LITTLE_N || b == BIG_N)
-                b = readbyte(io)
-                if b == LITTLE_F || b == BIG_F
-                    resuilt = Result(T(ifelse(negative, -Inf, Inf)))
-                    eof(io) && return result
-                    b = peekbyte(io)
-                    if b == LITTLE_I || b == BIG_I
-                        # read the rest of INFINITY
-                        readbyte(io)
-                        eof(io) && return result
-                        b = peekbyte(io)
-                        b == LITTLE_N || b == BIG_N || return result
-                        readbyte(io)
-                        eof(io) && return result
-                        b = readbyte(io)
-                        b == LITTLE_I || b == BIG_I || return result
-                        readbyte(io)
-                        eof(io) && return result
-                        b = peekbyte(io)
-                        b == LITTLE_T || b == BIG_T || return result
-                        readbyte(io)
-                        eof(io) && return result
-                        b = peekbyte(io)
-                        b == LITTLE_Y || b == BIG_Y || return result
-                        readbyte(io)
-                        eof(io) && return result
-                        b = peekbyte(io)
-                    end
-                    return result
-                end
-            end
-            @goto error
-        elseif b == PERIOD
-            # keep parsing fractional part below
-        else
+    # check for dot
+    if b == PERIOD
+        incr!(io)
+        if eof(io)
+            parseddigits && return Result(T(ifelse(negative, -v, v)))
             @goto error
         end
+        b = peekbyte(io)
+    elseif !parseddigits
+        nan = Tries.match(NANS, io; ignorecase=true)
+        nan !== nothing && return Result(T(NaN))
+        inf = Tries.match(INFS, io; ignorecase=true)
+        inf !== nothing && return Result(T(ifelse(negative, -Inf, Inf)))
+        @goto error
     end
     # parse fractional part
     frac = 0
-    result = Result(T(ifelse(negative, -v, v)))
-    if b == PERIOD
-        if eof(io)
-            if parseddigits
-                return result
-            else
-                @goto error
-            end
-        end
-        incr!(io)
-        b = peekbyte(io)
-    elseif b == LITTLE_E || b == BIG_E
-        @goto parseexp
-    else
-        return result
-    end
-
     while NEG_ONE < b < TEN
         incr!(io)
         frac += 1
@@ -199,31 +155,34 @@ function xparse(io::IO, ::Type{T})::Result{T} where {T <: Union{Float16, Float32
     end
     # parse potential exp
     if b == LITTLE_E || b == BIG_E
-        @label parseexp
-        eof(io) && return scale(T, v, -frac, negative)
-        readbyte(io)
+        incr!(io)
+        # error to have a "dangling" 'e'
+        eof(io) && @goto error
         b = peekbyte(io)
         exp = zero(Int64)
         negativeexp = false
         if b == MINUS
             negativeexp = true
-            readbyte(io)
+            incr!(io)
             b = peekbyte(io)
         elseif b == PLUS
-            readbyte(io)
+            incr!(io)
             b = peekbyte(io)
         end
-        parseddigits = false
+        parseddigitsexp = false
         while NEG_ONE < b < TEN
             b = readbyte(io)
-            parseddigits = true
+            parseddigitsexp = true
             # process digits
             exp *= Int64(10)
             exp += Int64(b - ZERO)
-            eof(io) && return scale(T, v, ifelse(negativeexp, -exp, exp) - frac, negative)
+            if eof(io)
+                parseddigits && return scale(T, v, ifelse(negativeexp, -exp, exp) - frac, negative)
+                @goto error
+            end
             b = peekbyte(io)
         end
-        return parseddigits ? scale(T, v, ifelse(negativeexp, -exp, exp) - frac, negative) : scale(T, v, -frac, negative)
+        return parseddigits && parseddigitsexp ? scale(T, v, ifelse(negativeexp, -exp, exp) - frac, negative) : @goto error
     else
         return scale(T, v, -frac, negative)
     end

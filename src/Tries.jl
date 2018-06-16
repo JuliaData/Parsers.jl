@@ -14,47 +14,79 @@ end
     return byte
 end
 
-struct Trie
-    value::UInt8
-    leaves::Vector{Trie}
+mutable struct Node
+    label::UInt8
+    leaf::Bool
+    leaves::Vector{Node}
 end
-Trie(b::UInt8) = Trie(b, Trie[])
+Node(label::UInt8, leaf::Bool=false) = Node(label, leaf, Node[])
 
-function Trie(values::Vector{String})
-    t = Trie(0x00)
-    for value in values
-        append!(t, Tuple(codeunits(value)))
+struct Trie{T}
+    value::T
+    leaves::Vector{Node}
+end
+Trie(value=missing) = Trie(value, Node[])
+
+function Trie(values::Vector{String}, value=missing)
+    t = Trie(value)
+    for v in values
+        append!(t, Tuple(codeunits(v)))
     end
     return t
 end
 
 Base.isempty(t::Trie) = isempty(t.leaves)
 
-function Base.append!(trie::Trie, bytes)
+function Base.append!(trie::Union{Trie, Node}, bytes)
     b = first(bytes)
     rest = Base.tail(bytes)
     for t in trie.leaves
-        if t.value === b
-            return isempty(rest) ? nothing : append!(t, rest)
+        if t.label === b
+            if isempty(rest)
+                t.leaf = true
+                return
+            else
+                return append!(t, rest)
+            end
         end
     end
-    t = Trie(b)
-    push!(trie.leaves, t)
-    return isempty(rest) ? nothing : append!(t, rest)
+    if isempty(rest)
+        push!(trie.leaves, Node(b, true))
+        return
+    else
+        push!(trie.leaves, Node(b, false))
+        return append!(trie.leaves[end], rest)
+    end
 end
 
-function Base.haskey(trie::Trie, io::IO)
+lower(c::UInt8) = UInt8('A') <= c <= UInt8('Z') ? c | 0x20 : c 
+
+function match(node::Node, io::IO; ignorecase::Bool=false)
     eof(io) && return false
-    pos = position(io)
     b = peekbyte(io)
-    for t in trie.leaves
-        if t.value === b
-            readbyte(io)
-            return isempty(t.leaves) ? true : haskey(t, io)
+    if node.label === b || (ignorecase && lower(node.label) === lower(b))
+        readbyte(io)
+        if isempty(node.leaves)
+            return true
+        else
+            for n in node.leaves
+                match(n, io; ignorecase=ignorecase) && return true
+            end
+        end
+    end
+    # didn't match, if this is a leaf node, then we matched, otherwise, no match
+    return node.leaf
+end
+
+function match(trie::Trie, io::IO; ignorecase::Bool=false)
+    pos = position(io)
+    for node in trie.leaves
+        if match(node, io; ignorecase=ignorecase)
+            return trie.value
         end
     end
     seek(io, pos)
-    return false
+    return nothing
 end
 
 end # module
