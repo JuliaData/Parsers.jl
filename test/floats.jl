@@ -1,6 +1,3 @@
-include("/Users/jacobquinn/.julia/dev/Parsers/src/Parsers.jl")
-using .Parsers, Test
-
 @testset "Floats" begin
 
 r = Parsers.xparse(IOBuffer(""), Float64)
@@ -334,19 +331,19 @@ r = Parsers.xparse(IOBuffer("5e-324"), Float64)
 @test r.result === 5e-324
 @test r.code === Parsers.OK
 @test r.b === nothing
-# r = Parsers.xparse(IOBuffer("4e-324"), Float64)
-# @test r.result === 5e-324
-# @test r.code === Parsers.OK
-# @test r.b === nothing
-# r = Parsers.xparse(IOBuffer("3e-324"), Float64)
-# @test r.result === 5e-324
-# @test r.code === Parsers.OK
-# @test r.b === nothing
-# # too small
-# r = Parsers.xparse(IOBuffer("2e-324"), Float64)
-# @test r.result === 0
-# @test r.code === Parsers.OK
-# @test r.b === nothing
+r = Parsers.xparse(IOBuffer("4e-324"), Float64)
+@test r.result === 5e-324
+@test r.code === Parsers.OK
+@test r.b === nothing
+r = Parsers.xparse(IOBuffer("3e-324"), Float64)
+@test r.result === 5e-324
+@test r.code === Parsers.OK
+@test r.b === nothing
+# too small
+r = Parsers.xparse(IOBuffer("2e-324"), Float64)
+@test r.result === 0.0
+@test r.code === Parsers.OK
+@test r.b === nothing
 # way too small
 r = Parsers.xparse(IOBuffer("1e-350"), Float64)
 @test r.result === 0.0
@@ -376,22 +373,22 @@ r = Parsers.xparse(IOBuffer("1e+4294967296"), Float64)
 # @test r.b === nothing
 
 # Parse errors
-# r = Parsers.xparse(IOBuffer("1e"), Float64)
-# @test r.result === 0
-# @test r.code === Parsers.OK
-# @test r.b === nothing
-# r = Parsers.xparse(IOBuffer("1e-"), Float64)
-# @test r.result === 0
-# @test r.code === Parsers.OK
-# @test r.b === nothing
-# r = Parsers.xparse(IOBuffer(".e-1"), Float64)
-# @test r.result === 0
-# @test r.code === Parsers.OK
-# @test r.b === nothing
-# r = Parsers.xparse(IOBuffer("1\x00.2"), Float64)
-# @test r.result === 0
-# @test r.code === Parsers.OK
-# @test r.b === nothing
+r = Parsers.xparse(IOBuffer("1e"), Float64)
+@test r.result === nothing
+@test r.code === Parsers.INVALID
+@test r.b === UInt8('e')
+r = Parsers.xparse(IOBuffer("1e-"), Float64)
+@test r.result === nothing
+@test r.code === Parsers.INVALID
+@test r.b === 0x00
+r = Parsers.xparse(IOBuffer(".e-1"), Float64)
+@test r.result === nothing
+@test r.code === Parsers.INVALID
+@test r.b === UInt8('1')
+r = Parsers.xparse(IOBuffer("1\x00.2"), Float64)
+@test r.result === 1.0
+@test r.code === Parsers.OK
+@test r.b === nothing
 
 # http:#www.exploringbinary.com/java-hangs-when-converting-2-2250738585072012e-308/
 r = Parsers.xparse(IOBuffer("2.2250738585072012e-308"), Float64)
@@ -399,10 +396,10 @@ r = Parsers.xparse(IOBuffer("2.2250738585072012e-308"), Float64)
 @test r.code === Parsers.OK
 @test r.b === nothing
 # http:#www.exploringbinary.com/php-hangs-on-numeric-value-2-2250738585072011e-308/
-# r = Parsers.xparse(IOBuffer("2.2250738585072011e-308"), Float64)
-# @test r.result === 2.225073858507201e-308
-# @test r.code === Parsers.OK
-# @test r.b === nothing
+r = Parsers.xparse(IOBuffer("2.2250738585072011e-308"), Float64)
+@test r.result === 2.225073858507201e-308
+@test r.code === Parsers.OK
+@test r.b === nothing
 
 # A very large number (initially wrongly parsed by the fast algorithm).
 r = Parsers.xparse(IOBuffer("4.630813248087435e+307"), Float64)

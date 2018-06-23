@@ -1,5 +1,4 @@
-include("/Users/jacobquinn/.julia/dev/Parsers/src/Parsers.jl")
-using .Parsers, Test
+@testset "Strings" begin
 
 @testset "String Parsers.Sentinel" begin
 
@@ -12,7 +11,7 @@ r = Parsers.xparse(Parsers.Sentinel(IOBuffer("\\N"), ["\\N"]), String)
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Sentinel(IOBuffer("NA2"), ["NA"]), String)
-@test r.result === missing
+@test r.result === "NA2"
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Sentinel(IOBuffer("-"), ["-", "NA", "\\N"]), String)
@@ -24,11 +23,11 @@ r = Parsers.xparse(Parsers.Sentinel(IOBuffer("£"), ["£"]), String)
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Sentinel(IOBuffer("null"), ["NA"]), String)
-@test r.result === ""
+@test r.result === "null"
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Sentinel(IOBuffer("null"), String[]), String)
-@test r.result === missing
+@test r.result === "null"
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Sentinel(IOBuffer(""), String[]), String)
@@ -40,11 +39,11 @@ r = Parsers.xparse(Parsers.Sentinel(IOBuffer(""), String["NA"]), String)
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Sentinel(IOBuffer(","), String[]), String)
-@test r.result === missing
+@test r.result === ","
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Sentinel(IOBuffer("1,"), String[]), String)
-@test r.result === missing
+@test r.result === "1,"
 @test r.code === Parsers.OK
 @test r.b === nothing
 
@@ -61,7 +60,7 @@ r = Parsers.xparse(Parsers.Quoted(IOBuffer("\"\"")), String)
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Quoted(IOBuffer("1")), String)
-@test r.result === ""
+@test r.result === "1"
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Quoted(IOBuffer("\"1\"")), String)
@@ -77,27 +76,27 @@ r = Parsers.xparse(Parsers.Quoted(IOBuffer("\"1abc\"")), String)
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Quoted(IOBuffer("1a")), String)
-@test r.result === ""
+@test r.result === "1a"
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Quoted(IOBuffer("\"1")), String)
-@test r.result == ""
+@test r.result == "1"
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('1')
 r = Parsers.xparse(Parsers.Quoted(IOBuffer("\"1a")), String)
-@test r.result == ""
+@test r.result == "1a"
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('a')
 r = Parsers.xparse(Parsers.Quoted(IOBuffer("\"1abc")), String)
-@test r.result == ""
+@test r.result == "1abc"
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('c')
 r = Parsers.xparse(Parsers.Quoted(IOBuffer("\"1\\")), String)
-@test r.result == ""
+@test r.result == "1"
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('\\')
 r = Parsers.xparse(Parsers.Quoted(IOBuffer("\"1\\\"")), String)
-@test r.result == ""
+@test r.result == "1\\\""
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('"')
 r = Parsers.xparse(Parsers.Quoted(IOBuffer("\"1\\\"\"")), String)
@@ -113,7 +112,7 @@ r = Parsers.xparse(Parsers.Quoted(IOBuffer("\"1ab\""), '"', '"'), String)
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Quoted(IOBuffer("\"1ab\"\""), '"', '"'), String)
-@test r.result === ""
+@test r.result === "1ab\"\""
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('"')
 
@@ -142,11 +141,11 @@ r = Parsers.xparse(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\"NA\""), ["NA"])),
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\"NA"), ["NA"])), String)
-@test r.result === missing
+@test r.result === "NA"
 @test r.code === Parsers.INVALID_QUOTED_FIELD
-@test r.b === nothing
+@test r.b === UInt8('A')
 r = Parsers.xparse(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\"NA2"), ["NA"])), String)
-@test r.result === missing
+@test r.result === "NA2"
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('2')
 r = Parsers.xparse(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\"NA2\""), ["NA"])), String)
@@ -158,7 +157,7 @@ r = Parsers.xparse(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\"+1\""), ["NA"])),
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\"+1"), ["NA"])), String)
-@test r.result === ""
+@test r.result === "+1"
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('1')
 r = Parsers.xparse(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\"NAabc\""), ["NA"])), String)
@@ -178,7 +177,7 @@ r = Parsers.xparse(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\"1ab\""), String[]
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\"1ab\"\""), String[]), '"', '"'), String)
-@test r.result === missing
+@test r.result === "1ab\"\""
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('"')
 
@@ -297,23 +296,23 @@ r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(IOBuffer("1a"))), String)
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(IOBuffer("\"1"))), String)
-@test r.result == ""
+@test r.result == "1"
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('1')
 r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(IOBuffer("\"1a"))), String)
-@test r.result == ""
+@test r.result == "1a"
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('a')
 r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(IOBuffer("\"1abc"))), String)
-@test r.result == ""
+@test r.result == "1abc"
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('c')
 r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(IOBuffer("\"1\\"))), String)
-@test r.result == ""
+@test r.result == "1"
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('\\')
 r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(IOBuffer("\"1\\\""))), String)
-@test r.result == ""
+@test r.result == "1\\\""
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('"')
 r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(IOBuffer("\"1\\\"\""))), String)
@@ -322,8 +321,8 @@ r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(IOBuffer("\"1\\\"\""))), Str
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(IOBuffer("\"1\"abc,"))), String)
 @test r.result === "1"
-@test r.code === Parsers.OK
-@test r.b === nothing
+@test r.code === Parsers.INVALID
+@test r.b === UInt8('c')
 r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(IOBuffer("\"1ab\"\"c\""), '"', '"')), String)
 @test r.result === "1ab\"\"c"
 @test r.code === Parsers.OK
@@ -333,7 +332,7 @@ r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(IOBuffer("\"1ab\""), '"', '"
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(IOBuffer("\"1ab\"\""), '"', '"')), String)
-@test r.result === ""
+@test r.result === "1ab\"\""
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('"')
 
@@ -362,11 +361,11 @@ r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\"NA"), ["NA"]))), String)
-@test r.result === missing
+@test r.result === "NA"
 @test r.code === Parsers.INVALID_QUOTED_FIELD
-@test r.b === nothing
+@test r.b === UInt8('A')
 r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\"NA2"), ["NA"]))), String)
-@test r.result === missing
+@test r.result === "NA2"
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('2')
 r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\"NA2\""), ["NA"]))), String)
@@ -378,7 +377,7 @@ r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\"+1"), ["NA"]))), String)
-@test r.result === ""
+@test r.result === "+1"
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('1')
 r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\"NAabc\""), ["NA"]))), String)
@@ -398,8 +397,10 @@ r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\
 @test r.code === Parsers.OK
 @test r.b === nothing
 r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\"1ab\"\""), String[]), '"', '"')), String)
-@test r.result === missing
+@test r.result === "1ab\"\""
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('"')
+
+end # @testset
 
 end # @testset

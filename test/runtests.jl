@@ -1,9 +1,9 @@
 include("/Users/jacobquinn/.julia/dev/Parsers/src/Parsers.jl")
-using .Parsers, Test
+using .Parsers, Test, Dates
 
 @testset "Parsers" begin
 
-@testset "Raw Integer" begin
+@testset "Int" begin
 
 r = Parsers.xparse(IOBuffer(""), Int)
 @test r.result === nothing
@@ -476,5 +476,8 @@ r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\
 end # @testset
 
 include("strings.jl")
+include("floats.jl")
+include("dates.jl")
+include("bools.jl")
 
 end # @testset

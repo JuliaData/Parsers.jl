@@ -27,10 +27,14 @@ struct Trie{T}
 end
 Trie(value=missing) = Trie(value, Node[])
 
+Trie(v::String, value=missing) = Trie([v], value)
+
 function Trie(values::Vector{String}, value=missing)
     t = Trie(value)
     for v in values
-        append!(t, Tuple(codeunits(v)))
+        if !isempty(v)
+            append!(t, Tuple(codeunits(v)))
+        end
     end
     return t
 end
@@ -61,6 +65,18 @@ end
 
 lower(c::UInt8) = UInt8('A') <= c <= UInt8('Z') ? c | 0x20 : c 
 
+function match(node::Trie, io::IO; ignorecase::Bool=false)
+    pos = position(io)
+    if isempty(node.leaves)
+        return true
+    else
+        for n in node.leaves
+            match(n, io; ignorecase=ignorecase) && return true
+        end
+    end
+    seek(io, pos)
+    return false    
+end
 function match(node::Node, io::IO; ignorecase::Bool=false)
     eof(io) && return false
     b = peekbyte(io)
@@ -73,20 +89,19 @@ function match(node::Node, io::IO; ignorecase::Bool=false)
                 match(n, io; ignorecase=ignorecase) && return true
             end
         end
+        # didn't match, if this is a leaf node, then we matched, otherwise, no match
+        return node.leaf
+    else
+        return false
     end
-    # didn't match, if this is a leaf node, then we matched, otherwise, no match
-    return node.leaf
 end
 
-function match(trie::Trie, io::IO; ignorecase::Bool=false)
-    pos = position(io)
-    for node in trie.leaves
-        if match(node, io; ignorecase=ignorecase)
-            return trie.value
-        end
+function matchleaf(node::Union{Trie, Node}, io::IO, b::UInt8)
+    for n in node.leaves
+        n.label === b && return n
     end
-    seek(io, pos)
     return nothing
 end
+matchleaf(::Nothing, io, b) = nothing
 
 end # module

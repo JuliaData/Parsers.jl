@@ -71,14 +71,14 @@ function parse(io::IO, ::Type{T}; kwargs...) where {T}
     return result.code === OK ? result.result : throw(ParserError(result))
 end
 
-function xparse(io::IO, ::Type{T};
-                delim=',',
-                quotechar='"',
-                escapechar='\\',
-                sentinel="",
-                kwargs...) where {T}
-    return xparse(Delimited(Quoted(Sentinel(io, sentinel), quotechar % UInt8, escapechar % UInt8), delim); kwargs...)
-end
+# function xparse(io::IO, ::Type{T};
+#                 delim=',',
+#                 quotechar='"',
+#                 escapechar='\\',
+#                 sentinel="",
+#                 kwargs...) where {T}
+#     return xparse(Delimited(Quoted(Sentinel(io, sentinel), quotechar % UInt8, escapechar % UInt8), delim), T; kwargs...)
+# end
 
 # For parsing delimited fields
 # document that eof is always a valid delim
@@ -90,7 +90,7 @@ Delimited(next, d::Union{Char, UInt8}=',') = Delimited(next, UInt8[d])
 getio(d::Delimited) = getio(d.next)
 
 function xparse(d::Delimited{I}, ::Type{T}; kwargs...) where {I, T}
-    result = xparse(d.next, T; kwargs...)
+    result = xparse(d.next, T; delims=d.delims, kwargs...)
     io = getio(d)
     eof(io) && return result
     b = peekbyte(io)
@@ -135,10 +135,12 @@ function xparse(q::Quoted{I}, ::Type{T}; kwargs...) where {I, T}
     if b === q.quotechar
         readbyte(io)
         quoted = true
+        result = xparse(q.next, T; quotechar=q.quotechar, escapechar=q.escapechar, kwargs...)
+    else
+        result = xparse(q.next, T; kwargs...)
     end
-    result = xparse(q.next, T; kwargs...)
     if quoted
-        eof(io) && return Result(result, INVALID_QUOTED_FIELD, nothing)
+        eof(io) && return Result(result, INVALID_QUOTED_FIELD, result.b)
         b = peekbyte(io)
         if b !== q.quotechar
             # result is invalid, parsing should have consumed until quotechar
@@ -172,7 +174,7 @@ struct Sentinel{I}
     next::I
     sentinels::Tries.Trie
 end
-Sentinel(next, sentinels::Vector{String}) = Sentinel(next, Tries.Trie(sentinels))
+Sentinel(next, sentinels::Union{String, Vector{String}}) = Sentinel(next, Tries.Trie(sentinels))
 getio(s::Sentinel) = getio(s.next)
 
 function xparse(s::Sentinel{I}, ::Type{T}; kwargs...)::Result{Union{T, Missing}} where {I, T}
@@ -184,7 +186,7 @@ function xparse(s::Sentinel{I}, ::Type{T}; kwargs...)::Result{Union{T, Missing}}
             return Result{Union{T, Missing}}(missing, OK, nothing)
         else
             seek(io, pos)
-            if haskey(s.sentinels, io)
+            if Tries.match(s.sentinels, io)
                 return Result{Union{T, Missing}}(missing, OK, nothing)
             end
         end
@@ -193,7 +195,7 @@ function xparse(s::Sentinel{I}, ::Type{T}; kwargs...)::Result{Union{T, Missing}}
 end
 
 # Core integer parsing function
-function xparse(io::IO, ::Type{T})::Result{T} where {T <: Integer}
+function xparse(io::IO, ::Type{T}; kwargs...)::Result{T} where {T <: Integer}
     eof(io) && return Result(T, EOF)
     v = zero(T)
     b = peekbyte(io)
@@ -230,26 +232,29 @@ end
 include("strings.jl")
 include("floats.jl")
 
-function xparse(io::Union{Delimited, Quoted}, ::Type{T};
-            dateformat::Dates.DateFormat=Dates.default_format(T))::Result{T} where {T <: Dates.TimeType}
-    res = xparse(io, String)
-    if res === OK
-        return Result(T(res.result, dateformat), OK)
-    else
-        return Result(res, T)
-    end
-end
-
+# Bool parsing
 const TRUE = Tries.Trie(["true"], true)
 const FALSE = Tries.Trie(["false"], false)
 
-function xparse(io::IO, ::Type{Bool})::Result{Bool}
-    result = Tries.match(TRUE, io)
-    result !== nothing && return Result(result)
-    result = Tries.match(FALSE, io)
-    result !== nothing && return Result(result)
-    return Result(Bool, INVALID, 0x00)
+function xparse(io::IO, ::Type{Bool}; kwargs...)::Result{Bool}
+    Tries.match(TRUE, io) && return Result(true, OK, nothing)
+    Tries.match(FALSE, io) && return Result(false, OK, nothing)
+    return Result(Bool, INVALID, nothing)
 end
+
+# Dates.TimeType parsing
+function xparse(io::IO, ::Type{T};
+            dateformat::Dates.DateFormat=Dates.default_format(T),
+            kwargs...)::Result{T} where {T <: Dates.TimeType}
+    res = xparse(io, String; kwargs...)
+    if res.code === OK && !isempty(res.result)
+        dt = tryparse(T, res.result, dateformat)
+        return dt === nothing ? Result(T, INVALID, res.b) : Result(T(res.result, dateformat), OK, nothing)
+    else
+        return Result(T, INVALID, res.b)
+    end
+end
+
 
 end # module
 
@@ -258,6 +263,8 @@ end # module
  #Trie tests
  #showerror for ParserError
  #high-level functions
+ #whole row parsing functionality
  #go thru csv issues
  #JSON2 can use?
  #performance benchmarks
+ #docs

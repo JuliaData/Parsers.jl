@@ -136,10 +136,8 @@ function xparse(io::IO, ::Type{T})::Result{T} where {T <: Union{Float16, Float32
         end
         b = peekbyte(io)
     elseif !parseddigits
-        nan = Tries.match(NANS, io; ignorecase=true)
-        nan !== nothing && return Result(T(NaN))
-        inf = Tries.match(INFS, io; ignorecase=true)
-        inf !== nothing && return Result(T(ifelse(negative, -Inf, Inf)))
+        Tries.match(NANS, io; ignorecase=true) && return Result(T(NaN))
+        Tries.match(INFS, io; ignorecase=true) && return Result(T(ifelse(negative, -Inf, Inf)))
         @goto error
     end
     # parse fractional part
