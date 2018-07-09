@@ -1,15 +1,3 @@
-const BIG_N = UInt8('N')
-const LITTLE_N = UInt8('n')
-const BIG_A = UInt8('A')
-const LITTLE_A = UInt8('a')
-const BIG_I = UInt8('I')
-const LITTLE_I = UInt8('i')
-const BIG_F = UInt8('F')
-const LITTLE_F = UInt8('f')
-const BIG_T = UInt8('T')
-const LITTLE_T = UInt8('t')
-const BIG_Y = UInt8('Y')
-const LITTLE_Y = UInt8('y')
 const BIG_E = UInt8('E')
 const LITTLE_E = UInt8('e')
 
@@ -34,9 +22,9 @@ const F16_SHORT_POWERS = [exp10(Float16(x)) for x = 0:2ceillog5(Float16)-1]
 const F32_SHORT_POWERS = [exp10(Float32(x)) for x = 0:2ceillog5(Float32)-1]
 const F64_SHORT_POWERS = [exp10(Float64(x)) for x = 0:2ceillog5(Float64)-1]
 
-pow10(::Type{Float16}, e) = F16_SHORT_POWERS[e+1]
-pow10(::Type{Float32}, e) = F32_SHORT_POWERS[e+1]
-pow10(::Type{Float64}, e) = F64_SHORT_POWERS[e+1]
+pow10(::Type{Float16}, e) = (@inbounds v = F16_SHORT_POWERS[e+1]; return v)
+pow10(::Type{Float32}, e) = (@inbounds v = F32_SHORT_POWERS[e+1]; return v)
+pow10(::Type{Float64}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
 
 significantbits(::Type{Float16}) = 11
 significantbits(::Type{Float32}) = 24
@@ -101,7 +89,7 @@ end
 const NANS = Tries.Trie(["nan"], NaN)
 const INFS = Tries.Trie(["infinity", "inf"], Inf)
 
-function xparse(io::IO, ::Type{T})::Result{T} where {T <: Union{Float16, Float32, Float64}}
+function xparse(::typeof(defaultparser), io::IO, ::Type{T})::Result{T} where {T <: Union{Float16, Float32, Float64}}
     eof(io) && return Result(T, EOF)
     b = peekbyte(io)
     negative = false

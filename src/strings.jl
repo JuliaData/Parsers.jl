@@ -5,6 +5,7 @@ function Base.hash(x::Tuple{Ptr{UInt8},Int}, h::UInt)
 end
 Base.isequal(x::Tuple{Ptr{UInt8}, Int}, y::String) = hash(x) === hash(y)
 Base.convert(::Type{String}, x::Tuple{Ptr{UInt8}, Int}) = unsafe_string(x[1], x[2])
+const EMPTY_STRING = (Ptr{UInt8}(0), 0)
 
 const BUF = IOBuffer()
 getptr(io::IO) = pointer(BUF.data, BUF.ptr)
@@ -12,7 +13,10 @@ getptr(io::IOBuffer) = pointer(io.data, io.ptr)
 incr(io::IO, b) = Base.write(BUF, b)
 incr(io::IOBuffer, b) = 1
 
-function xparse(io::IO, ::Type{String};
+make(::Type{String}, x::Tuple{Ptr{UInt8}, Int}) = InternedStrings.intern(String, x)
+make(::Type{String}, ::Missing) = missing
+
+function xparse(::typeof(defaultparser), io::IO, ::Type{Tuple{Ptr{UInt8}, Int}};
     quotechar::Union{UInt8, Nothing}=nothing,
     escapechar::Union{UInt8, Nothing}=quotechar,
     delims::Union{Vector{UInt8}, Nothing}=nothing,
@@ -21,7 +25,7 @@ function xparse(io::IO, ::Type{String};
     len = 0
     if quotechar !== nothing
         same = quotechar === escapechar
-        eof(io) && return Result("", INVALID_QUOTED_FIELD, nothing)
+        eof(io) && return Result(EMPTY_STRING, INVALID_QUOTED_FIELD, nothing)
         b = peekbyte(io)
         while true
             if same && b == escapechar
@@ -38,7 +42,7 @@ function xparse(io::IO, ::Type{String};
                 len += incr(io, b)
             elseif b == escapechar
                 b = readbyte(io)
-                eof(io) && return Result(InternedStrings.intern(String, (ptr, len)), INVALID_QUOTED_FIELD, b)
+                eof(io) && return Result((ptr, len), INVALID_QUOTED_FIELD, b)
                 # regular escaped byte
                 len += incr(io, b)
             elseif b == quotechar
@@ -46,7 +50,7 @@ function xparse(io::IO, ::Type{String};
             end
             len += incr(io, b)
             b = readbyte(io)
-            eof(io) && return Result(InternedStrings.intern(String, (ptr, len)), INVALID_QUOTED_FIELD, b)
+            eof(io) && return Result((ptr, len), INVALID_QUOTED_FIELD, b)
             b = peekbyte(io)
         end
     elseif delims !== nothing
@@ -72,10 +76,10 @@ function xparse(io::IO, ::Type{String};
         end
     end
 @label done
-    return Result(InternedStrings.intern(String, (ptr, len)), OK, nothing)
+    return Result((ptr, len), OK, nothing)
 end
 
-function xparse(s::Sentinel, ::Type{String};
+function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, Int}};
     quotechar::Union{UInt8, Nothing}=nothing,
     escapechar::Union{UInt8, Nothing}=quotechar,
     delims::Union{Vector{UInt8}, Nothing}=nothing,
@@ -87,7 +91,7 @@ function xparse(s::Sentinel, ::Type{String};
     node = nothing
     if quotechar !== nothing
         same = quotechar === escapechar
-        eof(io) && return Result("", INVALID_QUOTED_FIELD, nothing)
+        eof(io) && return Result(EMPTY_STRING, INVALID_QUOTED_FIELD, nothing)
         b = peekbyte(io)
         prevnode = node = Tries.matchleaf(trie, io, b)
         while true
@@ -107,7 +111,7 @@ function xparse(s::Sentinel, ::Type{String};
                 len += incr(io, b)
             elseif b == escapechar
                 b = readbyte(io)
-                eof(io) && return Result(InternedStrings.intern(String, (ptr, len)), INVALID_QUOTED_FIELD, b)
+                eof(io) && return Result((ptr, len), INVALID_QUOTED_FIELD, b)
                 len += incr(io, b)
             elseif b == quotechar
                 node = prevnode
@@ -116,7 +120,7 @@ function xparse(s::Sentinel, ::Type{String};
             prevnode = node
             len += incr(io, b)
             readbyte(io)
-            eof(io) && return Result(InternedStrings.intern(String, (ptr, len)), INVALID_QUOTED_FIELD, b)
+            eof(io) && return Result((ptr, len), INVALID_QUOTED_FIELD, b)
             b = peekbyte(io)
             node = Tries.matchleaf(node, io, b)
         end
@@ -152,10 +156,19 @@ function xparse(s::Sentinel, ::Type{String};
     end
 @label done
     if node !== nothing && node.leaf
-        return Result{Union{String, Missing}}(missing, OK, nothing)
+        return Result{Union{Tuple{Ptr{UInt8}, Int}, Missing}}(missing, OK, nothing)
     elseif isempty(trie) && len == 0
-        return Result{Union{String, Missing}}(missing, OK, nothing)
+        return Result{Union{Tuple{Ptr{UInt8}, Int}, Missing}}(missing, OK, nothing)
     else
-        return Result{Union{String, Missing}}(InternedStrings.intern(String, (ptr, len)), OK, nothing)
+        return Result{Union{Tuple{Ptr{UInt8}, Int}, Missing}}((ptr, len), OK, nothing)
     end
+end
+
+function xparse(::typeof(defaultparser), io::IO, ::Type{String}; kwargs...)
+    res = xparse(io, Tuple{Ptr{UInt8}, Int}; kwargs...)
+    return Result(res, make(String, res.result), res.code)
+end
+function xparse(::typeof(defaultparser), s::Sentinel, ::Type{String}; kwargs...)
+    res = xparse(s, Tuple{Ptr{UInt8}, Int}; kwargs...)
+    return Result(res, make(String, res.result), res.code)
 end

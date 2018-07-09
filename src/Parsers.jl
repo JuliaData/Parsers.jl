@@ -40,6 +40,15 @@ end
 incr!(io::IOBuffer) = io.ptr += 1
 incr!(io::IO) = readbyte(io)
 
+iswh(b) = b == UInt8('\t') || b == UInt8(' ') || b == UInt8('\n') || b == UInt8('\r')
+@inline function wh!(io, b=peekbyte(io))
+    while iswh(b)
+        readbyte(io)
+        b = peekbyte(io)
+    end
+    return
+end
+
 getio(io::IO) = io
 
 # Result type which includes a ReturnCode
@@ -54,9 +63,9 @@ end
 Result(x::T) where {T} = Result{T}(x, OK, nothing)
 Result(::Type{T}, r::ReturnCode, b::Union{UInt8, Nothing}=nothing) where {T} = Result{T}(nothing, r, b)
 Result(r::Result{T}, c::ReturnCode=r.code, b::Union{UInt8, Nothing}=r.b) where {T} = Result{T}(r.result, c, b)
-Result(r::Result{T}, x::T, c::ReturnCode) where {T} = Result{T}(x, c, nothing)
-Result(r::Result{T}, x::S, c::ReturnCode) where {T, S} = Result{S}(x, c, nothing)
-Result(r::Result{Union{T, Missing}}, x::S, c::ReturnCode) where {T, S} = Result{Union{S, Missing}}(x, c, nothing)
+Result(r::Result{T}, x::T, c::ReturnCode) where {T} = Result{T}(x, c, r.b)
+Result(r::Result{T}, x::S, c::ReturnCode) where {T, S} = Result{S}(x, c, r.b)
+Result(r::Result{Union{T, Missing}}, x::S, c::ReturnCode) where {T, S} = Result{Union{S, Missing}}(x, c, r.b)
 Result(r::Result{T}, ::Type{S}) where {T, S} = Result{S}(nothing, r.code, r.b)
 Result(r::Result{Union{T, Missing}}, ::Type{S}) where {T, S} = Result{Union{S, Missing}}(nothing, r.code, r.b)
 
@@ -65,20 +74,10 @@ struct ParserError <: Exception
 end
 #TODO: showerror for ParserError
 
-# User-facing parse function
-function parse(io::IO, ::Type{T}; kwargs...) where {T}
-    result = xparse(io, T; kwargs...)
-    return result.code === OK ? result.result : throw(ParserError(result))
-end
-
-# function xparse(io::IO, ::Type{T};
-#                 delim=',',
-#                 quotechar='"',
-#                 escapechar='\\',
-#                 sentinel="",
-#                 kwargs...) where {T}
-#     return xparse(Delimited(Quoted(Sentinel(io, sentinel), quotechar % UInt8, escapechar % UInt8), delim), T; kwargs...)
-# end
+# empty function for dispatching to default type parsers
+function defaultparser end
+# fallthrough for custom parser functions: user-provided function should be of the form: f(io::IO, ::Type{T}; kwargs...)::Result{T}
+xparse(f::Base.Callable, io::IO, ::Type{T}; kwargs...) where {T} = f(io, T; kwargs...)
 
 # For parsing delimited fields
 # document that eof is always a valid delim
@@ -86,11 +85,13 @@ struct Delimited{I}
     next::I
     delims::Vector{UInt8}
 end
-Delimited(next, d::Union{Char, UInt8}=',') = Delimited(next, UInt8[d])
+Delimited(next, delims::Union{Char, UInt8}...=',') = Delimited(next, UInt8[d % UInt8 for d in delims])
 getio(d::Delimited) = getio(d.next)
 
-function xparse(d::Delimited{I}, ::Type{T}; kwargs...) where {I, T}
-    result = xparse(d.next, T; delims=d.delims, kwargs...)
+xparse(d::Delimited{I}, ::Type{T}; kwargs...) where {I, T} = xparse(defaultparser, d, T; kwargs...)
+
+function xparse(f::Base.Callable, d::Delimited{I}, ::Type{T}; kwargs...) where {I, T}
+    result = xparse(f, d.next, T; delims=d.delims, kwargs...)
     io = getio(d)
     eof(io) && return result
     b = peekbyte(io)
@@ -128,16 +129,18 @@ Quoted(next, q::Union{Char, UInt8}='"', e::Union{Char, UInt8}='\\') = Quoted(nex
 
 getio(q::Quoted) = getio(q.next)
 
-function xparse(q::Quoted{I}, ::Type{T}; kwargs...) where {I, T}
+xparse(q::Quoted{I}, ::Type{T}; kwargs...) where {I, T} = xparse(defaultparser, q, T; kwargs...)
+
+function xparse(f::Base.Callable, q::Quoted{I}, ::Type{T}; kwargs...) where {I, T}
     io = getio(q)
     b = peekbyte(io)
     quoted = false
     if b === q.quotechar
         readbyte(io)
         quoted = true
-        result = xparse(q.next, T; quotechar=q.quotechar, escapechar=q.escapechar, kwargs...)
+        result = xparse(f, q.next, T; quotechar=q.quotechar, escapechar=q.escapechar, kwargs...)
     else
-        result = xparse(q.next, T; kwargs...)
+        result = xparse(f, q.next, T; kwargs...)
     end
     if quoted
         eof(io) && return Result(result, INVALID_QUOTED_FIELD, result.b)
@@ -177,10 +180,12 @@ end
 Sentinel(next, sentinels::Union{String, Vector{String}}) = Sentinel(next, Tries.Trie(sentinels))
 getio(s::Sentinel) = getio(s.next)
 
-function xparse(s::Sentinel{I}, ::Type{T}; kwargs...)::Result{Union{T, Missing}} where {I, T}
+xparse(s::Sentinel{I}, ::Type{T}; kwargs...)::Result{Union{T, Missing}} where {I, T} = xparse(defaultparser, s, T; kwargs...)
+
+function xparse(f::Base.Callable, s::Sentinel{I}, ::Type{T}; kwargs...)::Result{Union{T, Missing}} where {I, T}
     io = getio(s)
     pos = position(io)
-    result = xparse(s.next, T; kwargs...)
+    result = xparse(f, s.next, T; kwargs...)
     if result.code !== OK
         if isempty(s.sentinels) && position(io) == pos
             return Result{Union{T, Missing}}(missing, OK, nothing)
@@ -195,7 +200,7 @@ function xparse(s::Sentinel{I}, ::Type{T}; kwargs...)::Result{Union{T, Missing}}
 end
 
 # Core integer parsing function
-function xparse(io::IO, ::Type{T}; kwargs...)::Result{T} where {T <: Integer}
+function xparse(::typeof(defaultparser), io::IO, ::Type{T}; kwargs...)::Result{T} where {T <: Integer}
     eof(io) && return Result(T, EOF)
     v = zero(T)
     b = peekbyte(io)
@@ -236,14 +241,14 @@ include("floats.jl")
 const TRUE = Tries.Trie(["true"], true)
 const FALSE = Tries.Trie(["false"], false)
 
-function xparse(io::IO, ::Type{Bool}; kwargs...)::Result{Bool}
+function xparse(::typeof(defaultparser), io::IO, ::Type{Bool}; kwargs...)::Result{Bool}
     Tries.match(TRUE, io) && return Result(true, OK, nothing)
     Tries.match(FALSE, io) && return Result(false, OK, nothing)
     return Result(Bool, INVALID, nothing)
 end
 
 # Dates.TimeType parsing
-function xparse(io::IO, ::Type{T};
+function xparse(::typeof(defaultparser), io::IO, ::Type{T};
             dateformat::Dates.DateFormat=Dates.default_format(T),
             kwargs...)::Result{T} where {T <: Dates.TimeType}
     res = xparse(io, String; kwargs...)
