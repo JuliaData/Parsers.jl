@@ -180,7 +180,7 @@ end
 Sentinel(next, sentinels::Union{String, Vector{String}}) = Sentinel(next, Tries.Trie(sentinels))
 getio(s::Sentinel) = getio(s.next)
 
-xparse(s::Sentinel{I}, ::Type{T}; kwargs...)::Result{Union{T, Missing}} where {I, T} = xparse(defaultparser, s, T; kwargs...)
+xparse(s::Sentinel{I}, ::Type{T}; kwargs...) where {I, T} = xparse(defaultparser, s, T; kwargs...)
 
 function xparse(f::Base.Callable, s::Sentinel{I}, ::Type{T}; kwargs...)::Result{Union{T, Missing}} where {I, T}
     io = getio(s)

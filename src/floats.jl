@@ -89,7 +89,7 @@ end
 const NANS = Tries.Trie(["nan"], NaN)
 const INFS = Tries.Trie(["infinity", "inf"], Inf)
 
-function xparse(::typeof(defaultparser), io::IO, ::Type{T})::Result{T} where {T <: Union{Float16, Float32, Float64}}
+function xparse(::typeof(defaultparser), io::IO, ::Type{T}; kwargs...)::Result{T} where {T <: Union{Float16, Float32, Float64}}
     eof(io) && return Result(T, EOF)
     b = peekbyte(io)
     negative = false
