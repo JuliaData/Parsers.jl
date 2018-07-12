@@ -55,6 +55,7 @@ Base.bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
     mant = big(v)
     if 0 <= exp < 327
         num = mant * bipows5[exp+1]
+        println("num=$num")
         bex = bitlength(num) - significantbits(T)
         bex <= 0 && return ldexp(T(num), exp)
         quo = roundQuotient(num, big(1) << bex)
@@ -63,6 +64,7 @@ Base.bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
         maxpow = length(bipows5) - 1
         scl = (-exp <= maxpow) ? bipows5[-exp+1] :
             bipows5[maxpow+1] * bipows5[-exp-maxpow+1]
+        println("mant=$mant, scl=$scl")
         bex = bitlength(mant) - bitlength(scl) - significantbits(T)
         num = mant << -bex
         quo = roundQuotient(num, scl)
