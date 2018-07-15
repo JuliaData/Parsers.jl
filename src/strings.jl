@@ -84,6 +84,7 @@ function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, I
     escapechar::Union{UInt8, Nothing}=quotechar,
     delims::Union{Vector{UInt8}, Nothing}=nothing,
     kwargs...)
+    @debug "xparse Sentinel, String: quotechar='$quotechar', delims='$delims'"
     io = getio(s)
     ptr = getptr(io)
     len = 0
@@ -94,6 +95,7 @@ function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, I
         eof(io) && return Result(EMPTY_STRING, INVALID_QUOTED_FIELD, nothing)
         b = peekbyte(io)
         prevnode = node = Tries.matchleaf(trie, io, b)
+        @debug "b=$(Char(b)), node=$node"
         while true
             if same && b == escapechar
                 pos = position(io)
@@ -160,6 +162,7 @@ function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, I
         end
     end
 @label done
+    @debug "node=$node"
     if node !== nothing && node.leaf
         return Result{Union{Tuple{Ptr{UInt8}, Int}, Missing}}(missing, OK, nothing)
     elseif isempty(trie) && len == 0

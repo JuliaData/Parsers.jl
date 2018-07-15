@@ -69,7 +69,7 @@ Result(r::Result{Union{T, Missing}}, x::S, c::ReturnCode) where {T, S} = Result{
 Result(r::Result{T}, ::Type{S}) where {T, S} = Result{S}(nothing, r.code, r.b)
 Result(r::Result{Union{T, Missing}}, ::Type{S}) where {T, S} = Result{Union{S, Missing}}(nothing, r.code, r.b)
 
-struct ParserError <: Exception
+struct Error <: Exception
     result::Result
 end
 #TODO: showerror for ParserError
@@ -78,6 +78,7 @@ end
 function defaultparser end
 # fallthrough for custom parser functions: user-provided function should be of the form: f(io::IO, ::Type{T}; kwargs...)::Result{T}
 xparse(f::Base.Callable, io::IO, ::Type{T}; kwargs...) where {T} = f(io, T; kwargs...)
+xparse(io::IO, ::Type{T}; kwargs...) where {T} = xparse(defaultparser, io, T; kwargs...)
 
 # For parsing delimited fields
 # document that eof is always a valid delim
@@ -87,11 +88,14 @@ struct Delimited{I}
 end
 Delimited(next, delims::Union{Char, UInt8}...=',') = Delimited(next, UInt8[d % UInt8 for d in delims])
 getio(d::Delimited) = getio(d.next)
+Base.eof(io::Delimited) = eof(getio(io))
 
 xparse(d::Delimited{I}, ::Type{T}; kwargs...) where {I, T} = xparse(defaultparser, d, T; kwargs...)
 
 function xparse(f::Base.Callable, d::Delimited{I}, ::Type{T}; kwargs...) where {I, T}
+    @debug "xparse Delimited: '$(Char.(d.delims))'"
     result = xparse(f, d.next, T; delims=d.delims, kwargs...)
+    @debug "result.code=$(result.code), result.result=$(result.result)"
     io = getio(d)
     eof(io) && return result
     b = peekbyte(io)
@@ -99,10 +103,12 @@ function xparse(f::Base.Callable, d::Delimited{I}, ::Type{T}; kwargs...) where {
         if b === delim
             # found delimiter
             readbyte(io)
+            @debug "found delim='$delim'"
             return result
         end
     end
     # didn't find delimiter, result is invalid, consume until delimiter or eof
+    @debug "didn't find delimiters at expected location; result is invalid, parsing until delimiter is found"
     c = b
     while true
         c = readbyte(io)
@@ -126,22 +132,26 @@ struct Quoted{I}
     escapechar::UInt8
 end
 Quoted(next, q::Union{Char, UInt8}='"', e::Union{Char, UInt8}='\\') = Quoted(next, UInt8(q), UInt8(e))
-
 getio(q::Quoted) = getio(q.next)
+Base.eof(io::Quoted) = eof(getio(io))
 
 xparse(q::Quoted{I}, ::Type{T}; kwargs...) where {I, T} = xparse(defaultparser, q, T; kwargs...)
 
 function xparse(f::Base.Callable, q::Quoted{I}, ::Type{T}; kwargs...) where {I, T}
+    @debug "xparse Quoted: quotechar='$(Char(q.quotechar))', escapechar=$(Char(q.escapechar))'"
     io = getio(q)
     b = peekbyte(io)
     quoted = false
     if b === q.quotechar
+        @debug "found quotechar"
         readbyte(io)
         quoted = true
         result = xparse(f, q.next, T; quotechar=q.quotechar, escapechar=q.escapechar, kwargs...)
     else
+        @debug "didn't find quotechar"
         result = xparse(f, q.next, T; kwargs...)
     end
+    @debug "result.code=$(result.code), result.result=$(result.result)"
     if quoted
         eof(io) && return Result(result, INVALID_QUOTED_FIELD, result.b)
         b = peekbyte(io)
@@ -179,13 +189,16 @@ struct Sentinel{I}
 end
 Sentinel(next, sentinels::Union{String, Vector{String}}) = Sentinel(next, Tries.Trie(sentinels))
 getio(s::Sentinel) = getio(s.next)
+Base.eof(io::Sentinel) = eof(getio(io))
 
 xparse(s::Sentinel{I}, ::Type{T}; kwargs...) where {I, T} = xparse(defaultparser, s, T; kwargs...)
 
 function xparse(f::Base.Callable, s::Sentinel{I}, ::Type{T}; kwargs...)::Result{Union{T, Missing}} where {I, T}
+    @debug "xparse Sentinel"
     io = getio(s)
     pos = position(io)
     result = xparse(f, s.next, T; kwargs...)
+    @debug "result.code=$(result.code), result.result=$(result.result)"
     if result.code !== OK
         if isempty(s.sentinels) && position(io) == pos
             return Result{Union{T, Missing}}(missing, OK, nothing)
@@ -201,6 +214,7 @@ end
 
 # Core integer parsing function
 function xparse(::typeof(defaultparser), io::IO, ::Type{T}; kwargs...)::Result{T} where {T <: Integer}
+    @debug "xparse Int"
     eof(io) && return Result(T, EOF)
     v = zero(T)
     b = peekbyte(io)
@@ -241,9 +255,9 @@ include("floats.jl")
 const TRUE = Tries.Trie(["true"], true)
 const FALSE = Tries.Trie(["false"], false)
 
-function xparse(::typeof(defaultparser), io::IO, ::Type{Bool}; kwargs...)::Result{Bool}
-    Tries.match(TRUE, io) && return Result(true, OK, nothing)
-    Tries.match(FALSE, io) && return Result(false, OK, nothing)
+function xparse(::typeof(defaultparser), io::IO, ::Type{Bool}; trues::Tries.Trie=TRUE, falses::Tries.Trie=FALSE, kwargs...)::Result{Bool}
+    Tries.match(trues, io) && return Result(true, OK, nothing)
+    Tries.match(falses, io) && return Result(false, OK, nothing)
     return Result(Bool, INVALID, nothing)
 end
 
