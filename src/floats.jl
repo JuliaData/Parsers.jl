@@ -1,7 +1,14 @@
 const BIG_E = UInt8('E')
 const LITTLE_E = UInt8('e')
 
-const bipows5 = BigInt[big(5)^x for x = 0:325]
+const bipows5 = BigInt[]
+
+function __init__()
+    for x in 0:325
+        push!(bipows5, big(5)^x)
+    end
+    return
+end
 
 function roundQuotient(num, den)
     quo, rem = divrem(num, den)
@@ -91,7 +98,7 @@ end
 const NANS = Tries.Trie(["nan"], NaN)
 const INFS = Tries.Trie(["infinity", "inf"], Inf)
 
-function xparse(::typeof(defaultparser), io::IO, ::Type{T}; kwargs...)::Result{T} where {T <: Union{Float16, Float32, Float64}}
+function xparse(::typeof(defaultparser), io::IO, ::Type{T}; decimal::Union{UInt8, Char}=UInt8('.'), kwargs...)::Result{T} where {T <: Union{Float16, Float32, Float64}}
     eof(io) && return Result(T, EOF)
     b = peekbyte(io)
     negative = false
@@ -118,7 +125,7 @@ function xparse(::typeof(defaultparser), io::IO, ::Type{T}; kwargs...)::Result{T
         b = peekbyte(io)
     end
     # check for dot
-    if b == PERIOD
+    if b == decimal % UInt8
         incr!(io)
         if eof(io)
             parseddigits && return Result(T(ifelse(negative, -v, v)))
