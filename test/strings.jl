@@ -401,6 +401,11 @@ r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(IOBuffer("\
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('"')
 
+r = Parsers.xparse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(IOBuffer("NULL,6.0\n7.0,8.0,9.0"), ["NULL"]), '"', '\\')), String)
+@test r.result === missing
+@test r.code === Parsers.OK
+@test r.b === nothing
+
 end # @testset
 
 end # @testset

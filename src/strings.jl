@@ -123,23 +123,28 @@ function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, I
             eof(io) && return Result((ptr, len), INVALID_QUOTED_FIELD, b)
             b = peekbyte(io)
             node = Tries.matchleaf(node, io, b)
+            @debug "b=$(Char(b)), node=$node"
         end
     elseif delims !== nothing
         eof(io) && @goto done
         # read until we find a delimiter
         b = peekbyte(io)
-        node = Tries.matchleaf(trie, io, b)
+        prevnode = node = Tries.matchleaf(trie, io, b)
+        @debug "b=$(Char(b)), node=$node"
         while true
             for delim in delims
                 if b === delim
+                    node = prevnode
                     @goto done
                 end
             end
+            prevnode = node
             len += incr(io, b)
             readbyte(io)
             eof(io) && @goto done
             b = peekbyte(io)
             node = Tries.matchleaf(node, io, b)
+            @debug "b=$(Char(b)), node=$node"
         end
     else
         # just read until eof
