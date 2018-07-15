@@ -80,6 +80,7 @@ end
 function match(node::Node, io::IO; ignorecase::Bool=false)
     eof(io) && return false
     b = peekbyte(io)
+    @debug "matching $(Char(b)) against $(Char(node.label))"
     if node.label === b || (ignorecase && lower(node.label) === lower(b))
         readbyte(io)
         if isempty(node.leaves)

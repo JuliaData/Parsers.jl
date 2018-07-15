@@ -269,11 +269,11 @@ r = Parsers.xparse(Parsers.Delimited(IOBuffer("1;")), Int)
 @test r.result === 1
 @test r.code === Parsers.INVALID
 @test r.b === UInt8(';')
-r = Parsers.xparse(Parsers.Delimited(IOBuffer("1\n"), UInt8[',', '\n']), Int)
+r = Parsers.xparse(Parsers.Delimited(IOBuffer("1\n"), ',', '\n'), Int)
 @test r.result === 1
 @test r.code === Parsers.OK
 @test r.b === nothing
-r = Parsers.xparse(Parsers.Delimited(IOBuffer("1abc\n"), UInt8[',', '\n']), Int)
+r = Parsers.xparse(Parsers.Delimited(IOBuffer("1abc\n"), ',', '\n'), Int)
 @test r.result === 1
 @test r.code === Parsers.INVALID
 @test r.b === UInt8('c')

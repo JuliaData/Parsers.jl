@@ -201,11 +201,11 @@ r = Parsers.xparse(Parsers.Delimited(IOBuffer("1;")), String)
 @test r.result === "1;"
 @test r.code === Parsers.OK
 @test r.b === nothing
-r = Parsers.xparse(Parsers.Delimited(IOBuffer("1\n"), UInt8[',', '\n']), String)
+r = Parsers.xparse(Parsers.Delimited(IOBuffer("1\n"), ',', '\n'), String)
 @test r.result === "1"
 @test r.code === Parsers.OK
 @test r.b === nothing
-r = Parsers.xparse(Parsers.Delimited(IOBuffer("1abc\n"), UInt8[',', '\n']), String)
+r = Parsers.xparse(Parsers.Delimited(IOBuffer("1abc\n"), ',', '\n'), String)
 @test r.result === "1abc"
 @test r.code === Parsers.OK
 @test r.b === nothing

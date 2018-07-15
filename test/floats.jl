@@ -380,7 +380,7 @@ r = Parsers.xparse(IOBuffer("1e"), Float64)
 r = Parsers.xparse(IOBuffer("1e-"), Float64)
 @test r.result === nothing
 @test r.code === Parsers.INVALID
-@test r.b === 0x00
+@test r.b === 0x2d
 r = Parsers.xparse(IOBuffer(".e-1"), Float64)
 @test r.result === nothing
 @test r.code === Parsers.INVALID

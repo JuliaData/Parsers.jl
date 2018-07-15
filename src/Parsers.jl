@@ -84,45 +84,31 @@ xparse(io::IO, ::Type{T}; kwargs...) where {T} = xparse(defaultparser, io, T; kw
 # document that eof is always a valid delim
 struct Delimited{I}
     next::I
-    delims::Vector{UInt8}
+    delims::Tries.Trie
 end
-Delimited(next, delims::Union{Char, UInt8}...=',') = Delimited(next, UInt8[d % UInt8 for d in delims])
+Delimited(next, delims::Union{Char, String}...=',') = Delimited(next, Tries.Trie(String[string(d) for d in delims]))
 getio(d::Delimited) = getio(d.next)
 Base.eof(io::Delimited) = eof(getio(io))
 
 xparse(d::Delimited{I}, ::Type{T}; kwargs...) where {I, T} = xparse(defaultparser, d, T; kwargs...)
 
 function xparse(f::Base.Callable, d::Delimited{I}, ::Type{T}; kwargs...) where {I, T}
-    @debug "xparse Delimited: '$(Char.(d.delims))'"
+    @debug "xparse Delimited"
     result = xparse(f, d.next, T; delims=d.delims, kwargs...)
     @debug "result.code=$(result.code), result.result=$(result.result)"
     io = getio(d)
     eof(io) && return result
-    b = peekbyte(io)
-    for delim in d.delims
-        if b === delim
-            # found delimiter
-            readbyte(io)
-            @debug "found delim='$delim'"
-            return result
-        end
-    end
+    Tries.match(d.delims, io) && return result
     # didn't find delimiter, result is invalid, consume until delimiter or eof
     @debug "didn't find delimiters at expected location; result is invalid, parsing until delimiter is found"
-    c = b
+    b = 0x00
     while true
-        c = readbyte(io)
+        b = readbyte(io)
         eof(io) && @goto done
-        b = peekbyte(io)
-        for delim in d.delims
-            if b === delim
-                readbyte(io)
-                @goto done
-            end
-        end
+        Tries.match(d.delims, io) && @goto done
     end
 @label done
-    return Result(result, INVALID, c)
+    return Result(result, INVALID, b)
 end
 
 # For parsing quoted field
@@ -138,9 +124,9 @@ Base.eof(io::Quoted) = eof(getio(io))
 xparse(q::Quoted{I}, ::Type{T}; kwargs...) where {I, T} = xparse(defaultparser, q, T; kwargs...)
 
 function xparse(f::Base.Callable, q::Quoted{I}, ::Type{T}; kwargs...) where {I, T}
-    @debug "xparse Quoted: quotechar='$(Char(q.quotechar))', escapechar=$(Char(q.escapechar))'"
+    @debug "xparse Quoted"
     io = getio(q)
-    b = peekbyte(io)
+    b = eof(io) ? 0x00 : peekbyte(io)
     quoted = false
     if b === q.quotechar
         @debug "found quotechar"

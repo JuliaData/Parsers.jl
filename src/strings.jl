@@ -19,7 +19,7 @@ make(::Type{String}, ::Missing) = missing
 function xparse(::typeof(defaultparser), io::IO, ::Type{Tuple{Ptr{UInt8}, Int}};
     quotechar::Union{UInt8, Nothing}=nothing,
     escapechar::Union{UInt8, Nothing}=quotechar,
-    delims::Union{Vector{UInt8}, Nothing}=nothing,
+    delims::Union{Nothing, Tries.Trie}=nothing,
     kwargs...)
     ptr = getptr(io)
     len = 0
@@ -58,10 +58,10 @@ function xparse(::typeof(defaultparser), io::IO, ::Type{Tuple{Ptr{UInt8}, Int}};
         # read until we find a delimiter
         b = peekbyte(io)
         while true
-            for delim in delims
-                if b === delim
-                    @goto done
-                end
+            pos = position(io)
+            if Tries.match(delims, io)
+                seek(io, pos)
+                @goto done
             end
             len += incr(io, b)
             readbyte(io)
@@ -82,7 +82,7 @@ end
 function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, Int}};
     quotechar::Union{UInt8, Nothing}=nothing,
     escapechar::Union{UInt8, Nothing}=quotechar,
-    delims::Union{Vector{UInt8}, Nothing}=nothing,
+    delims::Union{Nothing, Tries.Trie}=nothing,
     kwargs...)
     @debug "xparse Sentinel, String: quotechar='$quotechar', delims='$delims'"
     io = getio(s)
@@ -134,11 +134,11 @@ function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, I
         prevnode = node = Tries.matchleaf(trie, io, b)
         @debug "b=$(Char(b)), node=$node"
         while true
-            for delim in delims
-                if b === delim
-                    node = prevnode
-                    @goto done
-                end
+            pos = position(io)
+            if Tries.match(delims, io)
+                seek(io, pos)
+                node = prevnode
+                @goto done
             end
             prevnode = node
             len += incr(io, b)
