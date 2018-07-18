@@ -93,8 +93,8 @@ function scale(::Type{T}, lmant, exp, neg) where {T <: Union{Float16, Float32, F
     return Result(ifelse(neg, -result, result))
 end
 
-const NANS = Tries.Trie(["nan"], NaN)
-const INFS = Tries.Trie(["infinity", "inf"], Inf)
+const NANS = Tries.Trie(["nan"])
+const INFS = Tries.Trie(["infinity", "inf"])
 
 function xparse(::typeof(defaultparser), io::IO, ::Type{T}; decimal::Union{UInt8, Char}=UInt8('.'), kwargs...)::Result{T} where {T <: Union{Float16, Float32, Float64}}
     eof(io) && return Result(T, EOF)

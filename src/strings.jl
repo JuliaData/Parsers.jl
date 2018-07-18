@@ -23,19 +23,20 @@ function xparse(::typeof(defaultparser), io::IO, ::Type{Tuple{Ptr{UInt8}, Int}};
     kwargs...)
     ptr = getptr(io)
     len = 0
+    b = nothing
     if quotechar !== nothing
         same = quotechar === escapechar
-        eof(io) && return Result(EMPTY_STRING, INVALID_QUOTED_FIELD, nothing)
+        eof(io) && return Result(EMPTY_STRING, INVALID_QUOTED_FIELD, 0x00)
         b = peekbyte(io)
         while true
             if same && b == escapechar
                 pos = position(io)
                 readbyte(io)
                 if eof(io)
-                    seek(io, pos)
+                    fastseek!(io, pos)
                     @goto done
                 elseif peekbyte(io) !== quotechar
-                    seek(io, pos)
+                    fastseek!(io, pos)
                     @goto done
                 end
                 # otherwise, next byte is escaped, so read it
@@ -57,10 +58,12 @@ function xparse(::typeof(defaultparser), io::IO, ::Type{Tuple{Ptr{UInt8}, Int}};
         eof(io) && @goto done
         # read until we find a delimiter
         b = peekbyte(io)
+        ref = Ref{UInt8}() # so we can track which delimiter was found
         while true
             pos = position(io)
-            if Tries.match(delims, io)
-                seek(io, pos)
+            if Tries.match(delims, io; ref=ref)
+                fastseek!(io, pos)
+                b = ref[]
                 @goto done
             end
             len += incr(io, b)
@@ -76,7 +79,7 @@ function xparse(::typeof(defaultparser), io::IO, ::Type{Tuple{Ptr{UInt8}, Int}};
         end
     end
 @label done
-    return Result((ptr, len), OK, nothing)
+    return Result((ptr, len), OK, b)
 end
 
 function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, Int}};
@@ -90,9 +93,10 @@ function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, I
     len = 0
     trie = s.sentinels
     node = nothing
+    b = nothing
     if quotechar !== nothing
         same = quotechar === escapechar
-        eof(io) && return Result(EMPTY_STRING, INVALID_QUOTED_FIELD, nothing)
+        eof(io) && return Result(EMPTY_STRING, INVALID_QUOTED_FIELD, 0x00)
         b = peekbyte(io)
         prevnode = node = Tries.matchleaf(trie, io, b)
         @debug "b=$(Char(b)), node=$node"
@@ -101,11 +105,11 @@ function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, I
                 pos = position(io)
                 readbyte(io)
                 if eof(io)
-                    seek(io, pos)
+                    fastseek!(io, pos)
                     node = prevnode
                     @goto done
                 elseif peekbyte(io) !== quotechar
-                    seek(io, pos)
+                    fastseek!(io, pos)
                     node = prevnode
                     @goto done
                 end
@@ -131,13 +135,15 @@ function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, I
         eof(io) && @goto done
         # read until we find a delimiter
         b = peekbyte(io)
+        ref = Ref{UInt8}() # so we can track which delimiter was found
         prevnode = node = Tries.matchleaf(trie, io, b)
         @debug "b=$(Char(b)), node=$node"
         while true
             pos = position(io)
-            if Tries.match(delims, io)
-                seek(io, pos)
+            if Tries.match(delims, io; ref=ref)
+                fastseek!(io, pos)
                 node = prevnode
+                b = ref[]
                 @goto done
             end
             prevnode = node
@@ -164,11 +170,11 @@ function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, I
 @label done
     @debug "node=$node"
     if node !== nothing && node.leaf
-        return Result{Union{Tuple{Ptr{UInt8}, Int}, Missing}}(missing, OK, nothing)
+        return Result{Union{Tuple{Ptr{UInt8}, Int}, Missing}}(missing, OK, b)
     elseif isempty(trie) && len == 0
-        return Result{Union{Tuple{Ptr{UInt8}, Int}, Missing}}(missing, OK, nothing)
+        return Result{Union{Tuple{Ptr{UInt8}, Int}, Missing}}(missing, OK, b)
     else
-        return Result{Union{Tuple{Ptr{UInt8}, Int}, Missing}}((ptr, len), OK, nothing)
+        return Result{Union{Tuple{Ptr{UInt8}, Int}, Missing}}((ptr, len), OK, b)
     end
 end
 

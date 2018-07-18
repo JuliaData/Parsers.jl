@@ -33,7 +33,7 @@ function bench(n=100_000)
         rng = -322:307
         for i = 1:n
             exp = rand(rng)
-            r = string(exp10(exp) * rand())
+            r = string(exp10(exp) * round(rand(), digits=rand(1:9)))
             strtod = @elapsed begin
                 a1 = parse(Float64, r)
             end
@@ -46,5 +46,14 @@ function bench(n=100_000)
             end
             println(f, exp, ',', r, ',', strtod, ',', xparse)
         end
+    end
+end
+
+
+function prof(n)
+    io = IOBuffer("3.2925339999999996e-18")
+    for i = 1:n
+        seekstart(io)
+        Main.Parsers.xparse(io, Float64)
     end
 end

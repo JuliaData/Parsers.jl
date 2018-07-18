@@ -26,48 +26,43 @@ const UNDERSCORE = UInt8('_')
 readbyte(from::IO) = Base.read(from, UInt8)
 peekbyte(from::IO) = Base.peek(from)
 
-@inline function readbyte(from::IOBuffer)
+function readbyte(from::IOBuffer)
     @inbounds byte = from.data[from.ptr]
     from.ptr = from.ptr + 1
     return byte
 end
 
-@inline function peekbyte(from::IOBuffer)
+function peekbyte(from::IOBuffer)
     @inbounds byte = from.data[from.ptr]
     return byte
 end
 
-incr!(io::IOBuffer) = io.ptr += 1
-incr!(io::IO) = readbyte(io)
-
-iswh(b) = b == UInt8('\t') || b == UInt8(' ') || b == UInt8('\n') || b == UInt8('\r')
-@inline function wh!(io, b=peekbyte(io))
-    while iswh(b)
-        readbyte(io)
-        b = peekbyte(io)
-    end
+fastseek!(io::IO, n::Integer) = seek(io, n)
+function fastseek!(io::IOBuffer, n::Integer)
+    io.ptr = n+1
     return
 end
+
+incr!(io::IOBuffer) = io.ptr += 1
+incr!(io::IO) = readbyte(io)
 
 getio(io::IO) = io
 
 # Result type which includes a ReturnCode
 @enum ReturnCode OK EOF OVERFLOW INVALID INVALID_QUOTED_FIELD
 
-struct Result{T}
-    result::Union{T, Nothing}
+mutable struct Result{T}
+    result::Union{T, Missing}
     code::ReturnCode
-    b::Union{UInt8, Nothing}
+    b::UInt8
 end
 
-Result(x::T) where {T} = Result{T}(x, OK, nothing)
-Result(::Type{T}, r::ReturnCode, b::Union{UInt8, Nothing}=nothing) where {T} = Result{T}(nothing, r, b)
-Result(r::Result{T}, c::ReturnCode=r.code, b::Union{UInt8, Nothing}=r.b) where {T} = Result{T}(r.result, c, b)
+Result(x::T) where {T} = Result{T}(x, OK, 0x00)
+Result(::Type{T}, r::ReturnCode, b::UInt8=0x00) where {T} = Result{T}(missing, r, b)
+Result(r::Result{T}, c::ReturnCode=r.code, b::UInt8=r.b) where {T} = Result{T}(r.result, c, b)
 Result(r::Result{T}, x::T, c::ReturnCode) where {T} = Result{T}(x, c, r.b)
 Result(r::Result{T}, x::S, c::ReturnCode) where {T, S} = Result{S}(x, c, r.b)
-Result(r::Result{Union{T, Missing}}, x::S, c::ReturnCode) where {T, S} = Result{Union{S, Missing}}(x, c, r.b)
-Result(r::Result{T}, ::Type{S}) where {T, S} = Result{S}(nothing, r.code, r.b)
-Result(r::Result{Union{T, Missing}}, ::Type{S}) where {T, S} = Result{Union{S, Missing}}(nothing, r.code, r.b)
+Result(r::Result{T}, ::Type{S}) where {T, S} = Result{S}(missing, r.code, r.b)
 
 struct Error <: Exception
     result::Result
@@ -92,23 +87,27 @@ Base.eof(io::Delimited) = eof(getio(io))
 
 xparse(d::Delimited{I}, ::Type{T}; kwargs...) where {I, T} = xparse(defaultparser, d, T; kwargs...)
 
-function xparse(f::Base.Callable, d::Delimited{I}, ::Type{T}; kwargs...) where {I, T}
-    @debug "xparse Delimited"
-    result = xparse(f, d.next, T; delims=d.delims, kwargs...)
-    @debug "result.code=$(result.code), result.result=$(result.result)"
+function xparse(f::Base.Callable, d::Delimited{I}, ::Type{T}) where {I, T}
+    # @debug "xparse Delimited - $T"
+    result = xparse(f, d.next, T)
+    # @debug "Delimited - $T: result.code=$(result.code), result.result=$(result.result)"
     io = getio(d)
     eof(io) && return result
-    Tries.match(d.delims, io) && return result
+    ref = Ref{UInt8}()
+    if Tries.match(d.delims, io; ref=ref)
+        result.b = ref[]
+        return result
+    end
     # didn't find delimiter, result is invalid, consume until delimiter or eof
-    @debug "didn't find delimiters at expected location; result is invalid, parsing until delimiter is found"
+    # @debug "didn't find delimiters at expected location; result is invalid, parsing until delimiter is found"
     b = 0x00
     while true
         b = readbyte(io)
-        eof(io) && @goto done
-        Tries.match(d.delims, io) && @goto done
+        (eof(io) || Tries.match(d.delims, io)) && break
     end
-@label done
-    return Result(result, INVALID, b)
+    result.code = INVALID
+    result.b = b
+    return result
 end
 
 # For parsing quoted field
@@ -123,50 +122,104 @@ Base.eof(io::Quoted) = eof(getio(io))
 
 xparse(q::Quoted{I}, ::Type{T}; kwargs...) where {I, T} = xparse(defaultparser, q, T; kwargs...)
 
-function xparse(f::Base.Callable, q::Quoted{I}, ::Type{T}; kwargs...) where {I, T}
-    @debug "xparse Quoted"
+function xparse(f::Base.Callable, q::Quoted{I}, ::Type{T};
+    delims::Union{Nothing, Tries.Trie}=nothing,
+    kwargs...) where {I, T}
+    # @debug "xparse Quoted - $T"
     io = getio(q)
-    b = eof(io) ? 0x00 : peekbyte(io)
-    quoted = false
-    if b === q.quotechar
-        @debug "found quotechar"
+    if !eof(io) && peekbyte(io) === q.quotechar
         readbyte(io)
         quoted = true
         result = xparse(f, q.next, T; quotechar=q.quotechar, escapechar=q.escapechar, kwargs...)
     else
-        @debug "didn't find quotechar"
         result = xparse(f, q.next, T; kwargs...)
+        quoted = false
     end
-    @debug "result.code=$(result.code), result.result=$(result.result)"
+    # @debug "Quoted - $T: result.code=$(result.code), result.result=$(result.result)"
     if quoted
-        eof(io) && return Result(result, INVALID_QUOTED_FIELD, result.b)
+        if eof(io)
+            result.code = INVALID_QUOTED_FIELD
+            return result
+        end
         b = peekbyte(io)
         if b !== q.quotechar
+            # @debug "invalid quoted field"
             # result is invalid, parsing should have consumed until quotechar
             same = q.quotechar === q.escapechar
             c = b
             while true
                 if same && b === q.escapechar
                     readbyte(io)
-                    (eof(io) || peekbyte(io) !== q.quotechar) && return Result(result, INVALID, c)
+                    if (eof(io) || peekbyte(io) !== q.quotechar) 
+                        result.code = INVALID
+                        result.b = c
+                        return result
+                    end
                 elseif b === q.escapechar
                     readbyte(io)
-                    eof(io) && return Result(result, INVALID_QUOTED_FIELD, b)
+                    if eof(io)
+                        result.code = INVALID_QUOTED_FIELD
+                        result.b = b
+                        return result
+                    end
                 elseif b === q.quotechar
                     readbyte(io)
-                    return Result(result, INVALID, c)
+                    result.code = INVALID
+                    result.b = c
+                    return result
                 end
                 c = readbyte(io)
                 eof(io) && break
                 b = peekbyte(io)
             end
-            return Result(result, INVALID_QUOTED_FIELD, c)
+            result.code = INVALID_QUOTED_FIELD
+            result.b = c
+            return result
         else
             readbyte(io)
         end
     end
     return result
 end
+
+# strip whitespace
+struct Strip{I}
+    next::I
+    wh1::UInt8
+    wh2::UInt8
+end
+Strip(io::I, wh1=' ', wh2='\t') where {I} = Strip{I}(io, wh1 % UInt8, wh2 % UInt8)
+getio(s::Strip) = getio(s.next)
+Base.eof(io::Strip) = eof(getio(io))
+
+xparse(s::Strip, ::Type{T}; kwargs...) where {T} = xparse(defaultparser, s, T; kwargs...)
+
+@inline function wh!(io, wh1, wh2)
+    if !eof(io)
+        b = peekbyte(io)
+        while b == wh1 || b == wh2
+            readbyte(io)
+            eof(io) && break
+            b = peekbyte(io)
+        end
+    end
+end
+
+function xparse(f::Base.Callable, s::Strip, ::Type{T};
+    quotechar::Union{UInt8, Nothing}=nothing,
+    escapechar::Union{UInt8, Nothing}=quotechar,
+    delims::Union{Nothing, Tries.Trie}=nothing,
+    kwargs...) where {T}
+    # @debug "xparse Strip - $T"
+    io = getio(s)
+    wh!(io, s.wh1, s.wh2)
+    result = xparse(f, s.next, T; kwargs...)
+    # @debug "Strip - $T: result.code=$(result.code), result.result=$(result.result), result.b=$(result.b)"
+    wh!(io, s.wh1, s.wh2)
+    return result
+end
+# don't strip whitespace for Strings
+xparse(f::Base.Callable, s::Strip, ::Type{String}; kwargs...) = xparse(f, s.next, String; kwargs...)
 
 # For parsing sentinel values
 struct Sentinel{I}
@@ -179,28 +232,37 @@ Base.eof(io::Sentinel) = eof(getio(io))
 
 xparse(s::Sentinel{I}, ::Type{T}; kwargs...) where {I, T} = xparse(defaultparser, s, T; kwargs...)
 
-function xparse(f::Base.Callable, s::Sentinel{I}, ::Type{T}; kwargs...)::Result{Union{T, Missing}} where {I, T}
-    @debug "xparse Sentinel"
+function xparse(f::Base.Callable, s::Sentinel{I}, ::Type{T})::Result{T} where {I, T}
+    # @debug "xparse Sentinel - $T"
     io = getio(s)
     pos = position(io)
-    result = xparse(f, s.next, T; kwargs...)
-    @debug "result.code=$(result.code), result.result=$(result.result)"
-    if result.code !== OK
+    result = xparse(f, s.next, T)
+    # @debug "Sentinel - $T: result.code=$(result.code), result.result=$(result.result)"
+    c = result.code
+    if c !== OK
         if isempty(s.sentinels) && position(io) == pos
-            return Result{Union{T, Missing}}(missing, OK, nothing)
+            result.code = OK
+            return result
         else
-            seek(io, pos)
-            if Tries.match(s.sentinels, io)
-                return Result{Union{T, Missing}}(missing, OK, nothing)
+            fastseek!(io, pos)
+            ref = Ref{UInt8}()
+            if Tries.match(s.sentinels, io; ref=ref)
+                result.code = OK
+                result.b = ref[]
+                return result
             end
         end
     end
-    return Result{Union{T, Missing}}(result.result, result.code, result.b)
+    return result
 end
 
 # Core integer parsing function
-function xparse(::typeof(defaultparser), io::IO, ::Type{T}; kwargs...)::Result{T} where {T <: Integer}
-    @debug "xparse Int"
+function xparse(::typeof(defaultparser), io::IO, ::Type{T};
+    quotechar::Union{UInt8, Nothing}=nothing,
+    escapechar::Union{UInt8, Nothing}=quotechar,
+    delims::Union{Nothing, Tries.Trie}=nothing,
+    kwargs...)::Result{T} where {T <: Integer}
+    # @debug "xparse Int"
     eof(io) && return Result(T, EOF)
     v = zero(T)
     b = peekbyte(io)
@@ -230,7 +292,7 @@ function xparse(::typeof(defaultparser), io::IO, ::Type{T}; kwargs...)::Result{T
     if !parseddigits
         return Result(T, INVALID, b)
     else
-        return Result(ifelse(negative, -v, v))
+        return Result(ifelse(negative, -v, v), OK, b)
     end
 end
 
@@ -238,13 +300,14 @@ include("strings.jl")
 include("floats.jl")
 
 # Bool parsing
-const TRUE = Tries.Trie(["true"], true)
-const FALSE = Tries.Trie(["false"], false)
+const TRUE = Tries.Trie(["true"])
+const FALSE = Tries.Trie(["false"])
 
 function xparse(::typeof(defaultparser), io::IO, ::Type{Bool}; trues::Tries.Trie=TRUE, falses::Tries.Trie=FALSE, kwargs...)::Result{Bool}
-    Tries.match(trues, io) && return Result(true, OK, nothing)
-    Tries.match(falses, io) && return Result(false, OK, nothing)
-    return Result(Bool, INVALID, nothing)
+    ref = Ref{UInt8}(0x00)
+    Tries.match(trues, io; ref=ref) && return Result(true, OK, ref[])
+    Tries.match(falses, io; ref=ref) && return Result(false, OK, ref[])
+    return Result(Bool, INVALID, ref[])
 end
 
 # Dates.TimeType parsing
@@ -254,20 +317,22 @@ function xparse(::typeof(defaultparser), io::IO, ::Type{T};
     res = xparse(io, String; kwargs...)
     if res.code === OK && !isempty(res.result)
         dt = tryparse(T, res.result, dateformat)
-        return dt === nothing ? Result(T, INVALID, res.b) : Result(T(res.result, dateformat), OK, nothing)
+        return dt === nothing ? Result(T, INVALID, res.b) : Result(T(res.result, dateformat), OK, 0x00)
     else
         return Result(T, INVALID, res.b)
     end
 end
 
+xparse(::typeof(defaultparser), io::IO, ::Type{Missing}; kwargs...) = Result(Missing, INVALID, 0x00)
+xparse(::typeof(defaultparser), io::IO, ::Type{Union{}}; kwargs...) = Result(Missing, INVALID, 0x00)
 
 end # module
 
 #TODO
- #custom parsing function
+ #open/close quotechar
  #Trie tests
  #showerror for ParserError
- #high-level functions
+ #high-level functions: parse, tryparse
  #whole row parsing functionality
  #go thru csv issues
  #JSON2 can use?
