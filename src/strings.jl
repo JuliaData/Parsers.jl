@@ -23,7 +23,7 @@ function xparse(::typeof(defaultparser), io::IO, ::Type{Tuple{Ptr{UInt8}, Int}};
     kwargs...)
     ptr = getptr(io)
     len = 0
-    b = nothing
+    b = 0x00
     if quotechar !== nothing
         same = quotechar === escapechar
         eof(io) && return Result(EMPTY_STRING, INVALID_QUOTED_FIELD, 0x00)
@@ -87,19 +87,19 @@ function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, I
     escapechar::Union{UInt8, Nothing}=quotechar,
     delims::Union{Nothing, Tries.Trie}=nothing,
     kwargs...)
-    @debug "xparse Sentinel, String: quotechar='$quotechar', delims='$delims'"
+    # @debug "xparse Sentinel, String: quotechar='$quotechar', delims='$delims'"
     io = getio(s)
     ptr = getptr(io)
     len = 0
     trie = s.sentinels
     node = nothing
-    b = nothing
+    b = 0x00
     if quotechar !== nothing
         same = quotechar === escapechar
         eof(io) && return Result(EMPTY_STRING, INVALID_QUOTED_FIELD, 0x00)
         b = peekbyte(io)
         prevnode = node = Tries.matchleaf(trie, io, b)
-        @debug "b=$(Char(b)), node=$node"
+        # @debug "b=$(Char(b)), node=$node"
         while true
             if same && b == escapechar
                 pos = position(io)
@@ -129,7 +129,7 @@ function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, I
             eof(io) && return Result((ptr, len), INVALID_QUOTED_FIELD, b)
             b = peekbyte(io)
             node = Tries.matchleaf(node, io, b)
-            @debug "b=$(Char(b)), node=$node"
+            # @debug "b=$(Char(b)), node=$node"
         end
     elseif delims !== nothing
         eof(io) && @goto done
@@ -137,7 +137,7 @@ function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, I
         b = peekbyte(io)
         ref = Ref{UInt8}() # so we can track which delimiter was found
         prevnode = node = Tries.matchleaf(trie, io, b)
-        @debug "b=$(Char(b)), node=$node"
+        # @debug "b=$(Char(b)), node=$node"
         while true
             pos = position(io)
             if Tries.match(delims, io; ref=ref)
@@ -168,13 +168,13 @@ function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, I
         end
     end
 @label done
-    @debug "node=$node"
+    # @debug "node=$node"
     if node !== nothing && node.leaf
-        return Result{Union{Tuple{Ptr{UInt8}, Int}, Missing}}(missing, OK, b)
+        return Result{Tuple{Ptr{UInt8}, Int}}(missing, OK, b)
     elseif isempty(trie) && len == 0
-        return Result{Union{Tuple{Ptr{UInt8}, Int}, Missing}}(missing, OK, b)
+        return Result{Tuple{Ptr{UInt8}, Int}}(missing, OK, b)
     else
-        return Result{Union{Tuple{Ptr{UInt8}, Int}, Missing}}((ptr, len), OK, b)
+        return Result{Tuple{Ptr{UInt8}, Int}}((ptr, len), OK, b)
     end
 end
 
