@@ -93,8 +93,7 @@ function scale(::Type{T}, lmant, exp, neg) where {T <: Union{Float16, Float32, F
     return Result(ifelse(neg, -result, result))
 end
 
-const NANS = Tries.Trie(["nan"])
-const INFS = Tries.Trie(["infinity", "inf"])
+const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
 
 function xparse(::typeof(defaultparser), io::IO, ::Type{T}; decimal::Union{UInt8, Char}=UInt8('.'), kwargs...)::Result{T} where {T <: Union{Float16, Float32, Float64}}
     eof(io) && return Result(T, EOF)
@@ -131,8 +130,11 @@ function xparse(::typeof(defaultparser), io::IO, ::Type{T}; decimal::Union{UInt8
         end
         b = peekbyte(io)
     elseif !parseddigits
-        Tries.match(NANS, io; ignorecase=true) && return Result(T(NaN))
-        Tries.match(INFS, io; ignorecase=true) && return Result(T(ifelse(negative, -Inf, Inf)))
+        r = Result(T, OK)
+        if match!(SPECIALS, io, r, true, true)
+            r.result = T(ifelse(negative, -r.result, r.result))
+            return r
+        end
         @goto error
     end
     # parse fractional part

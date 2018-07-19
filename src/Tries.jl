@@ -1,31 +1,10 @@
-module Tries
-
-readbyte(from::IO) = Base.read(from, UInt8)
-peekbyte(from::IO) = Base.peek(from)
-
-function readbyte(from::IOBuffer)
-    @inbounds byte = from.data[from.ptr]
-    from.ptr = from.ptr + 1
-    return byte
-end
-
-function peekbyte(from::IOBuffer)
-    @inbounds byte = from.data[from.ptr]
-    return byte
-end
-
-fastseek!(io::IO, n::Integer) = seek(io, n)
-function fastseek!(io::IOBuffer, n::Integer)
-    io.ptr = n+1
-    return
-end
-
-mutable struct Node
+mutable struct Node{T}
     label::UInt8
     leaf::Bool
-    leaves::Vector{Node}
+    value::T
+    leaves::Vector{Node{T}}
 end
-Node(label::UInt8, leaf::Bool=false) = Node(label, leaf, Node[])
+Node(label::UInt8, leaf::Bool=false, value::T=missing) where {T} = Node(label, leaf, value, Node{T}[])
 
 function Base.show(io::IO, n::Node; indent::Int=0)
     print(io, "   "^indent)
@@ -36,8 +15,8 @@ function Base.show(io::IO, n::Node; indent::Int=0)
     end
 end
 
-struct Trie
-    leaves::Vector{Node}
+struct Trie{T}
+    leaves::Vector{Node{T}}
 end
 
 function Base.show(io::IO, t::Trie)
@@ -47,14 +26,24 @@ function Base.show(io::IO, t::Trie)
     end
     return
 end
-Trie() = Trie(Node[])
-Trie(v::String) = Trie([v])
+Trie(::Type{T}=Missing) where {T} = Trie(Node{T}[])
+Trie(v::String, value::T=missing) where {T} = Trie([v], value)
 
-function Trie(values::Vector{String})
-    t = Trie()
+function Trie(values::Vector{String}, value::T=missing) where {T}
+    t = Trie(T)
     for v in values
         if !isempty(v)
-            append!(t, Tuple(codeunits(v)))
+            append!(t, Tuple(codeunits(v)), value)
+        end
+    end
+    return t
+end
+
+function Trie(values::Vector{Pair{String, T}}) where {T}
+    t = Trie(T)
+    for (k, v) in values
+        if !isempty(k)
+            append!(t, Tuple(codeunits(k)), v)
         end
     end
     return t
@@ -62,7 +51,7 @@ end
 
 Base.isempty(t::Trie) = isempty(t.leaves)
 
-function Base.append!(trie::Union{Trie, Node}, bytes)
+function Base.append!(trie::Union{Trie, Node}, bytes, value)
     b = first(bytes)
     rest = Base.tail(bytes)
     for t in trie.leaves
@@ -71,54 +60,59 @@ function Base.append!(trie::Union{Trie, Node}, bytes)
                 t.leaf = true
                 return
             else
-                return append!(t, rest)
+                return append!(t, rest, value)
             end
         end
     end
     if isempty(rest)
-        push!(trie.leaves, Node(b, true))
+        push!(trie.leaves, Node(b, true, value))
         return
     else
-        push!(trie.leaves, Node(b, false))
-        return append!(trie.leaves[end], rest)
+        push!(trie.leaves, Node(b, false, value))
+        return append!(trie.leaves[end], rest, value)
     end
 end
 
 lower(c::UInt8) = UInt8('A') <= c <= UInt8('Z') ? c | 0x20 : c 
 
-function match(node::Trie, io::IO; ref::Ref{UInt8}=Ref{UInt8}(), ignorecase::Bool=false)
+function match!(node::Trie, io::IO, r::Result, setvalue::Bool=true, ignorecase::Bool=false)
     pos = position(io)
     if isempty(node.leaves)
         return true
     else
         for n in node.leaves
-            if match(n, io; ignorecase=ignorecase)
-                ref[] = n.label
-                return true
-            end
+            match!(n, io, r, setvalue, ignorecase) && return true
         end
     end
     fastseek!(io, pos)
     return false    
 end
-function match(node::Node, io::IO; ignorecase::Bool=false)
+
+function match!(node::Node, io::IO, r::Result, setvalue::Bool=true, ignorecase::Bool=false)
     eof(io) && return false
     b = peekbyte(io)
     # @debug "matching $(escape_string(string(Char(b)))) against $(escape_string(string(Char(node.label))))"
     if node.label === b || (ignorecase && lower(node.label) === lower(b))
         readbyte(io)
         if isempty(node.leaves)
+            setvalue && (r.result = node.value)
+            r.code = OK
+            r.b = b
             return true
         else
             for n in node.leaves
-                match(n, io; ignorecase=ignorecase) && return true
+                match!(n, io, r, setvalue, ignorecase) && return true
             end
         end
         # didn't match, if this is a leaf node, then we matched, otherwise, no match
-        return node.leaf
-    else
-        return false
+        if node.leaf
+            setvalue && (r.result = node.value)
+            r.code = OK
+            r.b = b
+            return true
+        end
     end
+    return false
 end
 
 function matchleaf(node::Union{Trie, Node}, io::IO, b::UInt8)
@@ -128,5 +122,3 @@ function matchleaf(node::Union{Trie, Node}, io::IO, b::UInt8)
     return nothing
 end
 matchleaf(::Nothing, io, b) = nothing
-
-end # module
