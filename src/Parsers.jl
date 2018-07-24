@@ -223,9 +223,9 @@ end
 xparse(f::Base.Callable, s::Strip, ::Type{String}; kwargs...) = xparse(f, s.next, String; kwargs...)
 
 # For parsing sentinel values
-struct Sentinel{I, empty}
+struct Sentinel{I}
     next::I
-    sentinels::Trie{Missing, empty}
+    sentinels::Trie{Missing}
 end
 Sentinel(next, sentinels::Union{String, Vector{String}}) = Sentinel(next, Trie(sentinels))
 getio(s::Sentinel) = getio(s.next)
@@ -233,14 +233,19 @@ Base.eof(io::Sentinel) = eof(getio(io))
 
 xparse(s::Sentinel{I}, ::Type{T}; kwargs...) where {I, T} = xparse(defaultparser, s, T; kwargs...)
 
-function xparse(f::Base.Callable, s::Sentinel{I, empty}, ::Type{T})::Result{T} where {I, empty, T}
+function xparse(f::Base.Callable, s::Sentinel{I}, ::Type{T};
+    openquotechar::Union{UInt8, Nothing}=nothing,
+    closequotechar::Union{UInt8, Nothing}=nothing,
+    escapechar::Union{UInt8, Nothing}=openquotechar,
+    delims::Union{Nothing, Trie}=nothing,
+    kwargs...)::Result{T} where {I, T}
     # @debug "xparse Sentinel - $T"
     io = getio(s)
     pos = position(io)
-    result = xparse(f, s.next, T)
+    result = xparse(f, s.next, T; openquotechar=openquotechar, closequotechar=closequotechar, escapechar=escapechar, delims=delims, kwargs...)
     # @debug "Sentinel - $T: result.code=$(result.code), result.result=$(result.result)"
     if result.code !== OK
-        if empty && position(io) == pos
+        if isempty(s.sentinels.leaves) && position(io) == pos
             result.code = OK
         else
             fastseek!(io, pos)
@@ -251,7 +256,12 @@ function xparse(f::Base.Callable, s::Sentinel{I, empty}, ::Type{T})::Result{T} w
 end
 
 # Core integer parsing function
-function xparse(::typeof(defaultparser), io::IO, ::Type{T})::Result{T} where {T <: Integer}
+@inline function xparse(::typeof(defaultparser), io::IO, ::Type{T};
+    openquotechar::Union{UInt8, Nothing}=nothing,
+    closequotechar::Union{UInt8, Nothing}=nothing,
+    escapechar::Union{UInt8, Nothing}=openquotechar,
+    delims::Union{Nothing, Trie}=nothing,
+    kwargs...)::Result{T} where {T <: Integer}
     # @debug "xparse Int"
     eof(io) && return Result(T, EOF)
     v = zero(T)
@@ -292,7 +302,7 @@ include("floats.jl")
 # Bool parsing
 const BOOLS = Trie(["true"=>true, "false"=>false])
 
-function xparse(::typeof(defaultparser), io::IO, ::Type{Bool};
+@inline function xparse(::typeof(defaultparser), io::IO, ::Type{Bool};
     bools::Trie=BOOLS,
     openquotechar::Union{UInt8, Nothing}=nothing,
     closequotechar::Union{UInt8, Nothing}=nothing,
@@ -305,7 +315,7 @@ function xparse(::typeof(defaultparser), io::IO, ::Type{Bool};
 end
 
 # Dates.TimeType parsing
-function xparse(::typeof(defaultparser), io::IO, ::Type{T};
+@inline function xparse(::typeof(defaultparser), io::IO, ::Type{T};
     dateformat::Dates.DateFormat=Dates.default_format(T),
     openquotechar::Union{UInt8, Nothing}=nothing,
     closequotechar::Union{UInt8, Nothing}=nothing,

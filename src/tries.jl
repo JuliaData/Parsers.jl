@@ -15,7 +15,7 @@ function Base.show(io::IO, n::Node; indent::Int=0)
     end
 end
 
-struct Trie{T, empty}
+struct Trie{T}
     leaves::Vector{Node{T}}
 end
 
@@ -30,26 +30,22 @@ Trie(v::String, value::T=missing) where {T} = Trie([v], value)
 
 function Trie(values::Vector{String}, value::T=missing) where {T}
     leaves = Node{T}[]
-    empty = true
     for v in values
-        empty = false
         if !isempty(v)
             append!(leaves, Tuple(codeunits(v)), value)
         end
     end
-    return Trie{T, empty}(leaves)
+    return Trie(leaves)
 end
 
 function Trie(values::Vector{Pair{String, T}}) where {T}
     leaves = Node{T}[]
-    empty = true
     for (k, v) in values
-        empty = false
         if !isempty(k)
             append!(leaves, Tuple(codeunits(k)), v)
         end
     end
-    return Trie{T, empty}(leaves)
+    return Trie(leaves)
 end
 
 function Base.append!(leaves, bytes, value)

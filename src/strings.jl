@@ -195,7 +195,7 @@ function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, I
 @label done
     # @debug "node=$node"
     r.b = b
-    if (node !== nothing && node.leaf) || (isempty(trie) && len == 0)
+    if (node !== nothing && node.leaf) || (isempty(trie.leaves) && len == 0)
         r.result = missing
         return r
     else
