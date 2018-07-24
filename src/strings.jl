@@ -177,7 +177,7 @@ function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, I
             eof(io) && @goto done
             b = peekbyte(io)
             node = matchleaf(node, io, b)
-            @debug "b=$(Char(b)), node=$node"
+            # @debug "b=$(Char(b)), node=$node"
         end
     else
         # just read until eof

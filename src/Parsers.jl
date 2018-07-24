@@ -193,7 +193,7 @@ Base.eof(io::Strip) = eof(getio(io))
 
 xparse(s::Strip, ::Type{T}; kwargs...) where {T} = xparse(defaultparser, s, T; kwargs...)
 
-@inline function wh!(io, wh1, wh2)
+function wh!(io, wh1, wh2)
     if !eof(io)
         b = peekbyte(io)
         while b == wh1 || b == wh2
@@ -256,7 +256,7 @@ function xparse(f::Base.Callable, s::Sentinel{I}, ::Type{T};
 end
 
 # Core integer parsing function
-@inline function xparse(::typeof(defaultparser), io::IO, ::Type{T};
+function xparse(::typeof(defaultparser), io::IO, ::Type{T};
     openquotechar::Union{UInt8, Nothing}=nothing,
     closequotechar::Union{UInt8, Nothing}=nothing,
     escapechar::Union{UInt8, Nothing}=openquotechar,
@@ -328,7 +328,7 @@ end
         dt = tryparse(T, res.result, dateformat)
         if dt === nothing
             fastseek!(io, pos)
-            Result(T, INVALID, res.b)
+            return Result(T, INVALID, res.b)
         else
             return Result(T(res.result, dateformat), OK, 0x00)
         end
