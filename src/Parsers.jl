@@ -78,7 +78,7 @@ xparse(io::IO, ::Type{T}; kwargs...) where {T} = xparse(defaultparser, io, T; kw
 # document that eof is always a valid delim
 struct Delimited{I}
     next::I
-    delims::Trie
+    delims::Trie{Missing}
 end
 Delimited(next, delims::Union{Char, String}...=',') = Delimited(next, Trie(String[string(d) for d in delims]))
 getio(d::Delimited) = getio(d.next)
@@ -202,6 +202,7 @@ xparse(s::Strip, ::Type{T}; kwargs...) where {T} = xparse(defaultparser, s, T; k
             b = peekbyte(io)
         end
     end
+    return
 end
 
 function xparse(f::Base.Callable, s::Strip, ::Type{T};
@@ -222,9 +223,9 @@ end
 xparse(f::Base.Callable, s::Strip, ::Type{String}; kwargs...) = xparse(f, s.next, String; kwargs...)
 
 # For parsing sentinel values
-struct Sentinel{I}
+struct Sentinel{I, empty}
     next::I
-    sentinels::Trie
+    sentinels::Trie{Missing, empty}
 end
 Sentinel(next, sentinels::Union{String, Vector{String}}) = Sentinel(next, Trie(sentinels))
 getio(s::Sentinel) = getio(s.next)
@@ -232,19 +233,14 @@ Base.eof(io::Sentinel) = eof(getio(io))
 
 xparse(s::Sentinel{I}, ::Type{T}; kwargs...) where {I, T} = xparse(defaultparser, s, T; kwargs...)
 
-function xparse(f::Base.Callable, s::Sentinel{I}, ::Type{T};
-    openquotechar::Union{UInt8, Nothing}=nothing,
-    closequotechar::Union{UInt8, Nothing}=nothing,
-    escapechar::Union{UInt8, Nothing}=openquotechar,
-    delims::Union{Nothing, Trie}=nothing,
-    kwargs...)::Result{T} where {I, T}
+function xparse(f::Base.Callable, s::Sentinel{I, empty}, ::Type{T})::Result{T} where {I, empty, T}
     # @debug "xparse Sentinel - $T"
     io = getio(s)
     pos = position(io)
-    result = xparse(f, s.next, T; openquotechar=openquotechar, closequotechar=closequotechar, escapechar=escapechar, delims=delims, kwargs...)
+    result = xparse(f, s.next, T)
     # @debug "Sentinel - $T: result.code=$(result.code), result.result=$(result.result)"
     if result.code !== OK
-        if isempty(s.sentinels) && position(io) == pos
+        if empty && position(io) == pos
             result.code = OK
         else
             fastseek!(io, pos)
@@ -255,12 +251,7 @@ function xparse(f::Base.Callable, s::Sentinel{I}, ::Type{T};
 end
 
 # Core integer parsing function
-function xparse(::typeof(defaultparser), io::IO, ::Type{T};
-    openquotechar::Union{UInt8, Nothing}=nothing,
-    closequotechar::Union{UInt8, Nothing}=nothing,
-    escapechar::Union{UInt8, Nothing}=openquotechar,
-    delims::Union{Nothing, Trie}=nothing,
-    kwargs...)::Result{T} where {T <: Integer}
+function xparse(::typeof(defaultparser), io::IO, ::Type{T})::Result{T} where {T <: Integer}
     # @debug "xparse Int"
     eof(io) && return Result(T, EOF)
     v = zero(T)

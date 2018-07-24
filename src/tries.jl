@@ -15,7 +15,7 @@ function Base.show(io::IO, n::Node; indent::Int=0)
     end
 end
 
-struct Trie{T}
+struct Trie{T, empty}
     leaves::Vector{Node{T}}
 end
 
@@ -26,50 +26,51 @@ function Base.show(io::IO, t::Trie)
     end
     return
 end
-Trie(::Type{T}=Missing) where {T} = Trie(Node{T}[])
 Trie(v::String, value::T=missing) where {T} = Trie([v], value)
 
 function Trie(values::Vector{String}, value::T=missing) where {T}
-    t = Trie(T)
+    leaves = Node{T}[]
+    empty = true
     for v in values
+        empty = false
         if !isempty(v)
-            append!(t, Tuple(codeunits(v)), value)
+            append!(leaves, Tuple(codeunits(v)), value)
         end
     end
-    return t
+    return Trie{T, empty}(leaves)
 end
 
 function Trie(values::Vector{Pair{String, T}}) where {T}
-    t = Trie(T)
+    leaves = Node{T}[]
+    empty = true
     for (k, v) in values
+        empty = false
         if !isempty(k)
-            append!(t, Tuple(codeunits(k)), v)
+            append!(leaves, Tuple(codeunits(k)), v)
         end
     end
-    return t
+    return Trie{T, empty}(leaves)
 end
 
-Base.isempty(t::Trie) = isempty(t.leaves)
-
-function Base.append!(trie::Union{Trie, Node}, bytes, value)
+function Base.append!(leaves, bytes, value)
     b = first(bytes)
     rest = Base.tail(bytes)
-    for t in trie.leaves
+    for t in leaves
         if t.label === b
             if isempty(rest)
                 t.leaf = true
                 return
             else
-                return append!(t, rest, value)
+                return append!(t.leaves, rest, value)
             end
         end
     end
     if isempty(rest)
-        push!(trie.leaves, Node(b, true, value))
+        push!(leaves, Node(b, true, value))
         return
     else
-        push!(trie.leaves, Node(b, false, value))
-        return append!(trie.leaves[end], rest, value)
+        push!(leaves, Node(b, false, value))
+        return append!(leaves[end].leaves, rest, value)
     end
 end
 
