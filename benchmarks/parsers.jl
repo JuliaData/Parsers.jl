@@ -45,8 +45,6 @@ run(@benchmarkable Parsers.xparse(io, Int) setup=(io = Parsers.Delimited(Parsers
 io = Parsers.Delimited(Parsers.Quoted(Parsers.Strip(Parsers.Sentinel(IOBuffer("NA"), ["NA"]))))
 @time Parsers.xparse(Parsers.defaultparser, io, Int)
 
-@btime Parsers.xparse(Parsers.defaultparser, Parsers.Sentinel(IOBuffer("NA"), ["NA"]), Int)
-
 function test(n)
     io = Parsers.Sentinel(IOBuffer("NA"), ["NA"])
     io2 = Parsers.getio(io)
