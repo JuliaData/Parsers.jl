@@ -15,6 +15,21 @@ function Base.show(io::IO, n::Node; indent::Int=0)
     end
 end
 
+"""
+    Trie(value::String, value_to_return::T) where {T}
+    Trie(values::Vector{String}, value_to_return::T) where {T}
+    Trie(values::Vector{Pair{String, T}}) where {T}
+
+    A basic [trie](https://en.wikipedia.org/wiki/Trie) structure for use in parsing sentinel and other special values.
+    The various constructors take either a single or set of strings to act as "sentinels" (i.e. special values to be parsed), plus an optional `value_to_return` argument, which will be the value returned if the sentinel is found while parsing.
+    Note the last constructor `Trie(values::Vector{Pair{String, T}})` allows specifying different return values for different sentinel values. Bool parsing uses this like:
+    ```
+    const BOOLS = Trie(["true"=>true, "false"=>false])
+    ```
+    The only restriction is that each individual value must be of the same type (i.e. a single `Trie` can only ever return one type of value).
+    
+    See `?Parsers.match!` for more information on how a `Trie` can be used for special-value parsing.
+"""
 struct Trie{T}
     leaves::Vector{Node{T}}
 end
@@ -71,6 +86,19 @@ function Base.append!(leaves, bytes, value)
 end
 
 lower(c::UInt8) = UInt8('A') <= c <= UInt8('Z') ? c | 0x20 : c 
+
+"""
+    Parsers.match!(t::Parsers.Trie, io::IO, r::Parsers.Result, setvalue::Bool=true, ignorecase::Bool=false)
+
+    Function that takes an `io::IO` argument, a prebuilt `r::Parsers.Result` argument, and a `t::Parsers.Trie` argument, and attempts to match/detect special values in `t` with the next bytes consumed from `io`.
+    If special values are found, `r.result` will be set to the value that was associated with `t` when it was constructed.
+    The return value of `Parsers.match!` is if a special value was indeed detected in `io` (`true` or `false`).
+    Optionally, if the `setvalue` is `false`, `r.result` will be unaffected (i.e. not set) even if a special value is found.
+    The optional argument `ignorecase` can be used if case-insensitive matching is desired.
+
+    Note that `io` is reset to its original position if no special value is found.
+"""
+function match! end
 
 function match!(node::Trie, io::IO, r::Result, setvalue::Bool=true, ignorecase::Bool=false)
     pos = position(io)

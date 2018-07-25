@@ -480,14 +480,44 @@ include("floats.jl")
 include("dates.jl")
 include("bools.jl")
 
+@testset "Misc" begin
+
+@test Parsers.parse("101", Int) === 101
+@test Parsers.parse("101,101", Float64; decimal=',') === 101.101
+@test Parsers.parse(IOBuffer("true"), Bool) === true
+@test_throws Parsers.Error Parsers.parse("abc", Int)
+
+@test Parsers.tryparse("abc", Int) === nothing
+@test Parsers.tryparse(IOBuffer("101,101"), Float32; decimal=',') === Float32(101.101)
+
+# custom parser
+function int2str(io::IO, ::Type{Int}; kwargs...)
+    v = 0
+    while !eof(io) && (UInt8('0') <= Parsers.peekbyte(io) <= UInt8('9'))
+        v *= 10
+        v += Int(Parsers.readbyte(io) - UInt8('0'))
+    end
+    return Parsers.Result(v, Parsers.OK, 0x00)
+end
+
+@test Parsers.parse(int2str, "101", Int) === 101
+@test Parsers.parse(int2str, IOBuffer("101"), Int) === 101
+@test Parsers.tryparse(int2str, "101", Int) === 101
+@test Parsers.tryparse(int2str, IOBuffer("101"), Int) === 101
+
+@test Parsers.parse("01/20/2018", Date; dateformat="mm/dd/yyyy") === Date(2018, 1, 20)
+
+@test_throws Parsers.Error Parsers.parse("", Missing)
+@test Parsers.tryparse("", Missing) === nothing
+
+@test_throws Parsers.Error Parsers.parse("", Union{})
+@test Parsers.tryparse("", Union{}) === nothing
+
+r = Parsers.xparse(Parsers.Quoted(IOBuffer("{1}"), '{', '}', '\\'), Int)
+@test r.result === 1
+@test r.code === Parsers.OK
+@test r.b === UInt8('}')
+
 end # @testset
 
-
-# function test(n)
-#     io = Parsers.Delimited(Parsers.Sentinel(IOBuffer("NA"), ["NA"]))
-#     io2 = Parsers.getio(io)
-#     for i = 1:n
-#         Parsers.xparse(Parsers.defaultparser, io, Int)
-#         Parsers.fastseek!(io2, 1)
-#     end
-# end
+end # @testset

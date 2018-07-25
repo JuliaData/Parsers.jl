@@ -212,7 +212,7 @@ function xparse(::typeof(defaultparser), io::IO, ::Type{String};
     delims::Union{Nothing, Trie}=nothing,
     kwargs...)
     res = xparse(io, Tuple{Ptr{UInt8}, Int}; openquotechar=openquotechar, closequotechar=closequotechar, escapechar=escapechar, delims=delims, kwargs...)
-    return Result(res, make(String, res.result), res.code)
+    return Result{String}(make(String, res.result), res.code, res.b)
 end
 function xparse(::typeof(defaultparser), s::Sentinel, ::Type{String};
     openquotechar::Union{UInt8, Nothing}=nothing,
@@ -221,5 +221,5 @@ function xparse(::typeof(defaultparser), s::Sentinel, ::Type{String};
     delims::Union{Nothing, Trie}=nothing,
     kwargs...)
     res = xparse(s, Tuple{Ptr{UInt8}, Int}; openquotechar=openquotechar, closequotechar=closequotechar, escapechar=escapechar, delims=delims, kwargs...)
-    return Result(res, make(String, res.result), res.code)
+    return Result{String}(make(String, res.result), res.code, res.b)
 end
