@@ -1,5 +1,4 @@
-include("/Users/jacobquinn/.julia/dev/Parsers/src/Parsers.jl")
-using .Parsers, Test, Dates
+using Parsers, Test, Dates
 
 @testset "Parsers" begin
 
