@@ -88,25 +88,28 @@ Base.bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
     end
 end
 
-function scale(::Type{T}, lmant, exp, neg, b) where {T <: Union{Float16, Float32, Float64}}
+function scale(::Type{T}, lmant, exp, neg, b, r) where {T <: Union{Float16, Float32, Float64}}
     result = scale(T, lmant, exp)
-    return Result(ifelse(neg, -result, result), OK, b)
+    r.result = ifelse(neg, -result, result)
+    r.code = OK
+    r.b = b
+    return r
 end
 
 const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
 
-function xparse(::typeof(defaultparser), io::IO, ::Type{T}; decimal::Union{UInt8, Char}=UInt8('.'), kwargs...)::Result{T} where {T <: Union{Float16, Float32, Float64}}
-    eof(io) && return Result(T, EOF)
+function xparse!(::typeof(defaultparser), io::IO, ::Type{T}, r::Result{T}, d=nothing, o=nothing, c=nothing, e=nothing, b=nothing, df=nothing, decimal::Union{Char, UInt8}=UInt8('.')) where {T <: Union{Float16, Float32, Float64}}
+    eof(io) && (r.code = EOF; return r)
     b = peekbyte(io)
     negative = false
     if b == MINUS # check for leading '-' or '+'
         negative = true
         readbyte(io)
-        eof(io) && return Result(T, EOF, b)
+        eof(io) && (r.code = EOF; r.b = b; return r)
         b = peekbyte(io)
     elseif b == PLUS
         readbyte(io)
-        eof(io) && return Result(T, EOF, b)
+        eof(io) && (r.code = EOF; r.b = b; return r)
         b = peekbyte(io)
     end
     # float digit parsing
@@ -118,14 +121,14 @@ function xparse(::typeof(defaultparser), io::IO, ::Type{T}; decimal::Union{UInt8
         # process digits
         v *= Int64(10)
         v += Int64(b - ZERO)
-        eof(io) && return Result(T(ifelse(negative, -v, v)), OK, b)
+        eof(io) && (r.result = T(ifelse(negative, -v, v)); r.code = OK; r.b = b; return r)
         b = peekbyte(io)
     end
     # check for dot
     if b == decimal % UInt8
         readbyte(io)
         if eof(io)
-            parseddigits && return Result(T(ifelse(negative, -v, v)), OK, b)
+            parseddigits && (r.result = T(ifelse(negative, -v, v)); r.code = OK; r.b = b; return r)
             @goto error
         end
         b = peekbyte(io)
@@ -145,7 +148,7 @@ function xparse(::typeof(defaultparser), io::IO, ::Type{T}; decimal::Union{UInt8
         # process digits
         v *= Int64(10)
         v += Int64(b - ZERO)
-        eof(io) && return scale(T, v, -frac, negative, b)
+        eof(io) && return scale(T, v, -frac, negative, b, r)
         b = peekbyte(io)
     end
     # parse potential exp
@@ -174,16 +177,18 @@ function xparse(::typeof(defaultparser), io::IO, ::Type{T}; decimal::Union{UInt8
             exp *= Int64(10)
             exp += Int64(b - ZERO)
             if eof(io)
-                parseddigits && return scale(T, v, ifelse(negativeexp, -exp, exp) - frac, negative, b)
+                parseddigits && return scale(T, v, ifelse(negativeexp, -exp, exp) - frac, negative, b, r)
                 @goto error
             end
             b = peekbyte(io)
         end
-        return parseddigits && parseddigitsexp ? scale(T, v, ifelse(negativeexp, -exp, exp) - frac, negative, b) : @goto error
+        return parseddigits && parseddigitsexp ? scale(T, v, ifelse(negativeexp, -exp, exp) - frac, negative, b, r) : @goto error
     else
-        return scale(T, v, -frac, negative, b)
+        return scale(T, v, -frac, negative, b, r)
     end
 
     @label error
-    return Result(T, INVALID, b)
+    r.code = INVALID
+    r.b = b
+    return r
 end

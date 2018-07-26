@@ -1,3 +1,5 @@
+using Dates
+
 @testset "Date.TimeTypes" begin
 
 r = Parsers.xparse(IOBuffer(""), Date)

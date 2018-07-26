@@ -14,19 +14,15 @@ incr(io::IO, b) = Base.write(BUF, b)
 incr(io::IOBuffer, b) = 1
 
 make(::Type{String}, x::Tuple{Ptr{UInt8}, Int}) = InternedStrings.intern(String, x)
-make(::Type{String}, ::Missing) = missing
+make(::Type{Tuple{Ptr{UInt8}, Int}}, x) = x
 
-function xparse(::typeof(defaultparser), io::IO, ::Type{Tuple{Ptr{UInt8}, Int}};
-    openquotechar::Union{UInt8, Nothing}=nothing,
-    closequotechar::Union{UInt8, Nothing}=nothing,
-    escapechar::Union{UInt8, Nothing}=openquotechar,
-    delims::Union{Nothing, Trie}=nothing,
-    kwargs...)
+function xparse!(::typeof(defaultparser), io::IO, ::Type{T}, r::Result{T},
+    delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing,
+    args...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, String}}
     ptr = getptr(io)
     len = 0
     b = 0x00
     code = OK
-    r = Result((ptr, len), OK, b)
     if openquotechar !== nothing
         same = closequotechar === escapechar
         if eof(io)
@@ -90,18 +86,15 @@ function xparse(::typeof(defaultparser), io::IO, ::Type{Tuple{Ptr{UInt8}, Int}};
         end
     end
 @label done
-    r.result = (ptr, len)
+    r.result = make(T, (ptr, len))
     r.code = code
     r.b = b
     return r
 end
 
-function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, Int}};
-    openquotechar::Union{UInt8, Nothing}=nothing,
-    closequotechar::Union{UInt8, Nothing}=nothing,
-    escapechar::Union{UInt8, Nothing}=openquotechar,
-    delims::Union{Nothing, Trie}=nothing,
-    kwargs...)
+function xparse!(::typeof(defaultparser), s::Sentinel, ::Type{T}, r::Result{T},
+    delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing,
+    args...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, String}}
     # @debug "xparse Sentinel, String: quotechar='$quotechar', delims='$delims'"
     io = getio(s)
     ptr = getptr(io)
@@ -110,7 +103,6 @@ function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, I
     node = nothing
     b = 0x00
     code = OK
-    r = Result((ptr, len), OK, b)
     if openquotechar !== nothing
         same = closequotechar === escapechar
         if eof(io)
@@ -199,27 +191,8 @@ function xparse(::typeof(defaultparser), s::Sentinel, ::Type{Tuple{Ptr{UInt8}, I
         r.result = missing
         return r
     else
-        r.result = (ptr, len)
+        r.result = make(T, (ptr, len))
         r.code = code
         return r
     end
-end
-
-function xparse(::typeof(defaultparser), io::IO, ::Type{String};
-    openquotechar::Union{UInt8, Nothing}=nothing,
-    closequotechar::Union{UInt8, Nothing}=nothing,
-    escapechar::Union{UInt8, Nothing}=openquotechar,
-    delims::Union{Nothing, Trie}=nothing,
-    kwargs...)
-    res = xparse(io, Tuple{Ptr{UInt8}, Int}; openquotechar=openquotechar, closequotechar=closequotechar, escapechar=escapechar, delims=delims, kwargs...)
-    return Result{String}(make(String, res.result), res.code, res.b)
-end
-function xparse(::typeof(defaultparser), s::Sentinel, ::Type{String};
-    openquotechar::Union{UInt8, Nothing}=nothing,
-    closequotechar::Union{UInt8, Nothing}=nothing,
-    escapechar::Union{UInt8, Nothing}=openquotechar,
-    delims::Union{Nothing, Trie}=nothing,
-    kwargs...)
-    res = xparse(s, Tuple{Ptr{UInt8}, Int}; openquotechar=openquotechar, closequotechar=closequotechar, escapechar=escapechar, delims=delims, kwargs...)
-    return Result{String}(make(String, res.result), res.code, res.b)
 end

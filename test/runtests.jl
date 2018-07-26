@@ -490,13 +490,15 @@ include("bools.jl")
 @test Parsers.tryparse(IOBuffer("101,101"), Float32; decimal=',') === Float32(101.101)
 
 # custom parser
-function int2str(io::IO, ::Type{Int}; kwargs...)
+function int2str(io::IO, ::Type{Int}, r::Parsers.Result{Int}, args...)
     v = 0
     while !eof(io) && (UInt8('0') <= Parsers.peekbyte(io) <= UInt8('9'))
         v *= 10
         v += Int(Parsers.readbyte(io) - UInt8('0'))
     end
-    return Parsers.Result(v, Parsers.OK, 0x00)
+    r.result = v
+    r.code = OK
+    return r
 end
 
 @test Parsers.parse(int2str, "101", Int) === 101
@@ -508,9 +510,6 @@ end
 
 @test_throws Parsers.Error Parsers.parse("", Missing)
 @test Parsers.tryparse("", Missing) === nothing
-
-@test_throws Parsers.Error Parsers.parse("", Union{})
-@test Parsers.tryparse("", Union{}) === nothing
 
 r = Parsers.xparse(Parsers.Quoted(IOBuffer("{1}"), '{', '}', '\\'), Int)
 @test r.result === 1
