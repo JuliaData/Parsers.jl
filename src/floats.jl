@@ -98,7 +98,7 @@ end
 
 const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
 
-function xparse!(::typeof(defaultparser), io::IO, ::Type{T}, r::Result{T}, d=nothing, o=nothing, c=nothing, e=nothing, b=nothing, df=nothing, decimal::Union{Char, UInt8}=UInt8('.')) where {T <: Union{Float16, Float32, Float64}}
+@inline function defaultparser(io::IO, r::Result{T}; decimal::Union{Char, UInt8}=UInt8('.'), kwargs...) where {T <: Union{Float16, Float32, Float64}}
     eof(io) && (r.code = EOF; return r)
     b = peekbyte(io)
     negative = false

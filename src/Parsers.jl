@@ -1,7 +1,8 @@
 __precompile__(true)
 module Parsers
 
-using InternedStrings, Dates
+using Dates
+Dates.default_format(T) = Dates.dateformat""
 
 const RETURN  = UInt8('\r')
 const NEWLINE = UInt8('\n')
@@ -17,8 +18,6 @@ const NEG_ONE = UInt8('0')-UInt8(1)
 const ZERO    = UInt8('0')
 const TEN     = UInt8('9')+UInt8(1)
 const UNDERSCORE = UInt8('_')
-
-Dates.default_format(T) = Dates.dateformat""
 
 """
     Parsers.readbyte(io::IO)::UInt8
@@ -110,43 +109,6 @@ end
 
 include("parse.jl")
 
-"empty function used by Parsers to dispatch to default type parsers"
-function defaultparser end
-
-"""
-    Parsers.xparse!(f::Function=Parsers.defaultparser, io, ::Type{T}, r::Result{T}, args...)::Parsers.Result{T}
-
-    Internal parsing function that returns a full `Parsers.Result` type to indicate the success of parsing a `T` from `io`.
-    
-    A custom parsing function `f` can be passed, which should have the form `f(io::IO, ::Type{T}, r::Result{T}, args...)::Result{T}`, i.e. it takes an `IO` stream, attemps to parse type `T`, takes a pre-allocated `Result{T}` and shoudl return it after parsing.
-    
-    The `io` argument may be a plain `IO` type, or one of the custom "IO layers" defined in Parsers (`Parsers.Delimited`, `Parsers.Quoted`, `Parsers.Strip`, `Parsers.Sentinel`).
-"""
-function xparse! end
-
-# fallthrough for custom parser functions: user-provided function should be of the form: f(io::IO, ::Type{T}; kwargs...)::Result{T}
-xparse!(f::Base.Callable, io::IO, ::Type{T}, r::Result{T}, args...) where {T} = f(io, T, r, args...)
-xparse(io, ::Type{T};
-    delims::Union{Trie, Nothing}=nothing,
-    openquotechar::Union{Char, UInt8, Nothing}=nothing,
-    closequotechar::Union{Char, UInt8, Nothing}=nothing,
-    escapechar::Union{Char, UInt8, Nothing}=nothing,
-    bools::Trie=BOOLS,
-    dateformat::Union{String, Dates.DateFormat}=Dates.default_format(T),
-    decimal::Union{Char, UInt8}=UInt8('.'),
-    kwargs...) where {T} = xparse!(defaultparser, io, T, Result(T), delims, openquotechar, closequotechar, escapechar, bools, dateformat, decimal, values(kwargs)...)
-
-xparse(f::Base.Callable, io, ::Type{T};
-    delims::Union{Trie, Nothing}=nothing,
-    openquotechar::Union{Char, UInt8, Nothing}=nothing,
-    closequotechar::Union{Char, UInt8, Nothing}=nothing,
-    escapechar::Union{Char, UInt8, Nothing}=nothing,
-    bools::Trie=BOOLS,
-    dateformat::Union{String, Dates.DateFormat}=Dates.default_format(T),
-    decimal::Union{Char, UInt8}=UInt8('.'),
-    kwargs...) where {T} = xparse!(defaultparser, io, T, Result(T), delims, openquotechar, closequotechar, escapechar, bools, dateformat, decimal, values(kwargs)...)
-xparse!(io, ::Type{T}, r::Result{T}, args...) where {T} = xparse!(defaultparser, io, T, r)
-
 """
     An interface to define custom "parsing support" layers to be used in `Parsers.xparse`. Examples implementations include:
       * Parsers.Delimited
@@ -154,16 +116,30 @@ xparse!(io, ::Type{T}, r::Result{T}, args...) where {T} = xparse!(defaultparser,
       * Parsers.Strip
       * Parsers.Sentinel
 
-    The interface to implement for an `IOWrapper` is:
-      * `Parsers.xparse!(f::Base.Callable, io::MyIOWrapper, ::Type{T}, r::Result{T}, args...) where {T}`: implementation of your custom `MyIOWrapper` type, including calling down to the next layer
-      * `struct MyIOWrapper <: Parsers.IOWrapper`: subtype `Parsers.IOWrapper` (optional, but recommended)
-      * `Parsers.getio(io::MyIOWrapper)`: function to get the actual underlying `IO` stream; default `IOWrapper` definition is `Parsers.getio(io.next)` (assuming your type includes a field called `next`)
-      * `Parsers.eof(io::MyIOWrapper)`: to indicate if `eof` is true on your IOWrapper; default is `eof(getio(io))`
+    The interface to implement for a `Layer` is:
+      * `Parsers.parse!(x::MyLayer, io::IO, r::Result{T}; kwargs...) where {T}`: implementation of your custom `MyLayer` type, including calling down to the next layer
+      * Include a parameterized `next::I` field, to allow parsing the next layer
 """
-abstract type IOWrapper end
+abstract type Layer end
 
-getio(io::IOWrapper) = getio(io.next)
-Base.eof(io::IOWrapper) = eof(getio(io))
+"function used by Parsers to dispatch to default type parser implementations"
+function defaultparser end
+
+"""
+    Parsers.parse!(l::Parsers.Layer, io, r::Result{T}; kwargs...)::Parsers.Result{T}
+
+    Internal parsing function that returns a full `Parsers.Result` type to indicate the success of parsing a `T` from `io`.
+    
+    A custom parsing function `f` can be passed, which should have the form `f(io::IO, ::Type{T}, r::Result{T}, args...)::Result{T}`, i.e. it takes an `IO` stream, attemps to parse type `T`, takes a pre-allocated `Result{T}` and shoudl return it after parsing.
+    
+    The `io` argument may be a plain `IO` type, or one of the custom "IO layers" defined in Parsers (`Parsers.Delimited`, `Parsers.Quoted`, `Parsers.Strip`, `Parsers.Sentinel`).
+"""
+function parse! end
+
+# fallthrough for custom parser functions: user-provided function should be of the form: f(io::IO, ::Type{T}; kwargs...)::Result{T}
+@inline parse!(f::Base.Callable, io::IO, r::Result{T}; kwargs...) where {T} = f(io, r; kwargs...)
+@inline parse!(io::IO, r::Result{T}; kwargs...) where {T} = parse!(defaultparser, io, r; kwargs...)
+@inline parse(layer::Union{typeof(defaultparser), Layer}, io::IO, ::Type{T}; kwargs...) where {T} = parse!(layer, io, Result(T); kwargs...)
 
 """
     Parsers.Delimited(next, delims::Union{Char, String}...=',')
@@ -173,21 +149,20 @@ Base.eof(io::IOWrapper) = eof(getio(io))
     Parsing on a `Parsers.Delimited` will first call `Parsers.xparse(d.next, T; kwargs...)`, then expect the next bytes to be one of the expected `delims` arguments.
     If one of `delims` is not found, the result is `Parsers.INVALID`, but parsing will continue until a valid `delims` is found. An `eof(io)` is _always_ considered a valid termination state in place of a delimiter.
 """
-struct Delimited{I} <: IOWrapper
+struct Delimited{I, T <: Trie} <: Layer
     next::I
-    delims::Trie{Missing}
+    delims::T
 end
 Delimited(next, delims::Union{Char, String}...=',') = Delimited(next, Trie(String[string(d) for d in delims]))
+Delimited(delims::Union{Char, String}...=',') = Delimited(defaultparser, Trie(String[string(d) for d in delims]))
 
-function xparse!(f::Base.Callable, d::Delimited, ::Type{T}, r::Result{T}, delims=nothing, args...) where {T}
+@inline function parse!(d::Delimited, io::IO, r::Result{T}; kwargs...) where {T}
     # @debug "xparse Delimited - $T"
-    xparse!(f, d.next, T, r, d.delims, args...)
+    parse!(d.next, io, r; kwargs...)
     # @debug "Delimited - $T: r.code=$(r.code), r.result=$(r.result)"
-    io = getio(d)
     eof(io) && return r
     match!(d.delims, io, r, false) && return r
     # @debug "didn't find delimiters at expected location; result is invalid, parsing until delimiter is found"
-    b = 0x00
     while true
         b = readbyte(io)
         if eof(io)
@@ -208,7 +183,7 @@ end
     A single `quotechar` can be given, indicating the quoted field will start and end with the same character.
     Both `quotechar` and `escapechar` arguments are limited to ASCII characters.
 """
-struct Quoted{I} <: IOWrapper
+struct Quoted{I} <: Layer
     next::I
     openquotechar::UInt8
     closequotechar::UInt8
@@ -216,60 +191,63 @@ struct Quoted{I} <: IOWrapper
 end
 Quoted(next, q::Union{Char, UInt8}='"', e::Union{Char, UInt8}='\\') = Quoted(next, UInt8(q), UInt8(q), UInt8(e))
 Quoted(next, q1::Union{Char, UInt8}, q2::Union{Char, UInt8}, e::Union{Char, UInt8}) = Quoted(next, UInt8(q1), UInt8(q2), UInt8(e))
+Quoted(q::Union{Char, UInt8}='"', e::Union{Char, UInt8}='\\') = Quoted(defaultparser, UInt8(q), UInt8(q), UInt8(e))
+Quoted(q1::Union{Char, UInt8}, q2::Union{Char, UInt8}, e::Union{Char, UInt8}) = Quoted(defaultparser, UInt8(q1), UInt8(q2), UInt8(e))
 
-function xparse!(f::Base.Callable, q::Quoted, ::Type{T}, r::Result{T}, delims=nothing, o=nothing, c=nothing, e=nothing, args...) where {T}
+function handlequoted!(q, io, r)
+    if eof(io)
+        r.code = INVALID_QUOTED_FIELD
+    else
+        first = true
+        same = q.closequotechar === q.escapechar
+        while true
+            b = peekbyte(io)
+            if same && b === q.escapechar
+                readbyte(io)
+                if eof(io) || peekbyte(io) !== q.closequotechar
+                    r.b = b
+                    !first && (r.code = INVALID)
+                    break
+                end
+                # otherwise, next byte is escaped, so read it
+                b = peekbyte(io)
+            elseif b === q.escapechar
+                readbyte(io)
+                if eof(io)
+                    r.code = INVALID_QUOTED_FIELD
+                    r.b = b
+                    break
+                end
+                # regular escaped byte
+                b = peekbyte(io)
+            elseif b === q.closequotechar
+                readbyte(io)
+                r.b = b
+                !first && (r.code = INVALID)
+                break
+            end
+            readbyte(io)
+            if eof(io)
+                r.code = INVALID_QUOTED_FIELD
+                r.b = b
+                break
+            end
+            first = false
+        end
+    end
+    return
+end
+
+@inline function parse!(q::Quoted, io::IO, r::Result{T}; kwargs...) where {T}
     # @debug "xparse Quoted - $T"
-    io = getio(q)
+    quoted = false
     if !eof(io) && peekbyte(io) === q.openquotechar
         readbyte(io)
         quoted = true
-        xparse!(f, q.next, T, r, delims, q.openquotechar, q.closequotechar, q.escapechar, args...)
-    else
-        xparse!(f, q.next, T, r, delims, nothing, nothing, nothing, args...)
-        quoted = false
     end
+    parse!(q.next, io, r; kwargs...)
     # @debug "Quoted - $T: result.code=$(result.code), result.result=$(result.result)"
-    if quoted
-        if eof(io)
-            r.code = INVALID_QUOTED_FIELD
-            return r
-        end
-        b = peekbyte(io)
-        if b !== q.closequotechar
-            # @debug "invalid quoted field; parsing should have consumed until quotechar"
-            same = q.closequotechar === q.escapechar
-            while true
-                if same && b === q.escapechar
-                    readbyte(io)
-                    if (eof(io) || peekbyte(io) !== q.closequotechar) 
-                        r.code = INVALID
-                        r.b = b
-                        return r
-                    end
-                elseif b === q.escapechar
-                    readbyte(io)
-                    if eof(io)
-                        r.code = INVALID_QUOTED_FIELD
-                        r.b = b
-                        return r
-                    end
-                elseif b === q.closequotechar
-                    readbyte(io)
-                    r.code = INVALID
-                    r.b = b
-                    return r
-                end
-                b = readbyte(io)
-                eof(io) && break
-                b = peekbyte(io)
-            end
-            r.code = INVALID_QUOTED_FIELD
-            r.b = b
-        else
-            r.b = b
-            readbyte(io)
-        end
-    end
+    quoted && handlequoted!(q, io, r)
     return r
 end
 
@@ -280,12 +258,13 @@ end
     By default, only `' '` (space) and `'\t'` (tab) characters are skipped over.
     Any two valid ASCII characters may be used to skip.
 """
-struct Strip{I} <: IOWrapper
+struct Strip{I} <: Layer
     next::I
     wh1::UInt8
     wh2::UInt8
 end
-Strip(io::I, wh1=' ', wh2='\t') where {I} = Strip{I}(io, wh1 % UInt8, wh2 % UInt8)
+Strip(next, wh1::Union{Char, UInt8}=' ', wh2::Union{Char, UInt8}='\t') = Strip(next, wh1 % UInt8, wh2 % UInt8)
+Strip(wh1::Union{Char, UInt8}=' ', wh2::Union{Char, UInt8}='\t') = Strip(defaultparser, wh1 % UInt8, wh2 % UInt8)
 
 function wh!(io, wh1, wh2)
     if !eof(io)
@@ -299,21 +278,14 @@ function wh!(io, wh1, wh2)
     return
 end
 
-function xparse!(f::Base.Callable, s::Strip, ::Type{T}, r::Result{T}, args...) where {T}
+@inline function parse!(s::Strip, io::IO, r::Result{T}; kwargs...) where {T}
     # @debug "xparse Strip - $T"
-    io = getio(s)
     wh!(io, s.wh1, s.wh2)
-    xparse!(f, s.next, T, r, args...)
+    parse!(s.next, io, r; kwargs...)
     # @debug "Strip - $T: result.code=$(result.code), result.result=$(result.result), result.b=$(result.b)"
     wh!(io, s.wh1, s.wh2)
     return r
 end
-
-# don't strip whitespace for Strings
-xparse!(f::Base.Callable, s::Strip, ::Type{Tuple{Ptr{UInt8}, Int}}, r::Result{Tuple{Ptr{UInt8}, Int}}, args...) =
-    xparse!(f, s.next, Tuple{Ptr{UInt8}, Int}, r, args...)
-xparse!(f::Base.Callable, s::Strip, ::Type{String}, r::Result{String}, args...) =
-    xparse!(f, s.next, String, r, args...)
 
 """
     Parses.Sentinel(next, sentinels::Union{String, Vector{String}})
@@ -322,17 +294,17 @@ xparse!(f::Base.Callable, s::Strip, ::Type{String}, r::Result{String}, args...) 
 
     One special case of sentinel parsing is that of the "empty" sentinel, i.e. `Parsers.Sentinel(io, "")`. In this case, sentinel parsing will "succeed" only when the underlying type parsing failed to consume any bytes (i.e it immediately encountered invalid characters).
 """
-struct Sentinel{I} <: IOWrapper
+struct Sentinel{I, T} <: Layer
     next::I
-    sentinels::Trie{Missing}
+    sentinels::T
 end
 Sentinel(next, sentinels::Union{String, Vector{String}}) = Sentinel(next, Trie(sentinels))
+Sentinel(sentinels::Union{String, Vector{String}}) = Sentinel(defaultparser, Trie(sentinels))
 
-function xparse!(f::Base.Callable, s::Sentinel, ::Type{T}, r::Result{T}, args...) where {T}
+@inline function parse!(s::Sentinel, io::IO, r::Result{T}; kwargs...) where {T}
     # @debug "xparse Sentinel - $T"
-    io = getio(s)
     pos = position(io)
-    xparse!(f, s.next, T, r, args...)
+    parse!(s.next, io, r; kwargs...)
     # @debug "Sentinel - $T: result.code=$(result.code), result.result=$(result.result)"
     if r.code !== OK
         if isempty(s.sentinels.leaves) && position(io) == pos
@@ -346,7 +318,7 @@ function xparse!(f::Base.Callable, s::Sentinel, ::Type{T}, r::Result{T}, args...
 end
 
 # Core integer parsing function
-function xparse!(::typeof(defaultparser), io::IO, ::Type{T}, r::Result{T}, args...) where {T <: Integer}
+@inline function defaultparser(io::IO, r::Result{T}; kwargs...) where {T <: Integer}
     # @debug "xparse Int"
     eof(io) && (r.code = EOF; return r)
     v = zero(T)
@@ -363,14 +335,12 @@ function xparse!(::typeof(defaultparser), io::IO, ::Type{T}, r::Result{T}, args.
         b = peekbyte(io)
     end
     parseddigits = false
-    while NEG_ONE < b < TEN || (parseddigits && b == UNDERSCORE)
+    while NEG_ONE < b < TEN
         parseddigits = true
         b = readbyte(io)
-        if b !== UNDERSCORE
-            v, ov_mul = Base.mul_with_overflow(v, T(10))
-            v, ov_add = Base.add_with_overflow(v, T(b - ZERO))
-            (ov_mul | ov_add) && (r.result = v; r.code = OVERFLOW; r.b = b; return r)
-        end
+        v, ov_mul = Base.mul_with_overflow(v, T(10))
+        v, ov_add = Base.add_with_overflow(v, T(b - ZERO))
+        (ov_mul | ov_add) && (r.result = v; r.code = OVERFLOW; r.b = b; return r)
         eof(io) && break
         b = peekbyte(io)
     end
@@ -387,42 +357,18 @@ end
 
 include("strings.jl")
 include("floats.jl")
+include("dates.jl")
 
 # Bool parsing
 const BOOLS = Trie(["true"=>true, "false"=>false])
 
-function xparse!(::typeof(defaultparser), io::IO, ::Type{Bool}, r::Result{Bool}, d=nothing, o=nothing, c=nothing, e=nothing, bools::Trie=BOOLS, args...)
+@inline function defaultparser(io::IO, r::Result{Bool}; bools::Trie=BOOLS, kwargs...)
     r.code = INVALID
     match!(bools, io, r)
     return r
 end
 
-# Dates.TimeType parsing
-make(df::Dates.DateFormat) = df
-make(df::String) = Dates.DateFormat(df)
-
-function xparse!(::typeof(defaultparser), io::IO, ::Type{T}, r::Result{T}, d=nothing, o=nothing, c=nothing, e=nothing, b=nothing, df::Union{String, Dates.DateFormat}=Dates.default_format(T), args...) where {T <: Dates.TimeType}
-    pos = position(io)
-    res = xparse!(defaultparser, io, String, Result(String), d, o, c, e)
-    # @show res
-    if res.code === OK && !isempty(res.result)
-        dt = Base.tryparse(T, res.result, make(df))
-        if dt === nothing
-            fastseek!(io, pos)
-            r.code = INVALID
-            r.b = res.b
-        else
-            r.result = dt
-            r.code = OK
-        end
-    else
-        r.code = INVALID
-        r.b = res.b
-    end
-    return r
-end
-
-xparse!(::typeof(defaultparser), io::IO, ::Type{Missing}, r::Result{Missing}, args...) = (r.code = INVALID; return r)
-xparse!(::typeof(defaultparser), io::IO, ::Type{Union{}}, r::Result{Missing}, args...) = (r.code = INVALID; return r)
+defaultparser(io::IO, r::Result{Missing}; kwargs...) = (r.code = INVALID; return r)
+defaultparser(io::IO, r::Result{Union{}}; kwargs...) = (r.code = INVALID; return r)
 
 end # module

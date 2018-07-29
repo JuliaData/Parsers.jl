@@ -1,3 +1,19 @@
+const pools = [WeakKeyDict{String, Nothing}() for i = 1:Threads.nthreads()]
+
+@inline function intern!(wkd::WeakKeyDict{K}, key)::K where {K}
+    index = Base.ht_keyindex2!(wkd.ht, key)
+    if index > 0
+        @inbounds found_key = wkd.ht.keys[index]
+        return (found_key.value)::K
+    else
+        kk::K = convert(K, key)
+        finalizer(wkd.finalizer, kk)
+        @inbounds Base._setindex!(wkd.ht, nothing, WeakRef(kk), -index)
+        return kk
+    end
+end
+intern(x::Tuple{Ptr{UInt8}, Int}) = intern!(pools[Threads.threadid()], x)
+
 # taken from Base.hash for String
 function Base.hash(x::Tuple{Ptr{UInt8},Int}, h::UInt)
     h += Base.memhash_seed
@@ -13,70 +29,58 @@ getptr(io::IOBuffer) = pointer(io.data, io.ptr)
 incr(io::IO, b) = Base.write(BUF, b)
 incr(io::IOBuffer, b) = 1
 
-make(::Type{String}, x::Tuple{Ptr{UInt8}, Int}) = InternedStrings.intern(String, x)
+make(::Type{String}, x::Tuple{Ptr{UInt8}, Int}) = intern(x)
 make(::Type{Tuple{Ptr{UInt8}, Int}}, x) = x
 
-function xparse!(::typeof(defaultparser), io::IO, ::Type{T}, r::Result{T},
-    delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing,
-    args...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, String}}
+const StrResult = Union{Result{Tuple{Ptr{UInt8}, Int}}, Result{String}}
+
+@inline parse!(d::Delimited, io::IO, r::StrResult) = parse!(d.next, io, r, d.delims)
+@inline parse!(q::Quoted, io::IO, r::StrResult, delims=nothing; kwargs...) = parse!(q.next, io, r, delims, q.openquotechar, q.closequotechar, q.escapechar)
+@inline parse!(s::Strip, io::IO, r::StrResult, d=nothing, oq=nothing, cq=nothing, ec=nothing; kwargs...) = parse!(s.next, io, r, d, oq, cq, ec)
+@inline parse!(s::Sentinel, io::IO, r::StrResult, d=nothing, oq=nothing, cq=nothing, ec=nothing; kwargs...) = parse!(s.next, io, r, d, oq, cq, ec, s.sentinels)
+
+@inline function parse!(::typeof(defaultparser), io::IO, r::Result{T},
+    delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, node=nothing
+    ) where {T <: Union{Tuple{Ptr{UInt8}, Int}, String}}
+    # @debug "xparse Sentinel, String: quotechar='$quotechar', delims='$delims'"
     ptr = getptr(io)
     len = 0
     b = 0x00
     code = OK
-    if openquotechar !== nothing
-        same = closequotechar === escapechar
-        if eof(io)
-            code = INVALID_QUOTED_FIELD
-            @goto done
-        end
-        b = peekbyte(io)
-        while true
-            if same && b == escapechar
-                pos = position(io)
-                readbyte(io)
-                if eof(io)
-                    fastseek!(io, pos)
-                    @goto done
-                elseif peekbyte(io) !== closequotechar
-                    fastseek!(io, pos)
-                    @goto done
+    quoted = false
+    if !eof(io) && peekbyte(io) === openquotechar
+        readbyte(io)
+        ptr += 1
+        quoted = true
+    end
+    if quoted
+        len, b, code = handlequoted!(io, len, closequotechar, escapechar)
+        if delims !== nothing
+            if !eof(io)
+                if match!(delims, io, r, false)
+                    b = r.b
+                else
+                    code = INVALID
+                    b = readbyte(io)
+                    while !eof(io)
+                        if match!(delims, io, r, false)
+                            b = r.b
+                            break
+                        end
+                        b = readbyte(io)
+                    end
                 end
-                # otherwise, next byte is escaped, so read it
-                len += incr(io, b)
-            elseif b == escapechar
-                b = readbyte(io)
-                if eof(io)
-                    code = INVALID_QUOTED_FIELD
-                    @goto done
-                end
-                # regular escaped byte
-                len += incr(io, b)
-            elseif b == closequotechar
-                @goto done
             end
-            len += incr(io, b)
-            b = readbyte(io)
-            if eof(io)
-                code = INVALID_QUOTED_FIELD
-                @goto done
-            end
-            b = peekbyte(io)
         end
     elseif delims !== nothing
-        eof(io) && @goto done
         # read until we find a delimiter
-        b = peekbyte(io)
-        while true
-            pos = position(io)
+        while !eof(io)
             if match!(delims, io, r, false)
-                fastseek!(io, pos)
                 b = r.b
-                @goto done
+                break
             end
+            b = readbyte(io)
             len += incr(io, b)
-            readbyte(io)
-            eof(io) && @goto done
-            b = peekbyte(io)
         end
     else
         # just read until eof
@@ -85,114 +89,45 @@ function xparse!(::typeof(defaultparser), io::IO, ::Type{T}, r::Result{T},
             len += incr(io, b) 
         end
     end
-@label done
-    r.result = make(T, (ptr, len))
-    r.code = code
+    # @debug "node=$node"
     r.b = b
+    r.code = code
+    if match!(node, ptr, len)
+        setfield!(r, 1, missing)
+    else
+        setfield!(r, 1, make(T, (ptr, len)))
+    end
     return r
 end
 
-function xparse!(::typeof(defaultparser), s::Sentinel, ::Type{T}, r::Result{T},
-    delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing,
-    args...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, String}}
-    # @debug "xparse Sentinel, String: quotechar='$quotechar', delims='$delims'"
-    io = getio(s)
-    ptr = getptr(io)
-    len = 0
-    trie = s.sentinels
-    node = nothing
+function handlequoted!(io, len, closequotechar, escapechar)
+    same = closequotechar === escapechar
+    code = INVALID_QUOTED_FIELD
     b = 0x00
-    code = OK
-    if openquotechar !== nothing
-        same = closequotechar === escapechar
-        if eof(io)
-            code = INVALID_QUOTED_FIELD
-            @goto done
-        end
+    while !eof(io)
         b = peekbyte(io)
-        prevnode = node = matchleaf(trie, io, b)
-        # @debug "b=$(Char(b)), node=$node"
-        while true
-            if same && b == escapechar
-                pos = position(io)
-                readbyte(io)
-                if eof(io)
-                    fastseek!(io, pos)
-                    node = prevnode
-                    @goto done
-                elseif peekbyte(io) !== closequotechar
-                    fastseek!(io, pos)
-                    node = prevnode
-                    @goto done
-                end
-                # otherwise, next byte is escaped, so read it
-                len += incr(io, b)
-            elseif b == escapechar
-                b = readbyte(io)
-                if eof(io)
-                    code = INVALID_QUOTED_FIELD
-                    @goto done
-                end
-                len += incr(io, b)
-            elseif b == closequotechar
-                node = prevnode
-                @goto done
-            end
-            prevnode = node
-            len += incr(io, b)
+        if same && b === escapechar
             readbyte(io)
-            if eof(io)
-                code = INVALID_QUOTED_FIELD
-                @goto done
+            if eof(io) || peekbyte(io) !== closequotechar
+                code = OK
+                break
             end
-            b = peekbyte(io)
-            node = matchleaf(node, io, b)
-            # @debug "b=$(Char(b)), node=$node"
-        end
-    elseif delims !== nothing
-        eof(io) && @goto done
-        # read until we find a delimiter
-        b = peekbyte(io)
-        prevnode = node = matchleaf(trie, io, b)
-        # @debug "b=$(Char(b)), node=$node"
-        while true
-            pos = position(io)
-            if match!(delims, io, r, false)
-                fastseek!(io, pos)
-                node = prevnode
-                b = r.b
-                @goto done
-            end
-            prevnode = node
+            # otherwise, next byte is escaped, so read it
             len += incr(io, b)
-            readbyte(io)
-            eof(io) && @goto done
             b = peekbyte(io)
-            node = matchleaf(node, io, b)
-            # @debug "b=$(Char(b)), node=$node"
-        end
-    else
-        # just read until eof
-        eof(io) && @goto done
-        b = peekbyte(io)
-        node = matchleaf(trie, io, b)
-        while true
+        elseif b === escapechar
+            readbyte(io)
+            eof(io) && break
+            # regular escaped byte
             len += incr(io, b)
-            readbyte(io)
-            eof(io) && @goto done
             b = peekbyte(io)
-            node = matchleaf(node, io, b)
+        elseif b === closequotechar
+            code = OK
+            readbyte(io)
+            break
         end
+        len += incr(io, b)
+        readbyte(io)
     end
-@label done
-    # @debug "node=$node"
-    r.b = b
-    if (node !== nothing && node.leaf) || (isempty(trie.leaves) && len == 0)
-        r.result = missing
-        return r
-    else
-        r.result = make(T, (ptr, len))
-        r.code = code
-        return r
-    end
+    return len, b, code
 end
