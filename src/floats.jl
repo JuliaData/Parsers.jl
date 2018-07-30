@@ -1,14 +1,7 @@
 const BIG_E = UInt8('E')
 const LITTLE_E = UInt8('e')
 
-const bipows5 = BigInt[]
-
-function __init__()
-    for x in 0:325
-        push!(bipows5, big(5)^x)
-    end
-    return
-end
+const bipows5 = [big(5)^x for x = 0:325]
 
 function roundQuotient(num, den)
     quo, rem = divrem(num, den)
@@ -88,7 +81,7 @@ Base.bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
     end
 end
 
-function scale(::Type{T}, lmant, exp, neg, b, r) where {T <: Union{Float16, Float32, Float64}}
+@inline function scale(::Type{T}, lmant, exp, neg, b, r) where {T <: Union{Float16, Float32, Float64}}
     result = scale(T, lmant, exp)
     r.result = ifelse(neg, -result, result)
     r.code = OK
@@ -99,6 +92,7 @@ end
 const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
 
 @inline function defaultparser(io::IO, r::Result{T}; decimal::Union{Char, UInt8}=UInt8('.'), kwargs...) where {T <: Union{Float16, Float32, Float64}}
+    setfield!(r, 1, missing)
     eof(io) && (r.code = EOF; return r)
     b = peekbyte(io)
     negative = false
@@ -133,9 +127,9 @@ const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
         end
         b = peekbyte(io)
     elseif !parseddigits
-        r = Result(T, OK, b)
         if match!(SPECIALS, io, r, true, true)
-            r.result = T(ifelse(negative, -r.result, r.result))
+            v2 = r.result::Float64
+            r.result = T(ifelse(negative, -v2, v2))
             return r
         end
         @goto error
