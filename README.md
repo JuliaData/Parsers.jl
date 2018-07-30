@@ -43,10 +43,10 @@ y = Parsers.tryparse("abc", Int)
 
 ### Advanced Usage
 Read through the docs of the following types/functions for more information on using advanced Parsers machinery:
-  * `?Parsers.xparse`
+  * `?Parsers.parse!`
   * `?Parsers.Result`
   * `?Parsers.ReturnCode`
-  * `?Parsers.IOWrapper`
+  * `?Parsers.Layer`
   * `?Parsers.Delimited`
   * `?Parsers.Quoted`
   * `?Parsers.Strip`
