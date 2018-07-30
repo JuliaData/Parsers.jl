@@ -18,7 +18,7 @@ before_script:
 
 script:
   - if [[ -a .git/shallow ]]; then git fetch --unshallow; fi
-  - julia --check-bounds=yes -e 'Pkg.clone(pwd()); Pkg.build(\"Parsers\"); Pkg.test(\"Parsers\"; coverage=true)'
+  - julia --check-bounds=yes -e 'Pkg.clone(pwd()); Pkg.build("Parsers"); Pkg.test("Parsers"; coverage=true)'
 
 after_success:
   - julia -e 'cd(Pkg.dir("Parsers")); Pkg.add("Coverage"); using Coverage; Codecov.submit(process_folder())'
