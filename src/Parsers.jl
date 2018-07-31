@@ -384,12 +384,12 @@ end
     v = zero(T)
     b = peekbyte(io)
     negative = false
-    if b == MINUS # check for leading '-' or '+'
+    if b === MINUS # check for leading '-' or '+'
         negative = true
         readbyte(io)
         eof(io) && (r.code = EOF; r.b = b; return r)
         b = peekbyte(io)
-    elseif b == PLUS
+    elseif b === PLUS
         readbyte(io)
         eof(io) && (r.code = EOF; r.b = b; return r)
         b = peekbyte(io)
