@@ -327,7 +327,7 @@ Strip(wh1::Union{Char, UInt8}=' ', wh2::Union{Char, UInt8}='\t') = Strip(default
 function wh!(io, wh1, wh2)
     if !eof(io)
         b = peekbyte(io)
-        while b == wh1 | b == wh2
+        while (b == wh1) | (b == wh2)
             readbyte(io)
             eof(io) && break
             b = peekbyte(io)

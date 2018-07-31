@@ -471,6 +471,15 @@ r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(String[]), '
 
 end # @testset
 
+@testset "Parsers.Strip" begin
+
+r = Parsers.parse(Parsers.Strip(), IOBuffer("      64.348\t  "), Float64)
+@test r.result === 64.348
+@test r.code === Parsers.OK
+@test r.b === UInt8('\t')
+
+end
+
 include("strings.jl")
 include("floats.jl")
 include("dates.jl")
