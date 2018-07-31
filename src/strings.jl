@@ -58,7 +58,9 @@ incr(io::IOBuffer, b) = 1
         len, b, code = handlequoted!(io, len, closequotechar, escapechar)
         if delims !== nothing
             if !eof(io)
-                if !match!(delims, io, r, false)
+                if match!(delims, io, r, false)
+                    b = r.b
+                else
                     code = INVALID
                     b = readbyte(io)
                     while !eof(io)
