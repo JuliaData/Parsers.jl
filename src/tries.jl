@@ -103,22 +103,24 @@ function match! end
         eof(io) && return false
         pos = position(io)
         b = peekbyte(io)
-        $(generatebranches(L.parameters))
+        $(generatebranches(L.parameters, false, value, label))
         return false
         @label match
-            setvalue && setfield!(r, 1, value)
-            r.code = OK
+            if setvalue
+                setfield!(r, 1, value)
+                r.code = OK
+            end
             r.b = b
             return true
         @label nomatch
             fastseek!(io, pos)
             return false
     end
-    # @show remove_line_number_nodes(q)
+    @show remove_line_number_nodes(q)
     return q
 end
 
-function generatebranches(leaves)
+function generatebranches(leaves, isparentleaf, parentvalue, parentb)
     leaf = leaves[1]
     ifblock = Expr(:if, :(b === $(label(leaf)) || (ignorecase && lower(b) === $(lower(label(leaf))))), generatebranch(leaf))
     block = ifblock
@@ -127,6 +129,9 @@ function generatebranches(leaves)
         elseifblock = Expr(:elseif, :(b === $(label(leaf)) || (ignorecase && lower(b) === $(lower(label(leaf))))), generatebranch(leaf))
         push!(block.args, elseifblock)
         block = elseifblock
+    end
+    if isparentleaf
+        push!(block.args, :(value = $value; b = $parentb; @goto match))
     end
     return quote
         $ifblock
@@ -143,7 +148,7 @@ function generatebranch(::Type{Trie{label, leaf, value, L}}) where {label, leaf,
         body = quote
             $eof
             b = peekbyte(io)
-            $(generatebranches(leaves))
+            $(generatebranches(leaves, leaf, value, label))
         end
     end
     return quote

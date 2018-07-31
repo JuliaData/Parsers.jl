@@ -269,6 +269,11 @@ r = Parsers.parse(Parsers.Delimited(',', '\n'), IOBuffer("1abc\n"), Int)
 @test r.code === Parsers.INVALID
 @test r.b === UInt8('\n')
 
+r = Parsers.parse(Parsers.Delimited(',', '\n', '\r', "\r\n"), IOBuffer("1\r2"), Int)
+@test r.result === 1
+@test r.code === Parsers.OK
+@test r.b === UInt8('\r')
+
 end # @testset
 
 @testset "Parsers.Delimited + Parsers.Sentinel" begin
@@ -468,6 +473,11 @@ r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(String[]), '
 @test r.result === 1
 @test r.code === Parsers.INVALID_QUOTED_FIELD
 @test r.b === UInt8('"')
+
+r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["NA"]))), IOBuffer("\"quoted field 1\","), Int)
+@test r.result === missing
+@test r.code === Parsers.INVALID
+@test r.b === UInt8(',')
 
 end # @testset
 
