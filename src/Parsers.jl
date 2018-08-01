@@ -1,4 +1,3 @@
-__precompile__(true)
 module Parsers
 
 using Dates
@@ -11,21 +10,6 @@ function __init__()
     end
     return
 end
-
-const RETURN  = UInt8('\r')
-const NEWLINE = UInt8('\n')
-const COMMA   = UInt8(',')
-const QUOTE   = UInt8('"')
-const ESCAPE  = UInt8('\\')
-const PERIOD  = UInt8('.')
-const SPACE   = UInt8(' ')
-const TAB     = UInt8('\t')
-const MINUS   = UInt8('-')
-const PLUS    = UInt8('+')
-const NEG_ONE = UInt8('0')-UInt8(1)
-const ZERO    = UInt8('0')
-const TEN     = UInt8('9')+UInt8(1)
-const UNDERSCORE = UInt8('_')
 
 """
     Parsers.readbyte(io::IO)::UInt8
@@ -76,12 +60,72 @@ end
         * `INVALID=0x03`: parsing failed
         * `INVALID_QUOTED_FIELD=0x04`: for use with the `Parsers.Quoted` layer; indicates an invalid quoted field where an opening quote was found, but no valid closing quote
 """
-const ReturnCode = UInt8
-const OK = 0x00
-const EOF = 0x01
-const OVERFLOW = 0x02
-const INVALID = 0x03
-const INVALID_QUOTED_FIELD = 0x04
+const ReturnCode = Int16
+ok(x::ReturnCode) = x > 0
+
+const SUCCESS = 0b0000000000000000 % ReturnCode
+const INVALID = 0b1000000000000000 % ReturnCode
+
+# SUCCESS flags
+const OK                   = 0b0000000000000001 % ReturnCode
+const SENTINEL             = 0b0000000000000010 % ReturnCode
+const QUOTED               = 0b0000000000000100 % ReturnCode
+const DELIMITED            = 0b0000000000001000 % ReturnCode
+const NEWLINE              = 0b0000000000010000 % ReturnCode
+const EOF                  = 0b0000000000100000 % ReturnCode
+
+# INVALID flags
+const INVALID_EOF          = 0b1000000000100000 % ReturnCode
+const INVALID_QUOTED_FIELD = 0b1000000001000000 % ReturnCode
+const INVALID_DELIMITER    = 0b1000000010000000 % ReturnCode
+const OVERFLOW             = 0b1000000100000000 % ReturnCode
+
+function text(r::ReturnCode)
+    str = "initial value parsing "
+    if r & OK > 0
+        str *= "succeeded"
+    else
+        str *= "failed"
+    end
+    if r & SENTINEL > 0
+        str *= ", a sentinel value was parsed"
+    end
+    if r & QUOTED > 0
+        str *= ", the value was quoted"
+    end
+    if r & DELIMITED > 0
+        str *= ", a valid delimiter was parsed"
+    end
+    if r & NEWLINE > 0
+        str *= ", a newline was encountered"
+    end
+    if r & EOF > 0
+        str *= ", reached EOF"
+    end
+    if r & INVALID_QUOTED_FIELD > 0
+        str *= ", invalid quoted value"
+    end
+    if r & INVALID_DELIMITER > 0
+        str *= ", invalid delimiter"
+    end
+    if r & OVERFLOW > 0
+        str *= ", value overflowed"
+    end
+    return str
+end
+
+codes(r::ReturnCode) = chop(chop(string(
+    ifelse(r > 0, "SUCCESS: ", "INVALID: "),
+    ifelse(r & OK > 0, "OK, ", ""),
+    ifelse(r & SENTINEL > 0, "SENTINEL, ", ""),
+    ifelse(r & QUOTED > 0, "QUOTED, ", ""),
+    ifelse(r & DELIMITED > 0, "DELIMITED, ", ""),
+    ifelse(r & NEWLINE > 0, "NEWLINE, ", ""),
+    ifelse(r & EOF > 0, "EOF, ", ""),
+    ifelse(r & (~INVALID & INVALID_QUOTED_FIELD) > 0, "INVALID_QUOTED_FIELD, ", ""),
+    ifelse(r & (~INVALID & INVALID_DELIMITER) > 0, "INVALID_DELIMITER, ", ""),
+    ifelse(r & (~INVALID & OVERFLOW) > 0, "OVERFLOW, ", "")
+)))
 
 """
     Parsers.Result{T}(x::Union{T, Missing}, ::Parsers.ReturnCode, b::UInt8)
@@ -112,13 +156,16 @@ for (i, T) in enumerate(DEFAULT_TYPES)
 end
 index(T) = length(RESULTS) + 1
 
-@inline @generated function Result(::Type{T}) where {T}
-    i = index(T)
-    i > length(RESULTS) && return Result{T}(missing, OK, 0x00)
-    if i > length(RESULTS)
-        return :(Result{$T}(missing, OK, 0x00))
+@inline function Result(::Type{T}) where {T}
+    if @generated
+        i = index(T)
+        if i > length(RESULTS)
+            return :(Result{$T}(missing, SUCCESS, 0x00))
+        else
+            return :(r = $(RESULTS[i])[Threads.threadid()]; r.code = SUCCESS; return r)
+        end
     else
-        return :($(RESULTS[i])[Threads.threadid()])
+        return Result{T}(missing, SUCCESS, 0x00)
     end
 end
 
@@ -167,36 +214,36 @@ function tryparse end
 
 function parse(str::String, ::Type{T}; kwargs...) where {T}
     res = parse(defaultparser, IOBuffer(str), T; kwargs...)
-    return res.code === OK ? res.result : throw(Error(res))
+    return ok(res.code) ? res.result : throw(Error(res))
 end
 function parse(io::IO, ::Type{T}; kwargs...) where {T}
     res = parse(defaultparser, io, T; kwargs...)
-    return res.code === OK ? res.result : throw(Error(res))
+    return ok(res.code) ? res.result : throw(Error(res))
 end
 function parse(f::Base.Callable, str::String, ::Type{T}; kwargs...) where {T}
     res = parse!(f, IOBuffer(str), Result(T); kwargs...)
-    return res.code === OK ? res.result : throw(Error(res))
+    return ok(res.code) ? res.result : throw(Error(res))
 end
 function parse(f::Base.Callable, io::IO, ::Type{T}; kwargs...) where {T}
     res = parse!(f, io, Result(T); kwargs...)
-    return res.code === OK ? res.result : throw(Error(res))
+    return ok(res.code) ? res.result : throw(Error(res))
 end
 
 function tryparse(str::String, ::Type{T}; kwargs...) where {T}
     res = parse(defaultparser, IOBuffer(str), T; kwargs...)
-    return res.code === OK ? res.result : nothing
+    return ok(res.code) ? res.result : nothing
 end
 function tryparse(io::IO, ::Type{T}; kwargs...) where {T}
     res = parse(defaultparser, io, T; kwargs...)
-    return res.code === OK ? res.result : nothing
+    return ok(res.code) ? res.result : nothing
 end
 function tryparse(f::Base.Callable, str::String, ::Type{T}; kwargs...) where {T}
     res = parse!(f, IOBuffer(str), Result(T); kwargs...)
-    return res.code === OK ? res.result : nothing
+    return ok(res.code) ? res.result : nothing
 end
 function tryparse(f::Base.Callable, io::IO, ::Type{T}; kwargs...) where {T}
     res = parse!(f, io, Result(T); kwargs...)
-    return res.code === OK ? res.result : nothing
+    return ok(res.code) ? res.result : nothing
 end
 
 """
@@ -211,25 +258,29 @@ struct Delimited{I, T <: Trie} <: Layer
     next::I
     delims::T
 end
-Delimited(next, delims::Union{Char, String}...=',') = Delimited(next, Trie(String[string(d) for d in delims]))
-Delimited(delims::Union{Char, String}...=',') = Delimited(defaultparser, Trie(String[string(d) for d in delims]))
+Delimited(next, delims::Union{Char, String}...=',') = Delimited(next, Trie(String[string(d) for d in delims], DELIMITED))
+Delimited(delims::Union{Char, String}...=',') = Delimited(defaultparser, Trie(String[string(d) for d in delims], DELIMITED))
 
 @inline function parse!(d::Delimited, io::IO, r::Result{T}; kwargs...) where {T}
     # @debug "xparse Delimited - $T"
     parse!(d.next, io, r; kwargs...)
     # @debug "Delimited - $T: r.code=$(r.code), r.result=$(r.result)"
-    eof(io) && return r
+    if eof(io)
+        r.code |= DELIMITED | EOF
+        return r
+    end
     match!(d.delims, io, r, false) && return r
     # @debug "didn't find delimiters at expected location; result is invalid, parsing until delimiter is found"
     while true
         b = readbyte(io)
         if eof(io)
             r.b = b
+            r.code |= EOF
             break
         end
         match!(d.delims, io, r, false) && break
     end
-    r.code = INVALID
+    r.code |= INVALID_DELIMITER
     return r
 end
 
@@ -254,7 +305,7 @@ Quoted(q1::Union{Char, UInt8}, q2::Union{Char, UInt8}, e::Union{Char, UInt8}) = 
 
 function handlequoted!(q, io, r)
     if eof(io)
-        r.code = INVALID_QUOTED_FIELD
+        r.code |= INVALID_QUOTED_FIELD
     else
         first = true
         same = q.closequotechar === q.escapechar
@@ -264,7 +315,7 @@ function handlequoted!(q, io, r)
                 readbyte(io)
                 if eof(io) || peekbyte(io) !== q.closequotechar
                     r.b = b
-                    !first && (r.code = INVALID)
+                    first || (r.code |= INVALID)
                     break
                 end
                 # otherwise, next byte is escaped, so read it
@@ -272,7 +323,7 @@ function handlequoted!(q, io, r)
             elseif b === q.escapechar
                 readbyte(io)
                 if eof(io)
-                    r.code = INVALID_QUOTED_FIELD
+                    r.code |= INVALID_QUOTED_FIELD
                     r.b = b
                     break
                 end
@@ -281,18 +332,19 @@ function handlequoted!(q, io, r)
             elseif b === q.closequotechar
                 readbyte(io)
                 r.b = b
-                !first && (r.code = INVALID)
+                first || (r.code |= INVALID)
                 break
             end
             readbyte(io)
             if eof(io)
-                r.code = INVALID_QUOTED_FIELD
+                r.code |= INVALID_QUOTED_FIELD
                 r.b = b
                 break
             end
             first = false
         end
     end
+    eof(io) && (r.code |= EOF)
     return
 end
 
@@ -302,6 +354,7 @@ end
     if !eof(io) && peekbyte(io) === q.openquotechar
         readbyte(io)
         quoted = true
+        r.code |= QUOTED
     end
     parse!(q.next, io, r; kwargs...)
     # @debug "Quoted - $T: result.code=$(result.code), result.result=$(result.result)"
@@ -342,6 +395,7 @@ end
     parse!(s.next, io, r; kwargs...)
     # @debug "Strip - $T: result.code=$(result.code), result.result=$(result.result), result.b=$(result.b)"
     wh!(io, s.wh1, s.wh2)
+    eof(io) && (r.code |= EOF)
     return r
 end
 
@@ -356,42 +410,51 @@ struct Sentinel{I, T} <: Layer
     next::I
     sentinels::T
 end
-Sentinel(next, sentinels::Union{String, Vector{String}}) = Sentinel(next, Trie(sentinels))
-Sentinel(sentinels::Union{String, Vector{String}}) = Sentinel(defaultparser, Trie(sentinels))
+Sentinel(next, sentinels::Union{String, Vector{String}}) = Sentinel(next, Trie(sentinels, SENTINEL))
+Sentinel(sentinels::Union{String, Vector{String}}) = Sentinel(defaultparser, Trie(sentinels, SENTINEL))
 
 @inline function parse!(s::Sentinel, io::IO, r::Result{T}; kwargs...) where {T}
     # @debug "xparse Sentinel - $T"
     pos = position(io)
     parse!(s.next, io, r; kwargs...)
     # @debug "Sentinel - $T: result.code=$(result.code), result.result=$(result.result)"
-    if r.code !== OK
+    if !ok(r.code)
         if isempty(s.sentinels.leaves) && position(io) == pos
-            r.code = OK
+            r.code &= ~INVALID
+            r.code |= (SENTINEL | ifelse(eof(io), EOF, SUCCESS))
         else
             fastseek!(io, pos)
-            match!(s.sentinels, io, r)
+            if match!(s.sentinels, io, r)
+                r.code &= ~INVALID
+            end
         end
     end
     return r
 end
 
 # Core integer parsing function
+const MINUS   = UInt8('-')
+const PLUS    = UInt8('+')
+const NEG_ONE = UInt8('0')-UInt8(1)
+const ZERO    = UInt8('0')
+const TEN     = UInt8('9')+UInt8(1)
+
 @inline function defaultparser(io::IO, r::Result{T}; kwargs...) where {T <: Integer}
     # @debug "xparse Int"
     setfield!(r, 1, missing)
     # r.result = missing
-    eof(io) && (r.code = EOF; r.b = 0x00; return r)
+    eof(io) && (r.code |= INVALID_EOF; r.b = 0x00; return r)
     v = zero(T)
     b = peekbyte(io)
     negative = false
     if b === MINUS # check for leading '-' or '+'
         negative = true
         readbyte(io)
-        eof(io) && (r.code = EOF; r.b = b; return r)
+        eof(io) && (r.code |= INVALID_EOF; r.b = b; return r)
         b = peekbyte(io)
     elseif b === PLUS
         readbyte(io)
-        eof(io) && (r.code = EOF; r.b = b; return r)
+        eof(io) && (r.code |= INVALID_EOF; r.b = b; return r)
         b = peekbyte(io)
     end
     parseddigits = false
@@ -400,16 +463,16 @@ end
         b = readbyte(io)
         v, ov_mul = Base.mul_with_overflow(v, T(10))
         v, ov_add = Base.add_with_overflow(v, T(b - ZERO))
-        (ov_mul | ov_add) && (r.result = v; r.code = OVERFLOW; r.b = b; return r)
+        (ov_mul | ov_add) && (r.result = v; r.code |= OVERFLOW | ifelse(eof(io), EOF, SUCCESS); r.b = b; return r)
         eof(io) && break
         b = peekbyte(io)
     end
     if !parseddigits
-        r.code = INVALID
+        r.code |= INVALID
         r.b = b
     else
         r.result = ifelse(negative, -v, v)
-        r.code = OK
+        r.code |= OK | ifelse(eof(io), EOF, SUCCESS)
         r.b = b
     end
     return r
@@ -424,13 +487,14 @@ const BOOLS = Trie(["true"=>true, "false"=>false])
 
 @inline function defaultparser(io::IO, r::Result{Bool}; bools::Trie=BOOLS, kwargs...)
     setfield!(r, 1, missing)
-    r.code = INVALID
     r.b = 0x00
-    match!(bools, io, r)
+    if !match!(bools, io, r)
+        r.code |= INVALID
+    end
     return r
 end
 
-defaultparser(io::IO, r::Result{Missing}; kwargs...) = (r.code = INVALID; return r)
-defaultparser(io::IO, r::Result{Union{}}; kwargs...) = (r.code = INVALID; return r)
+defaultparser(io::IO, r::Result{Missing}; kwargs...) = r
+defaultparser(io::IO, r::Result{Union{}}; kwargs...) = r
 
 end # module

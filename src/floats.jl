@@ -81,29 +81,28 @@ Base.bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
     end
 end
 
-@inline function scale(::Type{T}, lmant, exp, neg, b, r) where {T <: Union{Float16, Float32, Float64}}
+@inline function scale(::Type{T}, lmant, exp, neg) where {T <: Union{Float16, Float32, Float64}}
     result = scale(T, lmant, exp)
-    r.result = ifelse(neg, -result, result)
-    r.code = OK
-    r.b = b
-    return r
+    return ifelse(neg, -result, result)
 end
 
 const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
 
 @inline function defaultparser(io::IO, r::Result{T}; decimal::Union{Char, UInt8}=UInt8('.'), kwargs...) where {T <: Union{Float16, Float32, Float64}}
     setfield!(r, 1, missing)
-    eof(io) && (r.code = EOF; r.b = 0x00; return r)
+    b = 0x00
+    code = SUCCESS
+    eof(io) && (code |= INVALID_EOF; @goto done)
     b = peekbyte(io)
     negative = false
     if b == MINUS # check for leading '-' or '+'
         negative = true
         readbyte(io)
-        eof(io) && (r.code = EOF; r.b = b; return r)
+        eof(io) && (code |= INVALID_EOF; @goto done)
         b = peekbyte(io)
     elseif b == PLUS
         readbyte(io)
-        eof(io) && (r.code = EOF; r.b = b; return r)
+        eof(io) && (code |= INVALID_EOF; @goto done)
         b = peekbyte(io)
     end
     # float digit parsing
@@ -115,24 +114,36 @@ const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
         # process digits
         v *= Int64(10)
         v += Int64(b - ZERO)
-        eof(io) && (r.result = T(ifelse(negative, -v, v)); r.code = OK; r.b = b; return r)
+        if eof(io)
+            r.result = T(ifelse(negative, -v, v))
+            code |= OK | EOF
+            @goto done
+        end
         b = peekbyte(io)
     end
     # check for dot
     if b == decimal % UInt8
         readbyte(io)
         if eof(io)
-            parseddigits && (r.result = T(ifelse(negative, -v, v)); r.code = OK; r.b = b; return r)
-            @goto error
+            if parseddigits
+                r.result = T(ifelse(negative, -v, v))
+                code |= OK | EOF
+            else
+                code |= INVALID | EOF
+            end
+            @goto done
         end
         b = peekbyte(io)
     elseif !parseddigits
         if match!(SPECIALS, io, r, true, true)
             v2 = r.result::Float64
             r.result = T(ifelse(negative, -v2, v2))
+            eof(io) && (r.code |= EOF)
             return r
+        else
+            code |= INVALID | ifelse(eof(io), EOF, SUCCESS)
         end
-        @goto error
+        @goto done
     end
     # parse fractional part
     frac = 0
@@ -142,25 +153,38 @@ const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
         # process digits
         v *= Int64(10)
         v += Int64(b - ZERO)
-        eof(io) && return scale(T, v, -frac, negative, b, r)
+        if eof(io)
+            r.result = scale(T, v, -frac, negative)
+            code |= OK | EOF
+            @goto done
+        end
         b = peekbyte(io)
     end
     # parse potential exp
     if b == LITTLE_E || b == BIG_E
         readbyte(io)
         # error to have a "dangling" 'e'
-        eof(io) && @goto error
+        if eof(io)
+            code |= INVALID | EOF
+            @goto done
+        end
         b = peekbyte(io)
         exp = zero(Int64)
         negativeexp = false
         if b == MINUS
             negativeexp = true
             readbyte(io)
-            eof(io) && @goto error
+            if eof(io)
+                code |= INVALID | EOF
+                @goto done
+            end
             b = peekbyte(io)
         elseif b == PLUS
             readbyte(io)
-            eof(io) && @goto error
+            if eof(io)
+                code |= INVALID | EOF
+                @goto done
+            end
             b = peekbyte(io)
         end
         parseddigitsexp = false
@@ -171,18 +195,29 @@ const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
             exp *= Int64(10)
             exp += Int64(b - ZERO)
             if eof(io)
-                parseddigits && return scale(T, v, ifelse(negativeexp, -exp, exp) - frac, negative, b, r)
-                @goto error
+                if parseddigits
+                    r.result = scale(T, v, ifelse(negativeexp, -exp, exp) - frac, negative)
+                    code |= OK | EOF
+                else
+                    code |= INVALID | EOF
+                end
+                @goto done
             end
             b = peekbyte(io)
         end
-        return parseddigits && parseddigitsexp ? scale(T, v, ifelse(negativeexp, -exp, exp) - frac, negative, b, r) : @goto error
+        if parseddigits & parseddigitsexp
+            r.result = scale(T, v, ifelse(negativeexp, -exp, exp) - frac, negative)
+            code |= OK | EOF
+        else
+            code |= INVALID | ifelse(eof(io), EOF, SUCCESS)
+        end
     else
-        return scale(T, v, -frac, negative, b, r)
+        r.result = scale(T, v, -frac, negative)
+        code |= OK | ifelse(eof(io), EOF, SUCCESS)
     end
 
-    @label error
-    r.code = INVALID
+@label done
+    r.code |= code
     r.b = b
     return r
 end

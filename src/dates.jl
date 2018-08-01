@@ -19,24 +19,21 @@ make(df::String) = Dates.DateFormat(df)
     res = defaultparser(io, Result(String), delims, openquotechar, closequotechar, escapechar, node)
     r.b = res.b
     setfield!(r, 1, missing)
-    if res.code === OK
-        if res.result isa Missing
-            r.code = OK
-            return r
-        end
+    code = res.code
+    if ok(res.code)
+        res.result isa Missing && @goto done
         str = res.result::String
         if !isempty(str)
             dt = Base.tryparse(T, str, make(dateformat))
             if dt !== nothing
                 r.result = dt
-                r.code = OK
-                return r
+                code |= OK
+                @goto done
             end
         end
-        code = INVALID
-    else
-        code = res.code
     end
-    r.code = code
+    code = (INVALID | (code & ~OK))
+@label done
+    r.code |= code
     return r
 end

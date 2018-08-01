@@ -13,45 +13,43 @@
     
     See `?Parsers.match!` for more information on how a `Trie` can be used for special-value parsing.
 """
-struct Trie{label, leaf, value, L}
+struct Trie{label, leaf, value, code, L}
     # label::UInt8
     # leaf::Bool
     # value::T
+    # code::UInt8
     leaves::L
 end
-function Trie(label::UInt8, leaf::Bool, value::T, leaves::Vector{Any}) where {T}
+function Trie(label::UInt8, leaf::Bool, value::T, code::ReturnCode, leaves::Vector{Any}) where {T}
     l = Tuple(Trie(x...) for x in leaves)
-    return Trie{label, leaf, value, typeof(l)}(l)
+    return Trie{label, leaf, value, code, typeof(l)}(l)
 end
 
-label(::Type{Trie{a, b, c, d}}) where {a, b, c, d} = a
-leaf(::Type{Trie{a, b, c, d}}) where {a, b, c, d} = b
-value(::Type{Trie{a, b, c, d}}) where {a, b, c, d} = c
-leaves(::Type{Trie{a, b, c, d}}) where {a, b, c, d} = d
+label(::Type{Trie{a, b, c, d, e}}) where {a, b, c, d, e} = a
 
-Trie(v::String, value::T=missing) where {T} = Trie([v], value)
+Trie(v::String, code::ReturnCode=OK, value::T=missing) where {T} = Trie([v], value)
 
-function Trie(values::Vector{String}, value::T=missing) where {T}
+function Trie(values::Vector{String}, code::ReturnCode=OK, value::T=missing) where {T}
     leaves = []
     for v in values
         if !isempty(v)
-            append!(leaves, Tuple(codeunits(v)), value)
+            append!(leaves, Tuple(codeunits(v)), value, code)
         end
     end
-    return Trie(0x00, false, value, leaves)
+    return Trie(0x00, false, value, code, leaves)
 end
 
 function Trie(values::Vector{Pair{String, T}}) where {T}
     leaves = []
     for (k, v) in values
         if !isempty(k)
-            append!(leaves, Tuple(codeunits(k)), v)
+            append!(leaves, Tuple(codeunits(k)), v, OK)
         end
     end
-    return Trie(0x00, false, values[1].second, leaves)
+    return Trie(0x00, false, values[1].second, OK, leaves)
 end
 
-function Base.append!(leaves, bytes, value)
+function Base.append!(leaves, bytes, value, code)
     b = first(bytes)
     rest = Base.tail(bytes)
     for t in leaves
@@ -60,23 +58,23 @@ function Base.append!(leaves, bytes, value)
                 t[2] = true
                 return
             else
-                return append!(t[4], rest, value)
+                return append!(t[5], rest, value, code)
             end
         end
     end
     if isempty(rest)
-        push!(leaves, [b, true, value, []])
+        push!(leaves, [b, true, value, code, []])
         return
     else
-        push!(leaves, [b, false, value, []])
-        return append!(leaves[end][4], rest, value)
+        push!(leaves, [b, false, value, code, []])
+        return append!(leaves[end][5], rest, value, code)
     end
 end
 
-function Base.show(io::IO, n::Trie{label, leaf, value, L}; indent::Int=0) where {label, leaf, value, L}
+function Base.show(io::IO, n::Trie{label, leaf, value, code, L}; indent::Int=0) where {label, leaf, value, code, L}
     print(io, "   "^indent)
-    leafnode = leaf ? "leaf-node" : ""
-    println(io, "Trie: '$(escape_string(string(Char(label))))' $leafnode")
+    leafnode = leaf ? " leaf-node (value='$value', code='$code')" : ""
+    println(io, "Trie: '$(escape_string(string(Char(label))))'$leafnode")
     for l in n.leaves
         show(io, l; indent=indent+1)
     end
@@ -97,19 +95,22 @@ lower(c::UInt8) = UInt8('A') <= c <= UInt8('Z') ? c | 0x20 : c
 """
 function match! end
 
-@generated function match!(root::Trie{label, leaf, value, L}, io::IO, r::Result, setvalue::Bool=true, ignorecase::Bool=false) where {label, leaf, value, L}
+@generated function match!(root::Trie{label, leaf, value, code, L}, io::IO, r::Result, setvalue::Bool=true, ignorecase::Bool=false) where {label, leaf, value, code, L}
     isempty(L.parameters) && return :(return true)
     q = quote
-        eof(io) && return false
+        if eof(io)
+            r.code |= EOF
+            return false
+        end
         pos = position(io)
         b = peekbyte(io)
-        $(generatebranches(L.parameters, false, value, label))
+        $(generatebranches(L.parameters, false, value, code, label))
         return false
         @label match
             if setvalue
                 setfield!(r, 1, value)
-                r.code = OK
             end
+            r.code |= code
             r.b = b
             return true
         @label nomatch
@@ -120,7 +121,7 @@ function match! end
     return q
 end
 
-function generatebranches(leaves, isparentleaf, parentvalue, parentb)
+function generatebranches(leaves, isparentleaf, parentvalue, parentcode, parentb)
     leaf = leaves[1]
     ifblock = Expr(:if, :(b === $(label(leaf)) || (ignorecase && lower(b) === $(lower(label(leaf))))), generatebranch(leaf))
     block = ifblock
@@ -131,7 +132,8 @@ function generatebranches(leaves, isparentleaf, parentvalue, parentb)
         block = elseifblock
     end
     if isparentleaf
-        push!(block.args, :(value = $value; b = $parentb; @goto match))
+        (parentb === UInt8('\n') || parentb === UInt8('\r')) && (parentcode |= NEWLINE)
+        push!(block.args, :(value = $parentvalue; code = $parentcode; b = $parentb; @goto match))
     end
     return quote
         $ifblock
@@ -139,16 +141,17 @@ function generatebranches(leaves, isparentleaf, parentvalue, parentb)
     end
 end
 
-function generatebranch(::Type{Trie{label, leaf, value, L}}) where {label, leaf, value, L}
+function generatebranch(::Type{Trie{label, leaf, value, code, L}}) where {label, leaf, value, code, L}
     leaves = L.parameters
+    c = (label === UInt8('\n') || label === UInt8('\r')) ? (code | NEWLINE) : code
     if isempty(leaves)
-        body = :(value = $value; @goto match)
+        body = :(value = $value; code = $c | ifelse(eof(io), EOF, SUCCESS); @goto match)
     else
-        eof = leaf ? :(eof(io) && (value = $value; @goto match)) : :(eof(io) && @goto nomatch)
+        eof = leaf ? :(eof(io) && (value = $value; code = $c | EOF; @goto match)) : :(eof(io) && @goto nomatch)
         body = quote
             $eof
             b = peekbyte(io)
-            $(generatebranches(leaves, leaf, value, label))
+            $(generatebranches(leaves, leaf, value, code, label))
         end
     end
     return quote
@@ -158,7 +161,7 @@ function generatebranch(::Type{Trie{label, leaf, value, L}}) where {label, leaf,
 end
 
 match!(::Nothing, x, y) = false
-@generated function match!(root::Trie{label, leaf, value, L}, ptr::Ptr{UInt8}, len::Int) where {label, leaf, value, L}
+@generated function match!(root::Trie{label, leaf, value, code, L}, ptr::Ptr{UInt8}, len::Int) where {label, leaf, value, code, L}
     isempty(L.parameters) && return :(return len == 0)
     q = quote
         len == 0 && return false
@@ -186,7 +189,7 @@ function generatestrbranches(leaves)
     end
 end
 
-function generatestrbranch(::Type{Trie{label, leaf, value, L}}) where {label, leaf, value, L}
+function generatestrbranch(::Type{Trie{label, leaf, value, code, L}}) where {label, leaf, value, code, L}
     leaves = L.parameters
     if isempty(leaves)
         body = :(return i == len)

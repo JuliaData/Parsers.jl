@@ -47,21 +47,21 @@ incr(io::IOBuffer, b) = 1
     ptr = getptr(io)
     len = 0
     b = 0x00
-    code = OK
+    code = SUCCESS
     quoted = false
     if !eof(io) && peekbyte(io) === openquotechar
         readbyte(io)
         ptr += 1
         quoted = true
+        code |= QUOTED
     end
     if quoted
-        len, b, code = handlequoted!(io, len, closequotechar, escapechar)
+        len, b, code = handlequoted!(io, len, closequotechar, escapechar, code)
         if delims !== nothing
             if !eof(io)
                 if match!(delims, io, r, false)
                     b = r.b
                 else
-                    code = INVALID
                     b = readbyte(io)
                     while !eof(io)
                         if match!(delims, io, r, false)
@@ -70,8 +70,10 @@ incr(io::IOBuffer, b) = 1
                         end
                         b = readbyte(io)
                     end
+                    code |= INVALID_DELIMITER
                 end
             end
+            code |= DELIMITED
         end
     elseif delims !== nothing
         # read until we find a delimiter
@@ -83,6 +85,7 @@ incr(io::IOBuffer, b) = 1
             b = readbyte(io)
             len += incr(io, b)
         end
+        code |= DELIMITED
     else
         # just read until eof
         while !eof(io)
@@ -91,40 +94,57 @@ incr(io::IOBuffer, b) = 1
         end
     end
     # @debug "node=$node"
+    eof(io) && (code |= EOF)
     r.b = b
-    r.code = code
-    setfield!(r, 1, match!(node, ptr, len) ? missing : intern(T, (ptr, len)))
+    if match!(node, ptr, len)
+        code |= SENTINEL
+        setfield!(r, 1, missing)
+    else
+        code |= OK
+        setfield!(r, 1, intern(T, (ptr, len)))
+    end
+    r.code |= code
     return r
 end
 
-function handlequoted!(io, len, closequotechar, escapechar)
-    same = closequotechar === escapechar
-    code = INVALID_QUOTED_FIELD
+function handlequoted!(io, len, closequotechar, escapechar, code)
     b = 0x00
-    while !eof(io)
-        b = peekbyte(io)
-        if same && b === escapechar
-            readbyte(io)
-            if eof(io) || peekbyte(io) !== closequotechar
-                code = OK
+    if eof(io)
+        code |= INVALID_QUOTED_FIELD
+    else
+        same = closequotechar === escapechar
+        while true
+            b = peekbyte(io)
+            if same && b === escapechar
+                readbyte(io)
+                if eof(io)
+                    break
+                elseif peekbyte(io) !== closequotechar
+                    break
+                end
+                # otherwise, next byte is escaped, so read it
+                len += incr(io, b)
+                b = peekbyte(io)
+            elseif b === escapechar
+                readbyte(io)
+                if eof(io)
+                    code |= INVALID_QUOTED_FIELD
+                    break
+                end
+                # regular escaped byte
+                len += incr(io, b)
+                b = peekbyte(io)
+            elseif b === closequotechar
+                readbyte(io)
                 break
             end
-            # otherwise, next byte is escaped, so read it
             len += incr(io, b)
-            b = peekbyte(io)
-        elseif b === escapechar
             readbyte(io)
-            eof(io) && break
-            # regular escaped byte
-            len += incr(io, b)
-            b = peekbyte(io)
-        elseif b === closequotechar
-            code = OK
-            readbyte(io)
-            break
+            if eof(io)
+                code |= INVALID_QUOTED_FIELD
+                break
+            end
         end
-        len += incr(io, b)
-        readbyte(io)
     end
     return len, b, code
 end
