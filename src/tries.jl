@@ -107,7 +107,7 @@ function match! end
         return false
         @label match
             if setvalue
-                setfield!(r, 1, $value)
+                setfield!(r, 1, value)
                 r.code = OK
             end
             r.b = b

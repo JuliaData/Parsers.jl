@@ -93,7 +93,7 @@ const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
 
 @inline function defaultparser(io::IO, r::Result{T}; decimal::Union{Char, UInt8}=UInt8('.'), kwargs...) where {T <: Union{Float16, Float32, Float64}}
     setfield!(r, 1, missing)
-    eof(io) && (r.code = EOF; return r)
+    eof(io) && (r.code = EOF; r.b = 0x00; return r)
     b = peekbyte(io)
     negative = false
     if b == MINUS # check for leading '-' or '+'
