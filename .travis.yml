@@ -13,6 +13,10 @@ julia:
 env:
   - JULIA_PROJECT=@.
 
+matrix:
+allow_failures:
+  - julia: 0.7
+
 notifications:
   email: false
 
