@@ -53,12 +53,20 @@ function fastseek!(io::IOBuffer, n::Integer)
 end
 
 """
-    Possible return codes to be used in `Parsers.Result`
-        * `OK=0x00`: parsing succeeded
-        * `EOF=0x01`: `eof(io)` was encountered before parsing was able to succeed
-        * `OVERFLOW=0x02`: parsing of numeric type failed due to overflow (i.e. value to parse exceeded range of requested type)
-        * `INVALID=0x03`: parsing failed
-        * `INVALID_QUOTED_FIELD=0x04`: for use with the `Parsers.Quoted` layer; indicates an invalid quoted field where an opening quote was found, but no valid closing quote
+    Each `Parsers.Result` has a `r.code` field which has type `Parsers.ReturnCode` and is a set of bit flags for various parsing states.
+    The top bit is used to indicate "SUCCESS" (0) and "INVALID" (1), so all failed parsing attempts will have a code < 0, while successful parsings will be > 0.
+    Use `Parsers.ok(code)` to check if a `Parsers.Result` is successful or not.
+    `Parsers.codes(code)` and `Parsers.text(code)` can also be used to get text representations of which bit flags are set in a return code.
+    Various bit flags include:
+      * `OK`: the innermost type parser succeeded in parsing a valid value for the type
+      * `SENTINEL`: a sentinel value was matched; mutually exclusive with `OK` (sentinels are only checked for when the underlying type parser fails)
+      * `QUOTED`: an opening quote character was detected while parsing (note this does not indicate a _correctly_ quoted value)
+      * `DELIMITED`: a valid delimiter was found while parsing; note that EOF is always a valid delimiter
+      * `NEWLINE`: a newline character was matched as a delimiter (useful for applications where newlines have special delimiting purposes)
+      * `EOF`: parsing encountered the end-of-file while parsing
+      * `INVALID_QUOTED_FIELD`: a corresponding closing quote character was not found for a `QUOTED` field
+      * `INVALID_DELIMITER`: a delimiter was found, but not at the expected position while parsing
+      * `OVERFLOW`: a numeric type overflowed while parsing its value
 """
 const ReturnCode = Int16
 ok(x::ReturnCode) = x > 0
@@ -75,23 +83,30 @@ const NEWLINE              = 0b0000000000010000 % ReturnCode
 const EOF                  = 0b0000000000100000 % ReturnCode
 
 # INVALID flags
-const INVALID_EOF          = 0b1000000000100000 % ReturnCode
 const INVALID_QUOTED_FIELD = 0b1000000001000000 % ReturnCode
 const INVALID_DELIMITER    = 0b1000000010000000 % ReturnCode
 const OVERFLOW             = 0b1000000100000000 % ReturnCode
 
 function text(r::ReturnCode)
-    str = "initial value parsing "
+    str = ""
+    if r & QUOTED > 0
+        str = "encountered an opening quote character, initial value parsing "
+    else
+        str = "initial value parsing "
+    end
     if r & OK > 0
         str *= "succeeded"
     else
         str *= "failed"
     end
+    if r & (~INVALID & OVERFLOW) > 0
+        str *= ", value overflowed"
+    end
     if r & SENTINEL > 0
         str *= ", a sentinel value was parsed"
     end
-    if r & QUOTED > 0
-        str *= ", the value was quoted"
+    if r & (~INVALID & INVALID_QUOTED_FIELD) > 0
+        str *= ", invalid quoted value"
     end
     if r & DELIMITED > 0
         str *= ", a valid delimiter was parsed"
@@ -102,14 +117,8 @@ function text(r::ReturnCode)
     if r & EOF > 0
         str *= ", reached EOF"
     end
-    if r & INVALID_QUOTED_FIELD > 0
-        str *= ", invalid quoted value"
-    end
-    if r & INVALID_DELIMITER > 0
+    if r & (~INVALID & INVALID_DELIMITER) > 0
         str *= ", invalid delimiter"
-    end
-    if r & OVERFLOW > 0
-        str *= ", value overflowed"
     end
     return str
 end
@@ -443,18 +452,18 @@ const TEN     = UInt8('9')+UInt8(1)
     # @debug "xparse Int"
     setfield!(r, 1, missing)
     # r.result = missing
-    eof(io) && (r.code |= INVALID_EOF; r.b = 0x00; return r)
+    eof(io) && (r.code |= INVALID | EOF; r.b = 0x00; return r)
     v = zero(T)
     b = peekbyte(io)
     negative = false
     if b === MINUS # check for leading '-' or '+'
         negative = true
         readbyte(io)
-        eof(io) && (r.code |= INVALID_EOF; r.b = b; return r)
+        eof(io) && (r.code |= INVALID | EOF; r.b = b; return r)
         b = peekbyte(io)
     elseif b === PLUS
         readbyte(io)
-        eof(io) && (r.code |= INVALID_EOF; r.b = b; return r)
+        eof(io) && (r.code |= INVALID | EOF; r.b = b; return r)
         b = peekbyte(io)
     end
     parseddigits = false

@@ -92,17 +92,17 @@ const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
     setfield!(r, 1, missing)
     b = 0x00
     code = SUCCESS
-    eof(io) && (code |= INVALID_EOF; @goto done)
+    eof(io) && (code |= INVALID | EOF; @goto done)
     b = peekbyte(io)
     negative = false
     if b == MINUS # check for leading '-' or '+'
         negative = true
         readbyte(io)
-        eof(io) && (code |= INVALID_EOF; @goto done)
+        eof(io) && (code |= INVALID | EOF; @goto done)
         b = peekbyte(io)
     elseif b == PLUS
         readbyte(io)
-        eof(io) && (code |= INVALID_EOF; @goto done)
+        eof(io) && (code |= INVALID | EOF; @goto done)
         b = peekbyte(io)
     end
     # float digit parsing
