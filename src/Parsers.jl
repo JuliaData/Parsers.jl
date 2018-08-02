@@ -275,7 +275,7 @@ Delimited(delims::Union{Char, String}...=',') = Delimited(defaultparser, Trie(St
     parse!(d.next, io, r; kwargs...)
     # @debug "Delimited - $T: r.code=$(r.code), r.result=$(r.result)"
     if eof(io)
-        r.code |= DELIMITED | EOF
+        r.code |= EOF
         return r
     end
     match!(d.delims, io, r, false) && return r

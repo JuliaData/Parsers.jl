@@ -73,7 +73,6 @@ incr(io::IOBuffer, b) = 1
                     code |= INVALID_DELIMITER
                 end
             end
-            code |= DELIMITED
         end
     elseif delims !== nothing
         # read until we find a delimiter
@@ -85,7 +84,6 @@ incr(io::IOBuffer, b) = 1
             b = readbyte(io)
             len += incr(io, b)
         end
-        code |= DELIMITED
     else
         # just read until eof
         while !eof(io)

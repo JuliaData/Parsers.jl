@@ -56,7 +56,7 @@ r = Parsers.parse(Parsers.Quoted(), IOBuffer("\"fals\""), Bool)
 
 r = Parsers.parse(Parsers.Delimited(','), IOBuffer("false"), Bool)
 @test r.result === false
-@test r.code == OK | EOF | DELIMITED
+@test r.code == OK | EOF
 @test r.b === UInt8('e')
 r = Parsers.parse(Parsers.Delimited(','), IOBuffer("falsee"), Bool)
 @test r.result === false
