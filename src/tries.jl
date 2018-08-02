@@ -27,7 +27,7 @@ end
 
 label(::Type{Trie{a, b, c, d, e}}) where {a, b, c, d, e} = a
 
-Trie(v::String, code::ReturnCode=OK, value::T=missing) where {T} = Trie([v], value)
+Trie(v::String, code::ReturnCode=OK, value::T=missing) where {T} = Trie([v], code, value)
 
 function Trie(values::Vector{String}, code::ReturnCode=OK, value::T=missing) where {T}
     leaves = []
