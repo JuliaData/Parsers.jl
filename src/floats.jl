@@ -31,7 +31,7 @@ significantbits(::Type{Float32}) = 24
 significantbits(::Type{Float64}) = 53
 
 bitlength(this) = Base.GMP.MPZ.sizeinbase(this, 2)
-Base.bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
+bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
 
 @inline function scale(::Type{T}, v, exp) where {T <: Union{Float16, Float32, Float64}}
     ms = maxsig(T)

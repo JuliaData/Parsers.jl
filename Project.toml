@@ -1,5 +1,5 @@
 name = "Parsers"
-uuid = "ea579014-6bf0-11e8-2caa-090d489607df"
+uuid = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
 authors = ["quinnj <quinn.jacobd@gmail.com>"]
 version = "0.1.0"
 
