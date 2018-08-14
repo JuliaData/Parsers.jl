@@ -44,6 +44,7 @@ incr(io::IOBuffer, b) = 1
     delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, node=nothing;
     kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}}
     # @debug "xparse Sentinel, String: quotechar='$quotechar', delims='$delims'"
+    setfield!(r, 3, position(io))
     ptr = getptr(io)
     len = 0
     b = 0x00
@@ -59,15 +60,10 @@ incr(io::IOBuffer, b) = 1
         len, b, code = handlequoted!(io, len, closequotechar, escapechar, code)
         if delims !== nothing
             if !eof(io)
-                if match!(delims, io, r, false)
-                    b = r.b
-                else
+                if !match!(delims, io, r, false)
                     b = readbyte(io)
                     while !eof(io)
-                        if match!(delims, io, r, false)
-                            b = r.b
-                            break
-                        end
+                        match!(delims, io, r, false) && break
                         b = readbyte(io)
                     end
                     code |= INVALID_DELIMITER
@@ -77,10 +73,7 @@ incr(io::IOBuffer, b) = 1
     elseif delims !== nothing
         # read until we find a delimiter
         while !eof(io)
-            if match!(delims, io, r, false)
-                b = r.b
-                break
-            end
+            match!(delims, io, r, false) && break
             b = readbyte(io)
             len += incr(io, b)
         end
@@ -93,7 +86,6 @@ incr(io::IOBuffer, b) = 1
     end
     # @debug "node=$node"
     eof(io) && (code |= EOF)
-    r.b = b
     if match!(node, ptr, len)
         code |= SENTINEL
         setfield!(r, 1, missing)

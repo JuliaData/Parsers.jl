@@ -143,12 +143,12 @@ codes(r::ReturnCode) = chop(chop(string(
     A result type used by `Parsers.parse!` to signal the result of trying to parse a certain type. Fields include:
         * `result::Union{T, Missing}`: holds the parsed result of type `T` or `missing` if unable to parse or a valid `Parsers.Sentinel` value was found
         * `code::Parsers.ReturnCode`: a value signaling whether parsing succeeded (`Parsers.OK`) or not (`Parsers.INVALID`); see `?Parsers.ReturnCode` for all possible codes
-        * `b::UInt8`: the last byte parsed
+        * `pos::Int64`: the byte position when a parsing operation started
 """
 mutable struct Result{T}
     result::Union{T, Missing}
     code::ReturnCode
-    b::UInt8
+    pos::Int64
 end
 
 # pre-allocated Results for default supported types
@@ -158,7 +158,7 @@ const DEFAULT_TYPES = (Int8, UInt8, Int16, UInt16, Int32, UInt32, Int64, UInt64,
     Date, DateTime, Time,
     Bool)
 
-const RESULTS = Tuple([Result{T}(missing, OK, 0x00)] for T in DEFAULT_TYPES)
+const RESULTS = Tuple([Result{T}(missing, OK, Int64(0))] for T in DEFAULT_TYPES)
 
 for (i, T) in enumerate(DEFAULT_TYPES)
     @eval index(::Type{$T}) = $i
@@ -169,12 +169,12 @@ index(T) = length(RESULTS) + 1
     if @generated
         i = index(T)
         if i > length(RESULTS)
-            return :(Result{$T}(missing, SUCCESS, 0x00))
+            return :(Result{$T}(missing, SUCCESS, Int64(0)))
         else
             return :(r = $(RESULTS[i])[Threads.threadid()]; r.code = SUCCESS; return r)
         end
     else
-        return Result{T}(missing, SUCCESS, 0x00)
+        return Result{T}(missing, SUCCESS, Int64(0))
     end
 end
 
@@ -283,7 +283,6 @@ Delimited(delims::Union{Char, String}...=',') = Delimited(defaultparser, Trie(St
     while true
         b = readbyte(io)
         if eof(io)
-            r.b = b
             r.code |= EOF
             break
         end
@@ -323,7 +322,6 @@ function handlequoted!(q, io, r)
             if same && b === q.escapechar
                 readbyte(io)
                 if eof(io) || peekbyte(io) !== q.closequotechar
-                    r.b = b
                     first || (r.code |= INVALID)
                     break
                 end
@@ -333,21 +331,18 @@ function handlequoted!(q, io, r)
                 readbyte(io)
                 if eof(io)
                     r.code |= INVALID_QUOTED_FIELD
-                    r.b = b
                     break
                 end
                 # regular escaped byte
                 b = peekbyte(io)
             elseif b === q.closequotechar
                 readbyte(io)
-                r.b = b
                 first || (r.code |= INVALID)
                 break
             end
             readbyte(io)
             if eof(io)
                 r.code |= INVALID_QUOTED_FIELD
-                r.b = b
                 break
             end
             first = false
@@ -360,14 +355,16 @@ end
 @inline function parse!(q::Quoted, io::IO, r::Result{T}; kwargs...) where {T}
     # @debug "xparse Quoted - $T"
     quoted = false
+    pos = 0
     if !eof(io) && peekbyte(io) === q.openquotechar
+        pos = position(io)
         readbyte(io)
         quoted = true
         r.code |= QUOTED
     end
     parse!(q.next, io, r; kwargs...)
     # @debug "Quoted - $T: result.code=$(result.code), result.result=$(result.result)"
-    quoted && handlequoted!(q, io, r)
+    quoted && (setfield!(r, 3, pos); handlequoted!(q, io, r))
     return r
 end
 
@@ -387,24 +384,28 @@ Strip(next, wh1::Union{Char, UInt8}=' ', wh2::Union{Char, UInt8}='\t') = Strip(n
 Strip(wh1::Union{Char, UInt8}=' ', wh2::Union{Char, UInt8}='\t') = Strip(defaultparser, wh1 % UInt8, wh2 % UInt8)
 
 function wh!(io, wh1, wh2)
+    stripped = false
     if !eof(io)
         b = peekbyte(io)
         while (b == wh1) | (b == wh2)
+            stripped = true
             readbyte(io)
             eof(io) && break
             b = peekbyte(io)
         end
     end
-    return
+    return stripped
 end
 
 @inline function parse!(s::Strip, io::IO, r::Result{T}; kwargs...) where {T}
     # @debug "xparse Strip - $T"
-    wh!(io, s.wh1, s.wh2)
+    pos = position(io)
+    stripped = wh!(io, s.wh1, s.wh2)
     parse!(s.next, io, r; kwargs...)
     # @debug "Strip - $T: result.code=$(result.code), result.result=$(result.result), result.b=$(result.b)"
     wh!(io, s.wh1, s.wh2)
     eof(io) && (r.code |= EOF)
+    stripped && setfield!(r, 3, pos)
     return r
 end
 
@@ -451,19 +452,20 @@ const TEN     = UInt8('9')+UInt8(1)
 @inline function defaultparser(io::IO, r::Result{T}; kwargs...) where {T <: Integer}
     # @debug "xparse Int"
     setfield!(r, 1, missing)
+    setfield!(r, 3, position(io))
     # r.result = missing
-    eof(io) && (r.code |= INVALID | EOF; r.b = 0x00; return r)
+    eof(io) && (r.code |= INVALID | EOF; return r)
     v = zero(T)
     b = peekbyte(io)
     negative = false
     if b === MINUS # check for leading '-' or '+'
         negative = true
         readbyte(io)
-        eof(io) && (r.code |= INVALID | EOF; r.b = b; return r)
+        eof(io) && (r.code |= INVALID | EOF; return r)
         b = peekbyte(io)
     elseif b === PLUS
         readbyte(io)
-        eof(io) && (r.code |= INVALID | EOF; r.b = b; return r)
+        eof(io) && (r.code |= INVALID | EOF; return r)
         b = peekbyte(io)
     end
     parseddigits = false
@@ -472,17 +474,15 @@ const TEN     = UInt8('9')+UInt8(1)
         b = readbyte(io)
         v, ov_mul = Base.mul_with_overflow(v, T(10))
         v, ov_add = Base.add_with_overflow(v, T(b - ZERO))
-        (ov_mul | ov_add) && (r.result = v; r.code |= OVERFLOW | ifelse(eof(io), EOF, SUCCESS); r.b = b; return r)
+        (ov_mul | ov_add) && (r.result = v; r.code |= OVERFLOW | ifelse(eof(io), EOF, SUCCESS); return r)
         eof(io) && break
         b = peekbyte(io)
     end
     if !parseddigits
         r.code |= INVALID
-        r.b = b
     else
         r.result = ifelse(negative, -v, v)
         r.code |= OK | ifelse(eof(io), EOF, SUCCESS)
-        r.b = b
     end
     return r
 end
@@ -496,14 +496,14 @@ const BOOLS = Trie(["true"=>true, "false"=>false])
 
 @inline function defaultparser(io::IO, r::Result{Bool}; bools::Trie=BOOLS, kwargs...)
     setfield!(r, 1, missing)
-    r.b = 0x00
+    setfield!(r, 3, position(io))
     if !match!(bools, io, r)
         r.code |= INVALID
     end
     return r
 end
 
-defaultparser(io::IO, r::Result{Missing}; kwargs...) = r
-defaultparser(io::IO, r::Result{Union{}}; kwargs...) = r
+defaultparser(io::IO, r::Result{Missing}; kwargs...) = (setfield!(r, 3, position(io)); return r)
+defaultparser(io::IO, r::Result{Union{}}; kwargs...) = (setfield!(r, 3, position(io)); return r)
 
 end # module

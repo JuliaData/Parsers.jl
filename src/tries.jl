@@ -111,7 +111,6 @@ function match! end
                 setfield!(r, 1, value)
             end
             r.code |= code
-            r.b = b
             return true
         @label nomatch
             fastseek!(io, pos)
@@ -218,43 +217,3 @@ function remove_line_number_nodes(ex)
     deleteat!(ex.args, todelete)
     return ex
 end
-
-# @noinline function match!(root::Trie, io::IO, r::Result, setvalue::Bool=true, ignorecase::Bool=false)
-#     pos = position(io)
-#     if isempty(root.leaves)
-#         return true
-#     else
-#         for n in root.leaves
-#             matchleaf!(n, io, r, setvalue, ignorecase) && return true
-#         end
-#     end
-#     fastseek!(io, pos)
-#     return false    
-# end
-
-# function matchleaf!(node::Trie, io::IO, r::Result, setvalue::Bool=true, ignorecase::Bool=false)
-#     eof(io) && return false
-#     b = peekbyte(io)
-#     # @debug "matching $(escape_string(string(Char(b)))) against $(escape_string(string(Char(node.label))))"
-#     if node.label === b || (ignorecase && lower(node.label) === lower(b))
-#         readbyte(io)
-#         if isempty(node.leaves)
-#             setvalue && (r.result = node.value)
-#             r.code = OK
-#             r.b = b
-#             return true
-#         else
-#             for n in node.leaves
-#                 matchleaf!(n, io, r, setvalue, ignorecase) && return true
-#             end
-#         end
-#         # didn't match, if this is a leaf node, then we matched, otherwise, no match
-#         if node.leaf
-#             setvalue && (r.result = node.value)
-#             r.code = OK
-#             r.b = b
-#             return true
-#         end
-#     end
-#     return false
-# end

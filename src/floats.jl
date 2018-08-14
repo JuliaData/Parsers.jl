@@ -90,6 +90,7 @@ const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
 
 @inline function defaultparser(io::IO, r::Result{T}; decimal::Union{Char, UInt8}=UInt8('.'), kwargs...) where {T <: Union{Float16, Float32, Float64}}
     setfield!(r, 1, missing)
+    setfield!(r, 3, position(io))
     b = 0x00
     code = SUCCESS
     eof(io) && (code |= INVALID | EOF; @goto done)
@@ -218,6 +219,5 @@ const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
 
 @label done
     r.code |= code
-    r.b = b
     return r
 end
