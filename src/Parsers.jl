@@ -74,15 +74,17 @@ ok(x::ReturnCode) = x > 0
 const SUCCESS = 0b0000000000000000 % ReturnCode
 const INVALID = 0b1000000000000000 % ReturnCode
 
-# SUCCESS flags
+# success flags
 const OK                   = 0b0000000000000001 % ReturnCode
 const SENTINEL             = 0b0000000000000010 % ReturnCode
+
+# property flags
 const QUOTED               = 0b0000000000000100 % ReturnCode
 const DELIMITED            = 0b0000000000001000 % ReturnCode
 const NEWLINE              = 0b0000000000010000 % ReturnCode
 const EOF                  = 0b0000000000100000 % ReturnCode
 
-# INVALID flags
+# invalid flags
 const INVALID_QUOTED_FIELD = 0b1000000001000000 % ReturnCode
 const INVALID_DELIMITER    = 0b1000000010000000 % ReturnCode
 const OVERFLOW             = 0b1000000100000000 % ReturnCode
@@ -150,6 +152,7 @@ mutable struct Result{T}
     code::ReturnCode
     pos::Int64
 end
+parsetype(r::Result{T}) where {T} = T
 
 # pre-allocated Results for default supported types
 const DEFAULT_TYPES = (Int8, UInt8, Int16, UInt16, Int32, UInt32, Int64, UInt64, Int128, UInt128,
@@ -181,7 +184,22 @@ end
 include("tries.jl")
 
 struct Error <: Exception
+    io::IO
     result::Result
+end
+
+function Base.showerror(io::IO, e::Error)
+    c = e.result.code
+    println(io, "Parsers.Error ($(codes(c))):")
+    println(io, text(c))
+    if (c & OK > 0) | (c & SENTINEL > 0)
+        pos = position(e.io)
+        seek(e.io, e.result.pos)
+        str = String(read(e.io, pos - e.result.pos))
+        println(io, "attempted to parse $(parsetype(e.result)) from: \"$(escape_string(str))\"")
+    else
+        println(io, "failed to parse $(parsetype(e.result)), encountered: '$(escape_string(string(Char(peekbyte(e.io)))))'")
+    end
 end
 
 """
@@ -222,20 +240,22 @@ function parse end
 function tryparse end
 
 function parse(str::String, ::Type{T}; kwargs...) where {T}
-    res = parse(defaultparser, IOBuffer(str), T; kwargs...)
-    return ok(res.code) ? res.result : throw(Error(res))
+    io = IOBuffer(str)
+    res = parse(defaultparser, io, T; kwargs...)
+    return ok(res.code) ? res.result : throw(Error(io, res))
 end
 function parse(io::IO, ::Type{T}; kwargs...) where {T}
     res = parse(defaultparser, io, T; kwargs...)
-    return ok(res.code) ? res.result : throw(Error(res))
+    return ok(res.code) ? res.result : throw(Error(io, res))
 end
 function parse(f::Base.Callable, str::String, ::Type{T}; kwargs...) where {T}
-    res = parse!(f, IOBuffer(str), Result(T); kwargs...)
-    return ok(res.code) ? res.result : throw(Error(res))
+    io = IOBuffer(str)
+    res = parse!(f, io, Result(T); kwargs...)
+    return ok(res.code) ? res.result : throw(Error(io, res))
 end
 function parse(f::Base.Callable, io::IO, ::Type{T}; kwargs...) where {T}
     res = parse!(f, io, Result(T); kwargs...)
-    return ok(res.code) ? res.result : throw(Error(res))
+    return ok(res.code) ? res.result : throw(Error(io, res))
 end
 
 function tryparse(str::String, ::Type{T}; kwargs...) where {T}
