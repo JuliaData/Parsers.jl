@@ -384,7 +384,7 @@ end
     end
     parse!(q.next, io, r; kwargs...)
     # @debug "Quoted - $T: result.code=$(result.code), result.result=$(result.result)"
-    quoted && (setfield!(r, 3, pos); handlequoted!(q, io, r))
+    quoted && (setfield!(r, 3, Int(pos)); handlequoted!(q, io, r))
     return r
 end
 
@@ -419,7 +419,7 @@ end
 
 @inline function parse!(s::Strip, io::IO, r::Result{T}; kwargs...) where {T}
     # @debug "xparse Strip - $T"
-    pos = position(io)
+    pos = Int(position(io))
     stripped = wh!(io, s.wh1, s.wh2)
     parse!(s.next, io, r; kwargs...)
     # @debug "Strip - $T: result.code=$(result.code), result.result=$(result.result), result.b=$(result.b)"
@@ -472,7 +472,7 @@ const TEN     = UInt8('9')+UInt8(1)
 @inline function defaultparser(io::IO, r::Result{T}; kwargs...) where {T <: Integer}
     # @debug "xparse Int"
     setfield!(r, 1, missing)
-    setfield!(r, 3, position(io))
+    setfield!(r, 3, Int(position(io)))
     # r.result = missing
     eof(io) && (r.code |= INVALID | EOF; return r)
     v = zero(T)
@@ -516,14 +516,14 @@ const BOOLS = Trie(["true"=>true, "false"=>false])
 
 @inline function defaultparser(io::IO, r::Result{Bool}; bools::Trie=BOOLS, kwargs...)
     setfield!(r, 1, missing)
-    setfield!(r, 3, position(io))
+    setfield!(r, 3, Int(position(io)))
     if !match!(bools, io, r)
         r.code |= INVALID
     end
     return r
 end
 
-defaultparser(io::IO, r::Result{Missing}; kwargs...) = (setfield!(r, 3, position(io)); return r)
-defaultparser(io::IO, r::Result{Union{}}; kwargs...) = (setfield!(r, 3, position(io)); return r)
+defaultparser(io::IO, r::Result{Missing}; kwargs...) = (setfield!(r, 3, Int(position(io))); return r)
+defaultparser(io::IO, r::Result{Union{}}; kwargs...) = (setfield!(r, 3, Int(position(io))); return r)
 
 end # module

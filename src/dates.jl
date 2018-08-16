@@ -16,7 +16,7 @@ make(df::String) = Dates.DateFormat(df)
     delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, node=nothing;
     dateformat::Union{String, Dates.DateFormat}=Dates.default_format(T),
     kwargs...) where {T <: Dates.TimeType}
-    setfield!(r, 3, position(io))
+    setfield!(r, 3, Int(position(io)))
     res = defaultparser(io, Result(String), delims, openquotechar, closequotechar, escapechar, node)
     setfield!(r, 1, missing)
     code = res.code
