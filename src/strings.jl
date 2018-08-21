@@ -44,7 +44,7 @@ incr(io::IOBuffer, b) = 1
     delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, node=nothing;
     kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}}
     # @debug "xparse Sentinel, String: quotechar='$quotechar', delims='$delims'"
-    setfield!(r, 3, Int(position(io)))
+    setfield!(r, 3, Int64(position(io)))
     ptr = getptr(io)
     len = 0
     b = 0x00
