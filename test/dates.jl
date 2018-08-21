@@ -39,7 +39,7 @@ r = Parsers.parse(Parsers.Quoted(), IOBuffer("\"2018-01-01"), DateTime)
 @test r.result === missing
 @test r.code == QUOTED | EOF | INVALID_QUOTED_FIELD
 @test r.pos == 0
-r = Parsers.parse(Parsers.Quoted('"', '"'), IOBuffer("\"01\"\"02\"\"03\""), Time; dateformat=dateformat"HH\"\"MM\"\"SS")
+r = Parsers.parse(Parsers.Quoted('"', '"'), IOBuffer("\"01\"\"02\"\"03\""), Time; dateformat=dateformat"HH\"MM\"SS")
 @test r.result === Time(1, 2, 3)
 @test r.code == QUOTED | OK | EOF
 @test r.pos == 0

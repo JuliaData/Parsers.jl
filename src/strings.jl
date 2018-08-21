@@ -24,8 +24,8 @@ Base.isequal(x::Tuple{Ptr{UInt8}, Int}, y::String) = hash(x) === hash(y)
 Base.convert(::Type{String}, x::Tuple{Ptr{UInt8}, Int}) = unsafe_string(x[1], x[2])
 
 const BUF = IOBuffer()
-getptr(io::IO) = pointer(BUF.data, BUF.ptr)
-getptr(io::IOBuffer) = pointer(io.data, io.ptr)
+getptr(io::IO, pos) = pointer(BUF.data, 1)
+getptr(io::IOBuffer, pos) = pointer(io.data, pos+1)
 incr(io::IO, b) = Base.write(BUF, b)
 incr(io::IOBuffer, b) = 1
 
@@ -44,20 +44,21 @@ incr(io::IOBuffer, b) = 1
     delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, node=nothing;
     kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}}
     # @debug "xparse Sentinel, String: quotechar='$quotechar', delims='$delims'"
-    setfield!(r, 3, Int64(position(io)))
-    ptr = getptr(io)
+    pos = position(io)
+    setfield!(r, 3, Int64(pos))
+    ptroff = 0
     len = 0
     b = 0x00
     code = SUCCESS
-    quoted = false
+    quoted = hasescapechars = false
     if !eof(io) && peekbyte(io) === openquotechar
         readbyte(io)
-        ptr += 1
+        ptroff += 1
         quoted = true
         code |= QUOTED
     end
     if quoted
-        len, b, code = handlequoted!(io, len, closequotechar, escapechar, code)
+        len, b, code, hasescapechars = handlequoted!(io, len, closequotechar, escapechar, code)
         if delims !== nothing
             if !eof(io)
                 if !match!(delims, io, r, false)
@@ -86,19 +87,51 @@ incr(io::IOBuffer, b) = 1
     end
     # @debug "node=$node"
     eof(io) && (code |= EOF)
+    ptr = getptr(io, pos) + ptroff
     if match!(node, ptr, len)
         code |= SENTINEL
         setfield!(r, 1, missing)
     else
         code |= OK
-        setfield!(r, 1, intern(T, (ptr, len)))
+        if hasescapechars
+            setfield!(r, 1, unescape(T, intern(T, (ptr, len)), escapechar, closequotechar))
+        else
+            setfield!(r, 1, intern(T, (ptr, len)))
+        end
     end
     r.code |= code
     return r
 end
 
+# unescaping not supported for Tuple{Ptr{UInt8}, Int}!!!
+unescape(x::Tuple{Ptr{UInt8}, Int}) = x
+
+function unescape(T, s::String, escapechar, closequotechar)
+    if length(BUF.data) < sizeof(s)
+        resize!(BUF.data, sizeof(s))
+    end
+    len = 0
+    str = codeunits(s)
+    same = closequotechar === escapechar
+    i = 1
+    @inbounds while i <= length(str)
+        b = str[i]
+        if b !== escapechar
+            len += 1
+            BUF.data[len] = b
+        elseif same
+            len += 1
+            BUF.data[len] = b
+            i += 1
+        end
+        i += 1
+    end
+    return intern(T, (pointer(BUF.data), len))
+end
+
 function handlequoted!(io, len, closequotechar, escapechar, code)
     b = 0x00
+    hasescapechars = false
     if eof(io)
         code |= INVALID_QUOTED_FIELD
     else
@@ -113,6 +146,7 @@ function handlequoted!(io, len, closequotechar, escapechar, code)
                     break
                 end
                 # otherwise, next byte is escaped, so read it
+                hasescapechars = true
                 len += incr(io, b)
                 b = peekbyte(io)
             elseif b === escapechar
@@ -122,6 +156,7 @@ function handlequoted!(io, len, closequotechar, escapechar, code)
                     break
                 end
                 # regular escaped byte
+                hasescapechars = true
                 len += incr(io, b)
                 b = peekbyte(io)
             elseif b === closequotechar
@@ -136,5 +171,5 @@ function handlequoted!(io, len, closequotechar, escapechar, code)
             end
         end
     end
-    return len, b, code
+    return len, b, code, hasescapechars
 end
