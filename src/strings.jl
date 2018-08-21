@@ -12,7 +12,7 @@ const INTERNED_STRINGS_POOL = [WeakKeyDict{String, Nothing}()]
         return kk
     end
 end
-@inline intern(::Type{String}, x::Tuple{Ptr{UInt8}, Int}) = intern!(INTERNED_STRINGS_POOL[Threads.threadid()], x)
+@inline intern(::Type{S}, x::Tuple{Ptr{UInt8}, Int}) where {S <: AbstractString} = intern!(INTERNED_STRINGS_POOL[Threads.threadid()], x)
 @inline intern(::Type{Tuple{Ptr{UInt8}, Int}}, x::Tuple{Ptr{UInt8}, Int}) = x
 
 # taken from Base.hash for String
