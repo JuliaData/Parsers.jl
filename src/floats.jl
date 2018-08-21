@@ -88,7 +88,12 @@ end
 
 const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
 
-@inline function defaultparser(io::IO, r::Result{T}; decimal::Union{Char, UInt8}=UInt8('.'), kwargs...) where {T <: Union{Float16, Float32, Float64}}
+wider(::Type{Int64}) = Int128
+wider(::Type{Int128}) = BigInt
+
+@inline defaultparser(io::IO, r::Result{T}; kwargs...) where {T <: Union{Float16, Float32, Float64}} = _defaultparser(io, r, Int64; kwargs...)
+
+@inline function _defaultparser(io::IO, r::Result{T}, ::Type{IntType}; decimal::Union{Char, UInt8}=UInt8('.'), kwargs...) where {T <: Union{Float16, Float32, Float64}, IntType}
     setfield!(r, 1, missing)
     setfield!(r, 3, Int64(position(io)))
     b = 0x00
@@ -107,14 +112,15 @@ const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
         b = peekbyte(io)
     end
     # float digit parsing
-    v = zero(Int64)
+    v = zero(IntType)
     parseddigits = false
     while NEG_ONE < b < TEN
         readbyte(io)
         parseddigits = true
         # process digits
-        v *= Int64(10)
-        v += Int64(b - ZERO)
+        v, ov_mul = Base.mul_with_overflow(v, IntType(10))
+        v, ov_add = Base.add_with_overflow(v, IntType(b - ZERO))
+        (ov_mul | ov_add) && (fastseek!(io, r.pos); return _defaultparser(io, r, wider(IntType); decimal=decimal))
         if eof(io)
             r.result = T(ifelse(negative, -v, v))
             code |= OK | EOF
@@ -152,8 +158,9 @@ const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
         readbyte(io)
         frac += 1
         # process digits
-        v *= Int64(10)
-        v += Int64(b - ZERO)
+        v, ov_mul = Base.mul_with_overflow(v, IntType(10))
+        v, ov_add = Base.add_with_overflow(v, IntType(b - ZERO))
+        (ov_mul | ov_add) && (fastseek!(io, r.pos); return _defaultparser(io, r, wider(IntType); decimal=decimal))
         if eof(io)
             r.result = scale(T, v, -frac, negative)
             code |= OK | EOF
@@ -170,7 +177,7 @@ const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
             @goto done
         end
         b = peekbyte(io)
-        exp = zero(Int64)
+        exp = zero(IntType)
         negativeexp = false
         if b == MINUS
             negativeexp = true
@@ -193,8 +200,9 @@ const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
             b = readbyte(io)
             parseddigitsexp = true
             # process digits
-            exp *= Int64(10)
-            exp += Int64(b - ZERO)
+            exp, ov_mul = Base.mul_with_overflow(exp, IntType(10))
+            exp, ov_add = Base.add_with_overflow(exp, IntType(b - ZERO))
+            (ov_mul | ov_add) && (fastseek!(io, r.pos); return _defaultparser(io, r, wider(IntType); decimal=decimal))
             if eof(io)
                 if parseddigits
                     r.result = scale(T, v, ifelse(negativeexp, -exp, exp) - frac, negative)

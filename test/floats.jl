@@ -21,36 +21,36 @@ r = Parsers.defaultparser(IOBuffer("1e23"), Parsers.Result(Float64))
 r = Parsers.defaultparser(IOBuffer("1E23"), Parsers.Result(Float64))
 @test r.result === 1e+23
 @test r.code === OK | EOF
-# r = defaultparser.xparse(IOBuffer("100000000000000000000000"), Parsers.Result(Float64))
-# @test r.result === 1e+23
-# @test r.code === OK | EOF
-#
+r = Parsers.defaultparser(IOBuffer("100000000000000000000000"), Parsers.Result(Float64))
+@test r.result === 1e+23
+@test r.code === OK | EOF
+
 r = Parsers.defaultparser(IOBuffer("1e-100"), Parsers.Result(Float64))
 @test r.result === 1e-100
 @test r.code === OK | EOF
 r = Parsers.defaultparser(IOBuffer("123456700"), Parsers.Result(Float64))
 @test r.result === 1.234567e+08
 @test r.code === OK | EOF
-# r = defaultparser.xparse(IOBuffer("99999999999999974834176"), Parsers.Result(Float64))
-# @test r.result === 9.999999999999997e+22
-# @test r.code === OK | EOF
-#
-# r = defaultparser.xparse(IOBuffer("100000000000000000000001"), Parsers.Result(Float64))
-# @test r.result === 1.0000000000000001e+23
-# @test r.code === OK | EOF
-#
-# r = defaultparser.xparse(IOBuffer("100000000000000008388608"), Parsers.Result(Float64))
-# @test r.result === 1.0000000000000001e+23
-# @test r.code === OK | EOF
-#
-# r = defaultparser.xparse(IOBuffer("100000000000000016777215"), Parsers.Result(Float64))
-# @test r.result === 1.0000000000000001e+23
-# @test r.code === OK | EOF
-#
-# r = defaultparser.xparse(IOBuffer("100000000000000016777216"), Parsers.Result(Float64))
-# @test r.result === 1.0000000000000003e+23
-# @test r.code === OK | EOF
-#
+r = Parsers.defaultparser(IOBuffer("99999999999999974834176"), Parsers.Result(Float64))
+@test r.result === 9.999999999999997e+22
+@test r.code === OK | EOF
+
+r = Parsers.defaultparser(IOBuffer("100000000000000000000001"), Parsers.Result(Float64))
+@test r.result === 1.0000000000000001e+23
+@test r.code === OK | EOF
+
+r = Parsers.defaultparser(IOBuffer("100000000000000008388608"), Parsers.Result(Float64))
+@test r.result === 1.0000000000000001e+23
+@test r.code === OK | EOF
+
+r = Parsers.defaultparser(IOBuffer("100000000000000016777215"), Parsers.Result(Float64))
+@test r.result === 1.0000000000000001e+23
+@test r.code === OK | EOF
+
+r = Parsers.defaultparser(IOBuffer("100000000000000016777216"), Parsers.Result(Float64))
+@test r.result === 1.0000000000000003e+23
+@test r.code === OK | EOF
+
 r = Parsers.defaultparser(IOBuffer("-1"), Parsers.Result(Float64))
 @test r.result === -1.0
 @test r.code === OK | EOF
@@ -284,14 +284,14 @@ r = Parsers.defaultparser(IOBuffer("1e-4294967296"), Parsers.Result(Float64))
 r = Parsers.defaultparser(IOBuffer("1e+4294967296"), Parsers.Result(Float64))
 @test r.result === +Inf
 @test r.code === OK | EOF
-# r = defaultparser.xparse(IOBuffer("1e-18446744073709551616"), Parsers.Result(Float64))
-# @test r.result === 0
-# @test r.code === OK | EOF
-#
-# r = defaultparser.xparse(IOBuffer("1e+18446744073709551616"), Parsers.Result(Float64))
-# @test r.result === +Inf
-# @test r.code === OK | EOF
-#
+r = Parsers.defaultparser(IOBuffer("1e-18446744073709551616"), Parsers.Result(Float64))
+@test r.result === 0.0
+@test r.code === OK | EOF
+
+r = Parsers.defaultparser(IOBuffer("1e+18446744073709551616"), Parsers.Result(Float64))
+@test r.result === +Inf
+@test r.code === OK | EOF
+
 
 # Parse errors
 r = Parsers.defaultparser(IOBuffer("1e"), Parsers.Result(Float64))
@@ -328,13 +328,43 @@ r = Parsers.defaultparser(IOBuffer("22.222222222222222"), Parsers.Result(Float64
 
 # Exactly halfway between 1 and math.Nextafter(1, 2).
 # Round to even (down).
-# {"1.00000000000000011102230246251565404236316680908203125", "1", nil},
+r = Parsers.defaultparser(IOBuffer("1.00000000000000011102230246251565404236316680908203125"), Parsers.Result(Float64))
+@test r.result === 1.0
+@test r.code === OK | EOF
 # # Slightly lower; still round down.
-# {"1.00000000000000011102230246251565404236316680908203124", "1", nil},
+r = Parsers.defaultparser(IOBuffer("1.00000000000000011102230246251565404236316680908203124"), Parsers.Result(Float64))
+@test r.result === 1.0
+@test r.code === OK | EOF
 # # Slightly higher; round up.
-# {"1.00000000000000011102230246251565404236316680908203126", "1.0000000000000002", nil},
+r = Parsers.defaultparser(IOBuffer("1.00000000000000011102230246251565404236316680908203126"), Parsers.Result(Float64))
+@test r.result === 1.0000000000000002
+@test r.code === OK | EOF
 # # Slightly higher, but you have to read all the way to the end.
-# {"1.00000000000000011102230246251565404236316680908203125" + strings.Repeat("0", 10000) + "1", "1.0000000000000002", nil},
-    
+# r = Parsers.defaultparser(IOBuffer("1.00000000000000011102230246251565404236316680908203125"), Parsers.Result(Float64))
+
+r = Parsers.defaultparser(IOBuffer("-5.871153289887625082e-01"), Parsers.Result(Float64))
+@test r.result === -5.871153289887625082e-01
+@test r.code === OK | EOF
+r = Parsers.defaultparser(IOBuffer("8.095032986136727615e-01"), Parsers.Result(Float64))
+@test r.result === 8.095032986136727615e-01
+@test r.code === OK | EOF
+r = Parsers.defaultparser(IOBuffer("9.900000000000006573e-01"), Parsers.Result(Float64))
+@test r.result === 9.900000000000006573e-01
+@test r.code === OK | EOF
+r = Parsers.defaultparser(IOBuffer("9.900000000000006573e-01"), Parsers.Result(Float64))
+@test r.result === 9.900000000000006573e-01
+@test r.code === OK | EOF
+r = Parsers.defaultparser(IOBuffer("-9.866066418838319585e-01"), Parsers.Result(Float64))
+@test r.result === -9.866066418838319585e-01
+@test r.code === OK | EOF
+r = Parsers.defaultparser(IOBuffer("-3.138907529596844714e+00"), Parsers.Result(Float64))
+@test r.result === -3.138907529596844714e+00
+@test r.code === OK | EOF
+r = Parsers.defaultparser(IOBuffer("-5.129218106887371675e+00"), Parsers.Result(Float64))
+@test r.result === -5.129218106887371675e+00
+@test r.code === OK | EOF
+r = Parsers.defaultparser(IOBuffer("-4.803915800699462224e+00"), Parsers.Result(Float64))
+@test r.result === -4.803915800699462224e+00
+@test r.code === OK | EOF
 
 end # @testset
