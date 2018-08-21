@@ -106,7 +106,7 @@ end
 # unescaping not supported for Tuple{Ptr{UInt8}, Int}!!!
 unescape(T, x::Tuple{Ptr{UInt8}, Int}, escapechar, closequotechar) = x
 
-function unescape(T, s::String, escapechar, closequotechar)
+function unescape(T, s::AbstractString, escapechar, closequotechar)
     if length(BUF.data) < sizeof(s)
         resize!(BUF.data, sizeof(s))
     end
