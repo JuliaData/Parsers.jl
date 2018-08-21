@@ -104,7 +104,7 @@ incr(io::IOBuffer, b) = 1
 end
 
 # unescaping not supported for Tuple{Ptr{UInt8}, Int}!!!
-unescape(x::Tuple{Ptr{UInt8}, Int}) = x
+unescape(T, x::Tuple{Ptr{UInt8}, Int}, escapechar, closequotechar) = x
 
 function unescape(T, s::String, escapechar, closequotechar)
     if length(BUF.data) < sizeof(s)
