@@ -682,7 +682,7 @@ const NEG_ONE = UInt8('0')-UInt8(1)
 const ZERO    = UInt8('0')
 const TEN     = UInt8('9')+UInt8(1)
 
-@inline function defaultparser(io::IO, r::Result{T}; kwargs...) where {T <: Integer}
+@inline function defaultparser(io::IO, r::Result{T}; base::Int=10, kwargs...) where {T <: Integer}
     # @debug "xparse Int"
     setfield!(r, 1, missing)
     setfield!(r, 3, Int64(position(io)))
@@ -700,13 +700,28 @@ const TEN     = UInt8('9')+UInt8(1)
         readbyte(io)
         eof(io) && (r.code |= INVALID | EOF; return r)
         b = peekbyte(io)
+    elseif base !== 10
+        readbyte(io) # leading '0'
+        eof(io) && (r.code |= INVALID | EOF; return r)
+        readbyte(io) # 'b', 'o', 'x'
+        eof(io) && (r.code |= INVALID | EOF; return r)
+        b = peekbyte(io)
     end
     parseddigits = false
-    while NEG_ONE < b < TEN
+    while true
+        if UInt8('0') <= b <= UInt8('9')
+            off = ZERO
+        elseif UInt8('A') <= b <= UInt8('Z')
+            off = UInt8('A') + UInt8(10)
+        elseif UInt8('a') <= b <= UInt8('z')
+            off = UInt8('a') + ifelse(base <= 36, UInt8(10), UInt8(36))
+        else
+            break
+        end
         parseddigits = true
         b = readbyte(io)
-        v, ov_mul = Base.mul_with_overflow(v, T(10))
-        v, ov_add = Base.add_with_overflow(v, T(b - ZERO))
+        v, ov_mul = Base.mul_with_overflow(v, T(base))
+        v, ov_add = Base.add_with_overflow(v, T(b - off))
         (ov_mul | ov_add) && (r.result = v; r.code |= OVERFLOW | ifelse(eof(io), EOF, SUCCESS); return r)
         eof(io) && break
         b = peekbyte(io)
