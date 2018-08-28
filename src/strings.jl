@@ -46,6 +46,7 @@ incr(io::IOBuffer, b) = 1
     # @debug "xparse Sentinel, String: quotechar='$quotechar', delims='$delims'"
     pos = position(io)
     setfield!(r, 3, Int64(pos))
+    BUF.ptr = 1
     ptroff = 0
     len = 0
     b = 0x00
@@ -99,7 +100,6 @@ incr(io::IOBuffer, b) = 1
             setfield!(r, 1, intern(T, (ptr, len)))
         end
     end
-    BUF.ptr = 1
     r.code |= code
     return r
 end
