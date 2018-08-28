@@ -99,6 +99,7 @@ incr(io::IOBuffer, b) = 1
             setfield!(r, 1, intern(T, (ptr, len)))
         end
     end
+    BUF.ptr = 1
     r.code |= code
     return r
 end
