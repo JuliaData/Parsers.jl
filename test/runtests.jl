@@ -557,6 +557,25 @@ let io=IOBuffer("1,2,null,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers.S
     @test r.pos == 9
 end
 
+let io=IOBuffer("1,,,2,null,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"])); ignore_repeated=true)
+    r = Parsers.parse(layers, io, Int)
+    @test r.result === 1
+    @test r.code === OK | DELIMITED
+    @test r.pos == 0
+    r = Parsers.parse(layers, io, Int)
+    @test r.result === 2
+    @test r.code === OK | DELIMITED
+    @test r.pos == 4
+    r = Parsers.parse(layers, io, Int)
+    @test r.result === missing
+    @test r.code === SENTINEL | DELIMITED
+    @test r.pos == 6
+    r = Parsers.parse(layers, io, Int)
+    @test r.result === 4
+    @test r.code === OK | EOF
+    @test r.pos == 11
+end
+
 end # @testset
 
 end # @testset

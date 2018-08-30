@@ -283,14 +283,15 @@ end
     Parsing on a `Parsers.Delimited` will first call `Parsers.parse!(d.next, io, result; kwargs...)`, then expect the next bytes to be one of the expected `delims` arguments.
     If one of `delims` is not found, the result is `Parsers.INVALID`, but parsing will continue until a valid `delims` is found. An `eof(io)` is _always_ considered a valid termination state in place of a delimiter.
 """
-struct Delimited{I, T <: Trie} <: Layer
+struct Delimited{IR, I, T <: Trie} <: Layer
     next::I
     delims::T
 end
-Delimited(next, delims::Union{Char, String}...=',') = Delimited(next, Trie(String[string(d) for d in delims], DELIMITED))
-Delimited(delims::Union{Char, String}...=',') = Delimited(defaultparser, Trie(String[string(d) for d in delims], DELIMITED))
+Delimited(ignore_repeated::Bool, next::I, delims::T) where {I, T <: Trie} = Delimited{ignore_repeated, I, T}(next, delims)
+Delimited(next::Union{Layer, Base.Callable}=defaultparser, delims::Union{Char, String}...; ignore_repeated::Bool=false) = Delimited(ignore_repeated, next, Trie(String[string(d) for d in (isempty(delims) ? (",",) : delims)], DELIMITED))
+Delimited(delims::Union{Char, String}...; ignore_repeated::Bool=false) = Delimited(ignore_repeated, defaultparser, Trie(String[string(d) for d in (isempty(delims) ? (",",) : delims)], DELIMITED))
 
-@inline function parse!(d::Delimited, io::IO, r::Result{T}; kwargs...) where {T}
+@inline function parse!(d::Delimited{ignore_repeated}, io::IO, r::Result{T}; kwargs...) where {ignore_repeated, T}
     # @debug "xparse Delimited - $T"
     parse!(d.next, io, r; kwargs...)
     # @debug "Delimited - $T: r.code=$(r.code), r.result=$(r.result)"
@@ -298,7 +299,15 @@ Delimited(delims::Union{Char, String}...=',') = Delimited(defaultparser, Trie(St
         r.code |= EOF
         return r
     end
-    match!(d.delims, io, r, false) && return r
+    if ignore_repeated
+        matched = false
+        while match!(d.delims, io, r, false)
+            matched = true
+        end
+        matched && return r
+    else
+        match!(d.delims, io, r, false) && return r
+    end
     # @debug "didn't find delimiters at expected location; result is invalid, parsing until delimiter is found"
     while true
         b = readbyte(io)
@@ -306,7 +315,15 @@ Delimited(delims::Union{Char, String}...=',') = Delimited(defaultparser, Trie(St
             r.code |= EOF
             break
         end
-        match!(d.delims, io, r, false) && break
+        if ignore_repeated
+            matched = false
+            while match!(d.delims, io, r, false)
+                matched = true
+            end
+            matched && break
+        else
+            match!(d.delims, io, r, false) && break
+        end
     end
     r.code |= INVALID_DELIMITER
     return r
