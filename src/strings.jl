@@ -49,14 +49,33 @@ incr(io::IOBuffer, b) = 1
     BUF.ptr = 1
     ptroff = 0
     len = 0
-    b = 0x00
+    b = eof(io) ? 0x00 : peekbyte(io)
     code = SUCCESS
     quoted = hasescapechars = false
-    if !eof(io) && peekbyte(io) === openquotechar
+    if b === openquotechar
         readbyte(io)
         ptroff += 1
         quoted = true
         code |= QUOTED
+    elseif b === UInt8(' ') || b === UInt8('\t')
+        pos2 = position(io)
+        off = 1
+        while true
+            readbyte(io)
+            b = eof(io) ? 0x00 : peekbyte(io)
+            if b === openquotechar
+                pos = position(io)
+                readbyte(io)
+                ptroff += off
+                quoted = true
+                code |= QUOTED
+                break
+            elseif b !== UInt8(' ') && b !== UInt8('\t')
+                fastseek!(io, pos2)
+                break
+            end
+            off += 1
+        end
     end
     if quoted
         len, b, code, hasescapechars = handlequoted!(io, len, closequotechar, escapechar, code)

@@ -393,14 +393,31 @@ end
     # @debug "xparse Quoted - $T"
     quoted = false
     pos = 0
-    if !eof(io) && peekbyte(io) === q.openquotechar
+    b = eof(io) ? 0x00 : peekbyte(io)
+    if b === q.openquotechar
         pos = position(io)
         readbyte(io)
         quoted = true
         r.code |= QUOTED
+    elseif b === UInt8(' ') || b === UInt8('\t')
+        pos2 = position(io)
+        while true
+            readbyte(io)
+            b = eof(io) ? 0x00 : peekbyte(io)
+            if b === q.openquotechar
+                pos = position(io)
+                readbyte(io)
+                quoted = true
+                r.code |= QUOTED
+                break
+            elseif b !== UInt8(' ') && b !== UInt8('\t')
+                fastseek!(io, pos2)
+                break
+            end
+        end
     end
     parse!(q.next, io, r; kwargs...)
-    # @debug "Quoted - $T: result.code=$(result.code), result.result=$(result.result)"
+    println("Quoted - $T: quoted=$quoted, result.code=$(text(r.code)), result.result=$(r.result)")
     quoted && (setfield!(r, 3, Int64(pos)); handlequoted!(q, io, r))
     return r
 end
