@@ -330,8 +330,8 @@ Delimited(delims::Union{Char, String}...; ignore_repeated::Bool=false) = Delimit
 end
 
 """
-    Parsers.Quoted(next, quotechar='"', escapechar='\\')
-    Parsers.Quoted(next, openquote, closequote, escapechar)
+    Parsers.Quoted(next, quotechar='"', escapechar='\\', ignore_quoted_whitespace=false)
+    Parsers.Quoted(next, openquote, closequote, escapechar, ignore_quoted_whitespace)
 
     A custom `Parsers.Layer` used to support parsing potentially "quoted" values. Parsing with a `Parsers.Quoted` does not _require_ the value to be quoted, but will always check for an initial quote and, if found, will then expect (and continue parsing until) a corresponding close quote is found.
     A single `quotechar` can be given, indicating the quoted field will start and end with the same character.
@@ -342,11 +342,12 @@ struct Quoted{I} <: Layer
     openquotechar::UInt8
     closequotechar::UInt8
     escapechar::UInt8
+    ignore_quoted_whitespace::Bool
 end
-Quoted(next, q::Union{Char, UInt8}='"', e::Union{Char, UInt8}='\\') = Quoted(next, UInt8(q), UInt8(q), UInt8(e))
-Quoted(next, q1::Union{Char, UInt8}, q2::Union{Char, UInt8}, e::Union{Char, UInt8}) = Quoted(next, UInt8(q1), UInt8(q2), UInt8(e))
-Quoted(q::Union{Char, UInt8}='"', e::Union{Char, UInt8}='\\') = Quoted(defaultparser, UInt8(q), UInt8(q), UInt8(e))
-Quoted(q1::Union{Char, UInt8}, q2::Union{Char, UInt8}, e::Union{Char, UInt8}) = Quoted(defaultparser, UInt8(q1), UInt8(q2), UInt8(e))
+Quoted(next, q::Union{Char, UInt8}='"', e::Union{Char, UInt8}='\\', i::Bool=false) = Quoted(next, UInt8(q), UInt8(q), UInt8(e), i)
+Quoted(next, q1::Union{Char, UInt8}, q2::Union{Char, UInt8}, e::Union{Char, UInt8}, i::Bool) = Quoted(next, UInt8(q1), UInt8(q2), UInt8(e), i)
+Quoted(q::Union{Char, UInt8}='"', e::Union{Char, UInt8}='\\', i::Bool=false) = Quoted(defaultparser, UInt8(q), UInt8(q), UInt8(e), i)
+Quoted(q1::Union{Char, UInt8}, q2::Union{Char, UInt8}, e::Union{Char, UInt8}, i::Bool) = Quoted(defaultparser, UInt8(q1), UInt8(q2), UInt8(e), i)
 
 function handlequoted!(q, io, r)
     if eof(io)
@@ -399,7 +400,7 @@ end
         readbyte(io)
         quoted = true
         r.code |= QUOTED
-    elseif b === UInt8(' ') || b === UInt8('\t')
+    elseif q.ignore_quoted_whitespace && b === UInt8(' ') || b === UInt8('\t')
         pos2 = position(io)
         while true
             readbyte(io)
@@ -417,8 +418,15 @@ end
         end
     end
     parse!(q.next, io, r; kwargs...)
-    println("Quoted - $T: quoted=$quoted, result.code=$(text(r.code)), result.result=$(r.result)")
+    # println("Quoted - $T: quoted=$quoted, result.code=$(text(r.code)), result.result=$(r.result)")
     quoted && (setfield!(r, 3, Int64(pos)); handlequoted!(q, io, r))
+    if q.ignore_quoted_whitespace
+        b = eof(io) ? 0x00 : peekbyte(io)
+        while b === UInt8(' ') || b === UInt8('\t')
+            readbyte(io)
+            b = eof(io) ? 0x00 : peekbyte(io)
+        end
+    end
     return r
 end
 

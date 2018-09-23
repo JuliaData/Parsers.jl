@@ -32,16 +32,17 @@ incr(io::IOBuffer, b) = 1
 @inline parse!(d::Delimited, io::IO, r::Result{T}; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
     parse!(d.next, io, r, d.delims; kwargs...)
 @inline parse!(q::Quoted, io::IO, r::Result{T}, delims=nothing; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
-    parse!(q.next, io, r, delims, q.openquotechar, q.closequotechar, q.escapechar; kwargs...)
-@inline parse!(s::Strip, io::IO, r::Result{T}, delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
-    parse!(s.next, io, r, delims, openquotechar, closequotechar, escapechar; kwargs...)
-@inline parse!(s::Sentinel, io::IO, r::Result{T}, delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
-    parse!(s.next, io, r, delims, openquotechar, closequotechar, escapechar, s.sentinels; kwargs...)
-@inline parse!(::typeof(defaultparser), io::IO, r::Result{T}, delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, node=nothing; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
-    defaultparser(io, r, delims, openquotechar, closequotechar, escapechar, node; kwargs...)
+    parse!(q.next, io, r, delims, q.openquotechar, q.closequotechar, q.escapechar, q.ignore_quoted_whitespace; kwargs...)
+@inline parse!(s::Strip, io::IO, r::Result{T}, delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, ignore_quoted_whitespace=false; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
+    parse!(s.next, io, r, delims, openquotechar, closequotechar, escapechar, ignore_quoted_whitespace; kwargs...)
+@inline parse!(s::Sentinel, io::IO, r::Result{T}, delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, ignore_quoted_whitespace=false; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
+    parse!(s.next, io, r, delims, openquotechar, closequotechar, escapechar, ignore_quoted_whitespace, s.sentinels; kwargs...)
+@inline parse!(::typeof(defaultparser), io::IO, r::Result{T}, delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, ignore_quoted_whitespace=false, node=nothing; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
+    defaultparser(io, r, delims, openquotechar, closequotechar, escapechar, ignore_quoted_whitespace, node; kwargs...)
 
 @inline function defaultparser(io::IO, r::Result{T},
-    delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, node=nothing;
+    delims=nothing, openquotechar=nothing, closequotechar=nothing,
+    escapechar=nothing, ignore_quoted_whitespace=false, node=nothing;
     kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}}
     # @debug "xparse Sentinel, String: quotechar='$quotechar', delims='$delims'"
     pos = position(io)
@@ -57,7 +58,7 @@ incr(io::IOBuffer, b) = 1
         ptroff += 1
         quoted = true
         code |= QUOTED
-    elseif b === UInt8(' ') || b === UInt8('\t')
+    elseif ignore_quoted_whitespace && b === UInt8(' ') || b === UInt8('\t')
         pos2 = position(io)
         off = 1
         while true
@@ -79,6 +80,13 @@ incr(io::IOBuffer, b) = 1
     end
     if quoted
         len, b, code, hasescapechars = handlequoted!(io, len, closequotechar, escapechar, code)
+        if ignore_quoted_whitespace
+            b = eof(io) ? 0x00 : peekbyte(io)
+            while b === UInt8(' ') || b === UInt8('\t')
+                readbyte(io)
+                b = eof(io) ? 0x00 : peekbyte(io)
+            end
+        end
         if delims !== nothing
             if !eof(io)
                 if !match!(delims, io, r, false)
