@@ -596,6 +596,36 @@ r = Parsers.parse(Parsers.Quoted('"', '"', true), IOBuffer(" \t \"1\"\t "), Stri
 @test r.result === "1"
 @test r.code === QUOTED | OK | EOF
 
+let io=IOBuffer("1, \"2\"\t, \"null\"  ,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"]), '"', '"', true))
+    r = Parsers.parse(layers, io, Int)
+    @test r.result === 1
+    @test r.code === OK | DELIMITED
+    r = Parsers.parse(layers, io, Int)
+    @test r.result === 2
+    @test r.code === OK | QUOTED | DELIMITED
+    r = Parsers.parse(layers, io, Int)
+    @test r.result === missing
+    @test r.code === SENTINEL | QUOTED | DELIMITED
+    r = Parsers.parse(layers, io, Int)
+    @test r.result === 4
+    @test r.code === OK | EOF
+end
+
+let io=IOBuffer("1, \"2\"\t, \"null\"  ,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"]), '"', '"', true))
+    r = Parsers.parse(layers, io, String)
+    @test r.result === "1"
+    @test r.code === OK | DELIMITED
+    r = Parsers.parse(layers, io, String)
+    @test r.result === "2"
+    @test r.code === OK | QUOTED | DELIMITED
+    r = Parsers.parse(layers, io, String)
+    @test r.result === missing
+    @test r.code === SENTINEL | QUOTED | DELIMITED
+    r = Parsers.parse(layers, io, String)
+    @test r.result === "4"
+    @test r.code === OK | EOF
+end
+
 end # @testset
 
 end # @testset
