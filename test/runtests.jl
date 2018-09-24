@@ -594,7 +594,7 @@ r = Parsers.parse(Parsers.Quoted('"', '"', true), IOBuffer(" \"1\""), String)
 
 r = Parsers.parse(Parsers.Quoted('"', '"', true), IOBuffer(" \t \"1\"\t "), String)
 @test r.result === "1"
-@test r.code === QUOTED | OK
+@test r.code === QUOTED | OK | EOF
 
 end # @testset
 
