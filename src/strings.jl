@@ -58,7 +58,7 @@ incr(io::IOBuffer, b) = 1
         ptroff += 1
         quoted = true
         code |= QUOTED
-    elseif ignore_quoted_whitespace && b === UInt8(' ') || b === UInt8('\t')
+    elseif ignore_quoted_whitespace && (b === UInt8(' ') || b === UInt8('\t'))
         pos2 = position(io)
         off = 1
         while true
@@ -77,6 +77,7 @@ incr(io::IOBuffer, b) = 1
             end
             off += 1
         end
+        @show ptroff
     end
     if quoted
         len, b, code, hasescapechars = handlequoted!(io, len, closequotechar, escapechar, code)

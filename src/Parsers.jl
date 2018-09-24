@@ -400,7 +400,7 @@ end
         readbyte(io)
         quoted = true
         r.code |= QUOTED
-    elseif q.ignore_quoted_whitespace && b === UInt8(' ') || b === UInt8('\t')
+    elseif q.ignore_quoted_whitespace && (b === UInt8(' ') || b === UInt8('\t'))
         pos2 = position(io)
         while true
             readbyte(io)
