@@ -578,4 +578,24 @@ end
 
 end # @testset
 
+@testset "ignore quoted whitespace" begin
+
+r = Parsers.parse(Parsers.Quoted('"', '"', true), IOBuffer(" \"1\""), Int)
+@test r.result === 1
+@test r.code === QUOTED | OK | EOF
+
+r = Parsers.parse(Parsers.Quoted('"', '"', true), IOBuffer(" \t \"1\"\t "), Int)
+@test r.result === 1
+@test r.code === QUOTED | OK
+
+r = Parsers.parse(Parsers.Quoted('"', '"', true), IOBuffer(" \"1\""), String)
+@test r.result === "1"
+@test r.code === QUOTED | OK | EOF
+
+r = Parsers.parse(Parsers.Quoted('"', '"', true), IOBuffer(" \t \"1\"\t "), String)
+@test r.result === "1"
+@test r.code === QUOTED | OK
+
+end # @testset
+
 end # @testset
