@@ -29,19 +29,19 @@ getptr(io::IOBuffer, pos) = pointer(io.data, pos+1)
 incr(io::IO, b) = Base.write(BUF, b)
 incr(io::IOBuffer, b) = 1
 
-@inline parse!(d::Delimited, io::IO, r::Result{T}; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
-    parse!(d.next, io, r, d.delims; kwargs...)
-@inline parse!(q::Quoted, io::IO, r::Result{T}, delims=nothing; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
-    parse!(q.next, io, r, delims, q.openquotechar, q.closequotechar, q.escapechar, q.ignore_quoted_whitespace; kwargs...)
-@inline parse!(s::Strip, io::IO, r::Result{T}, delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, ignore_quoted_whitespace=false; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
-    parse!(s.next, io, r, delims, openquotechar, closequotechar, escapechar, ignore_quoted_whitespace; kwargs...)
-@inline parse!(s::Sentinel, io::IO, r::Result{T}, delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, ignore_quoted_whitespace=false; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
-    parse!(s.next, io, r, delims, openquotechar, closequotechar, escapechar, ignore_quoted_whitespace, s.sentinels; kwargs...)
-@inline parse!(::typeof(defaultparser), io::IO, r::Result{T}, delims=nothing, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, ignore_quoted_whitespace=false, node=nothing; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
-    defaultparser(io, r, delims, openquotechar, closequotechar, escapechar, ignore_quoted_whitespace, node; kwargs...)
+@inline parse!(d::Delimited{ignore_repeated}, io::IO, r::Result{T}; kwargs...) where {ignore_repeated, T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
+    parse!(d.next, io, r, d.delims, ignore_repeated; kwargs...)
+@inline parse!(q::Quoted, io::IO, r::Result{T}, delims=nothing, ignore_repeated=false; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
+    parse!(q.next, io, r, delims, ignore_repeated, q.openquotechar, q.closequotechar, q.escapechar, q.ignore_quoted_whitespace; kwargs...)
+@inline parse!(s::Strip, io::IO, r::Result{T}, delims=nothing, ignore_repeated=false, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, ignore_quoted_whitespace=false; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
+    parse!(s.next, io, r, delims, ignore_repeated, openquotechar, closequotechar, escapechar, ignore_quoted_whitespace; kwargs...)
+@inline parse!(s::Sentinel, io::IO, r::Result{T}, delims=nothing, ignore_repeated=false, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, ignore_quoted_whitespace=false; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
+    parse!(s.next, io, r, delims, ignore_repeated, openquotechar, closequotechar, escapechar, ignore_quoted_whitespace, s.sentinels; kwargs...)
+@inline parse!(::typeof(defaultparser), io::IO, r::Result{T}, delims=nothing, ignore_repeated=false, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, ignore_quoted_whitespace=false, node=nothing; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
+    defaultparser(io, r, delims, ignore_repeated, openquotechar, closequotechar, escapechar, ignore_quoted_whitespace, node; kwargs...)
 
 @inline function defaultparser(io::IO, r::Result{T},
-    delims=nothing, openquotechar=nothing, closequotechar=nothing,
+    delims=nothing, ignore_repeated=false, openquotechar=nothing, closequotechar=nothing,
     escapechar=nothing, ignore_quoted_whitespace=false, node=nothing;
     kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}}
     # @debug "xparse Sentinel, String: quotechar='$quotechar', delims='$delims'"
@@ -88,22 +88,53 @@ incr(io::IOBuffer, b) = 1
         end
         if delims !== nothing
             if !eof(io)
-                if !match!(delims, io, r, false)
-                    b = readbyte(io)
-                    while !eof(io)
-                        match!(delims, io, r, false) && break
-                        b = readbyte(io)
+                if ignore_repeated
+                    matched = false
+                    while match!(delims, io, r, false)
+                        matched = true
                     end
-                    code |= INVALID_DELIMITER
+                    if !matched
+                        b = readbyte(io)
+                        while !eof(io)
+                            matched = false
+                            while match!(delims, io, r, false)
+                                matched = true
+                            end
+                            matched && break
+                            b = readbyte(io)
+                        end
+                        code |= INVALID_DELIMITER
+                    end
+                else
+                    if !match!(delims, io, r, false)
+                        b = readbyte(io)
+                        while !eof(io)
+                            match!(delims, io, r, false) && break
+                            b = readbyte(io)
+                        end
+                        code |= INVALID_DELIMITER
+                    end
                 end
             end
         end
     elseif delims !== nothing
         # read until we find a delimiter
-        while !eof(io)
-            match!(delims, io, r, false) && break
-            b = readbyte(io)
-            len += incr(io, b)
+        if ignore_repeated
+            while !eof(io)
+                matched = false
+                while match!(delims, io, r, false)
+                    matched = true
+                end
+                matched && break
+                b = readbyte(io)
+                len += incr(io, b)
+            end
+        else
+            while !eof(io)
+                match!(delims, io, r, false) && break
+                b = readbyte(io)
+                len += incr(io, b)
+            end
         end
     else
         # just read until eof
