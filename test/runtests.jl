@@ -501,64 +501,6 @@ include("floats.jl")
 include("dates.jl")
 include("bools.jl")
 
-@testset "Misc" begin
-
-@test Parsers.parse("101", Int) === 101
-@test Parsers.parse("101,101", Float64; decimal=',') === 101.101
-@test Parsers.parse(IOBuffer("true"), Bool) === true
-@test_throws Parsers.Error Parsers.parse("abc", Int)
-
-@test Parsers.tryparse("abc", Int) === nothing
-@test Parsers.tryparse(IOBuffer("101,101"), Float32; decimal=',') === Float32(101.101)
-
-# custom parser
-function int2str(io::IO, r::Parsers.Result{Int}, args...)
-    v = 0
-    while !eof(io) && (UInt8('0') <= Parsers.peekbyte(io) <= UInt8('9'))
-        v *= 10
-        v += Int(Parsers.readbyte(io) - UInt8('0'))
-    end
-    r.result = v
-    r.code = OK
-    return r
-end
-
-@test Parsers.parse(int2str, "101", Int) === 101
-@test Parsers.parse(int2str, IOBuffer("101"), Int) === 101
-@test Parsers.tryparse(int2str, "101", Int) === 101
-@test Parsers.tryparse(int2str, IOBuffer("101"), Int) === 101
-
-@test Parsers.parse("01/20/2018", Date; dateformat="mm/dd/yyyy") === Date(2018, 1, 20)
-
-@test_throws Parsers.Error Parsers.parse("", Missing)
-@test Parsers.tryparse("", Missing) === nothing
-
-r = Parsers.parse(Parsers.Quoted('{', '}', '\\'), IOBuffer("{1}"), Int)
-@test r.result === 1
-@test r.code === OK | QUOTED | EOF
-@test r.pos == 0
-
-let io=IOBuffer("1,2,null,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"])))
-    r = Parsers.parse(layers, io, Int)
-    @test r.result === 1
-    @test r.code === OK | DELIMITED
-    @test r.pos == 0
-    r = Parsers.parse(layers, io, Int)
-    @test r.result === 2
-    @test r.code === OK | DELIMITED
-    @test r.pos == 2
-    r = Parsers.parse(layers, io, Int)
-    @test r.result === missing
-    @test r.code === SENTINEL | DELIMITED
-    @test r.pos == 4
-    r = Parsers.parse(layers, io, Int)
-    @test r.result === 4
-    @test r.code === OK | EOF
-    @test r.pos == 9
-end
-
-end # @testset
-
 @testset "ignore repeated delimiters" begin
 
 let io=IOBuffer("1,,,2,null,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"])); ignore_repeated=true)
@@ -648,6 +590,78 @@ let io=IOBuffer("1, \"2\"\t, \"null\"  ,4"), layers=Parsers.Delimited(Parsers.Qu
     @test r.result === "4"
     @test r.code === OK | EOF
 end
+
+end # @testset
+
+@testset "Misc" begin
+
+@test Parsers.parse("101", Int) === 101
+@test Parsers.parse("101,101", Float64; decimal=',') === 101.101
+@test Parsers.parse(IOBuffer("true"), Bool) === true
+@test_throws Parsers.Error Parsers.parse("abc", Int)
+
+@test Parsers.tryparse("abc", Int) === nothing
+@test Parsers.tryparse(IOBuffer("101,101"), Float32; decimal=',') === Float32(101.101)
+
+# custom parser
+function int2str(io::IO, r::Parsers.Result{Int}, args...)
+    v = 0
+    while !eof(io) && (UInt8('0') <= Parsers.peekbyte(io) <= UInt8('9'))
+        v *= 10
+        v += Int(Parsers.readbyte(io) - UInt8('0'))
+    end
+    r.result = v
+    r.code = OK
+    return r
+end
+
+@test Parsers.parse(int2str, "101", Int) === 101
+@test Parsers.parse(int2str, IOBuffer("101"), Int) === 101
+@test Parsers.tryparse(int2str, "101", Int) === 101
+@test Parsers.tryparse(int2str, IOBuffer("101"), Int) === 101
+
+@test Parsers.parse("01/20/2018", Date; dateformat="mm/dd/yyyy") === Date(2018, 1, 20)
+
+@test_throws Parsers.Error Parsers.parse("", Missing)
+@test Parsers.tryparse("", Missing) === nothing
+
+r = Parsers.parse(Parsers.Quoted('{', '}', '\\'), IOBuffer("{1}"), Int)
+@test r.result === 1
+@test r.code === OK | QUOTED | EOF
+@test r.pos == 0
+
+let io=IOBuffer("1,2,null,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"])))
+    r = Parsers.parse(layers, io, Int)
+    @test r.result === 1
+    @test r.code === OK | DELIMITED
+    @test r.pos == 0
+    r = Parsers.parse(layers, io, Int)
+    @test r.result === 2
+    @test r.code === OK | DELIMITED
+    @test r.pos == 2
+    r = Parsers.parse(layers, io, Int)
+    @test r.result === missing
+    @test r.code === SENTINEL | DELIMITED
+    @test r.pos == 4
+    r = Parsers.parse(layers, io, Int)
+    @test r.result === 4
+    @test r.code === OK | EOF
+    @test r.pos == 9
+end
+
+# 6: AbstractString input
+@test Parsers.parse(SubString("101"), Int) === 101
+@test Parsers.parse(SubString("101,101"), Float64; decimal=',') === 101.101
+@test Parsers.parse(IOBuffer("true"), Bool) === true
+@test_throws Parsers.Error Parsers.parse("abc", Int)
+
+@test Parsers.tryparse("abc", Int) === nothing
+@test Parsers.tryparse(IOBuffer(SubString("101,101")), Float32; decimal=',') === Float32(101.101)
+
+@test Parsers.parse(int2str, SubString("101"), Int) === 101
+@test Parsers.parse(int2str, IOBuffer(SubString("101")), Int) === 101
+@test Parsers.tryparse(int2str, SubString("101"), Int) === 101
+@test Parsers.tryparse(int2str, IOBuffer(SubString("101")), Int) === 101
 
 end # @testset
 

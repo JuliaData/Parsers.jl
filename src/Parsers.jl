@@ -239,7 +239,7 @@ function parse end
 "Attempt to parse a value of type `T` from `IO` `io`. Returns `nothing` on parser failures and invalid values."
 function tryparse end
 
-function parse(str::String, ::Type{T}; kwargs...) where {T}
+function parse(str::AbstractString, ::Type{T}; kwargs...) where {T}
     io = IOBuffer(str)
     res = parse(defaultparser, io, T; kwargs...)
     return ok(res.code) ? res.result : throw(Error(io, res))
@@ -248,7 +248,7 @@ function parse(io::IO, ::Type{T}; kwargs...) where {T}
     res = parse(defaultparser, io, T; kwargs...)
     return ok(res.code) ? res.result : throw(Error(io, res))
 end
-function parse(f::Base.Callable, str::String, ::Type{T}; kwargs...) where {T}
+function parse(f::Base.Callable, str::AbstractString, ::Type{T}; kwargs...) where {T}
     io = IOBuffer(str)
     res = parse!(f, io, Result(T); kwargs...)
     return ok(res.code) ? res.result : throw(Error(io, res))
@@ -258,7 +258,7 @@ function parse(f::Base.Callable, io::IO, ::Type{T}; kwargs...) where {T}
     return ok(res.code) ? res.result : throw(Error(io, res))
 end
 
-function tryparse(str::String, ::Type{T}; kwargs...) where {T}
+function tryparse(str::AbstractString, ::Type{T}; kwargs...) where {T}
     res = parse(defaultparser, IOBuffer(str), T; kwargs...)
     return ok(res.code) ? res.result : nothing
 end
@@ -266,7 +266,7 @@ function tryparse(io::IO, ::Type{T}; kwargs...) where {T}
     res = parse(defaultparser, io, T; kwargs...)
     return ok(res.code) ? res.result : nothing
 end
-function tryparse(f::Base.Callable, str::String, ::Type{T}; kwargs...) where {T}
+function tryparse(f::Base.Callable, str::AbstractString, ::Type{T}; kwargs...) where {T}
     res = parse!(f, IOBuffer(str), Result(T); kwargs...)
     return ok(res.code) ? res.result : nothing
 end
