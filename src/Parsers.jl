@@ -488,17 +488,19 @@ Sentinel(sentinels::Union{String, Vector{String}}) = Sentinel(defaultparser, Tri
 @inline function parse!(s::Sentinel, io::IO, r::Result{T}; kwargs...) where {T}
     # @debug "xparse Sentinel - $T"
     pos = position(io)
+    if !isempty(s.sentinels.leaves)
+        if match!(s.sentinels, io, r)
+            setfield!(r, 3, Int64(pos))
+            r.code &= ~INVALID
+            return r
+        end
+    end
     parse!(s.next, io, r; kwargs...)
     # @debug "Sentinel - $T: result.code=$(result.code), result.result=$(result.result)"
     if !ok(r.code)
         if isempty(s.sentinels.leaves) && position(io) == pos
             r.code &= ~INVALID
             r.code |= (SENTINEL | ifelse(eof(io), EOF, SUCCESS))
-        else
-            fastseek!(io, pos)
-            if match!(s.sentinels, io, r)
-                r.code &= ~INVALID
-            end
         end
     end
     return r

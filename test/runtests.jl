@@ -663,6 +663,15 @@ end
 @test Parsers.tryparse(int2str, SubString("101"), Int) === 101
 @test Parsers.tryparse(int2str, IOBuffer(SubString("101")), Int) === 101
 
+# https://github.com/JuliaData/CSV.jl/issues/306
+# ensure sentinels are matched before trying to parse type values
+r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["1"]))), IOBuffer("1"), Int)
+@test r.result === missing
+@test r.code === SENTINEL | EOF
+r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["1"]))), IOBuffer("1"), String)
+@test r.result === missing
+@test r.code === SENTINEL | EOF
+
 end # @testset
 
 end # @testset
