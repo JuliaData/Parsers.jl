@@ -671,6 +671,15 @@ r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["1"]))), IO
 r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["1"]))), IOBuffer("1"), String)
 @test r.result === missing
 @test r.code === SENTINEL | EOF
+r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["-"]))), IOBuffer("1"), Int)
+@test r.result === 1
+@test r.code === OK | EOF
+r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["-"]))), IOBuffer("-1"), Int)
+@test r.result === -1
+@test r.code === OK | EOF
+r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["-"]))), IOBuffer("-"), Int)
+@test r.result === missing
+@test r.code === SENTINEL | EOF
 
 end # @testset
 

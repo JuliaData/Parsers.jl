@@ -418,8 +418,8 @@ end
         end
     end
     parse!(q.next, io, r; kwargs...)
-    # println("Quoted - $T: quoted=$quoted, result.code=$(text(r.code)), result.result=$(r.result)")
     quoted && (setfield!(r, 3, Int64(pos)); handlequoted!(q, io, r))
+    # println("Quoted - $T: quoted=$quoted, result.code=$(codes(r.code)), result.result=$(r.result)")
     if q.ignore_quoted_whitespace
         b = eof(io) ? 0x00 : peekbyte(io)
         while b === UInt8(' ') || b === UInt8('\t')
@@ -488,21 +488,38 @@ Sentinel(sentinels::Union{String, Vector{String}}) = Sentinel(defaultparser, Tri
 @inline function parse!(s::Sentinel, io::IO, r::Result{T}; kwargs...) where {T}
     # @debug "xparse Sentinel - $T"
     pos = position(io)
-    if !isempty(s.sentinels.leaves)
-        if match!(s.sentinels, io, r)
-            setfield!(r, 3, Int64(pos))
-            r.code &= ~INVALID
-            return r
+    if isempty(s.sentinels.leaves)
+        parse!(s.next, io, r; kwargs...)
+        if !ok(r.code)
+            if position(io) == pos
+                r.code &= ~INVALID
+                r.code |= (SENTINEL | ifelse(eof(io), EOF, SUCCESS))
+            end
+        end
+    else # non-empty sentinel value
+        sent = match!(s.sentinels, io, r)
+        sentpos = position(io)
+        fastseek!(io, pos)
+        parse!(s.next, io, r; kwargs...)
+        if sent
+            if !ok(r.code)
+                r.code &= ~INVALID
+                setfield!(r, 1, missing)
+                fastseek!(io, sentpos)
+            else
+                # both sentinel value parsing matched & type parsing succeeded
+                pos = position(io)
+                if pos > sentpos
+                    r.code &= ~SENTINEL
+                else
+                    r.code &= ~OK
+                    setfield!(r, 1, missing)
+                    fastseek!(io, sentpos)
+                end
+            end
         end
     end
-    parse!(s.next, io, r; kwargs...)
     # @debug "Sentinel - $T: result.code=$(result.code), result.result=$(result.result)"
-    if !ok(r.code)
-        if isempty(s.sentinels.leaves) && position(io) == pos
-            r.code &= ~INVALID
-            r.code |= (SENTINEL | ifelse(eof(io), EOF, SUCCESS))
-        end
-    end
     return r
 end
 

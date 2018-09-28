@@ -104,8 +104,8 @@ r = Parsers.parse(Parsers.Sentinel(["false"]), IOBuffer("false"), Bool)
 @test r.code == SENTINEL | EOF
 @test r.pos == 0
 r = Parsers.parse(Parsers.Sentinel(["fals"]), IOBuffer("falsee"), Bool)
-@test r.result === missing
-@test r.code == SENTINEL
+@test r.result === false
+@test r.code == OK
 @test r.pos == 0
 r = Parsers.parse(Parsers.Sentinel(["fals"]), IOBuffer("fals"), Bool)
 @test r.result === missing
