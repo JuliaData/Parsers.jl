@@ -82,44 +82,6 @@ end
 
 lower(c::UInt8) = UInt8('A') <= c <= UInt8('Z') ? c | 0x20 : c 
 
-"""
-    Parsers.match!(t::Parsers.Trie, io::IO, r::Parsers.Result, setvalue::Bool=true, ignorecase::Bool=false)
-
-    Function that takes an `io::IO` argument, a prebuilt `r::Parsers.Result` argument, and a `t::Parsers.Trie` argument, and attempts to match/detect special values in `t` with the next bytes consumed from `io`.
-    If special values are found, `r.result` will be set to the value that was associated with `t` when it was constructed.
-    The return value of `Parsers.match!` is if a special value was indeed detected in `io` (`true` or `false`).
-    Optionally, if the `setvalue` is `false`, `r.result` will be unaffected (i.e. not set) even if a special value is found.
-    The optional argument `ignorecase` can be used if case-insensitive matching is desired.
-
-    Note that `io` is reset to its original position if no special value is found.
-"""
-function match! end
-
-@generated function match!(root::Trie{label, leaf, value, code, L}, io::IO, r::Result, setvalue::Bool=true, ignorecase::Bool=false) where {label, leaf, value, code, L}
-    isempty(L.parameters) && return :(return true)
-    q = quote
-        if eof(io)
-            r.code |= EOF
-            return false
-        end
-        pos = position(io)
-        b = peekbyte(io)
-        $(generatebranches(L.parameters, false, value, code, label))
-        return false
-        @label match
-            if setvalue
-                setfield!(r, 1, value)
-            end
-            r.code |= code
-            return true
-        @label nomatch
-            fastseek!(io, pos)
-            return false
-    end
-    # @show remove_line_number_nodes(q)
-    return q
-end
-
 function generatebranches(leaves, isparentleaf, parentvalue, parentcode, parentb)
     leaf = leaves[1]
     ifblock = Expr(:if, :(b === $(label(leaf)) || (ignorecase && lower(b) === $(lower(label(leaf))))), generatebranch(leaf))
@@ -159,14 +121,39 @@ function generatebranch(::Type{Trie{label, leaf, value, code, L}}) where {label,
     end
 end
 
-match!(::Nothing, x, y) = false
-@generated function match!(root::Trie{label, leaf, value, code, L}, ptr::Ptr{UInt8}, len::Int) where {label, leaf, value, code, L}
-    isempty(L.parameters) && return :(return len == 0)
+"""
+    Parsers.match!(t::Parsers.Trie, io::IO, r::Parsers.Result, setvalue::Bool=true, ignorecase::Bool=false)
+
+    Function that takes an `io::IO` argument, a prebuilt `r::Parsers.Result` argument, and a `t::Parsers.Trie` argument, and attempts to match/detect special values in `t` with the next bytes consumed from `io`.
+    If special values are found, `r.result` will be set to the value that was associated with `t` when it was constructed.
+    The return value of `Parsers.match!` is if a special value was indeed detected in `io` (`true` or `false`).
+    Optionally, if the `setvalue` is `false`, `r.result` will be unaffected (i.e. not set) even if a special value is found.
+    The optional argument `ignorecase` can be used if case-insensitive matching is desired.
+
+    Note that `io` is reset to its original position if no special value is found.
+"""
+function match! end
+
+@generated function match!(root::Trie{label, leaf, value, code, L}, io::IO, r::Result, setvalue::Bool=true, ignorecase::Bool=false) where {label, leaf, value, code, L}
+    isempty(L.parameters) && return :(return true)
     q = quote
-        len == 0 && return false
-        i = 1
-        b = unsafe_load(ptr, i)
-        $(generatestrbranches(L.parameters))
+        if eof(io)
+            r.code |= EOF
+            return false
+        end
+        pos = position(io)
+        b = peekbyte(io)
+        $(generatebranches(L.parameters, false, value, code, label))
+        return false
+        @label match
+            if setvalue
+                setfield!(r, 1, value)
+            end
+            r.code |= code
+            return true
+        @label nomatch
+            fastseek!(io, pos)
+            return false
     end
     # @show remove_line_number_nodes(q)
     return q
@@ -203,6 +190,19 @@ function generatestrbranch(::Type{Trie{label, leaf, value, code, L}}) where {lab
     return quote
         $body
     end
+end
+
+match!(::Nothing, x, y) = false
+@generated function match!(root::Trie{label, leaf, value, code, L}, ptr::Ptr{UInt8}, len::Int) where {label, leaf, value, code, L}
+    isempty(L.parameters) && return :(return len == 0)
+    q = quote
+        len == 0 && return false
+        i = 1
+        b = unsafe_load(ptr, i)
+        $(generatestrbranches(L.parameters))
+    end
+    # @show remove_line_number_nodes(q)
+    return q
 end
 
 function remove_line_number_nodes(ex)
