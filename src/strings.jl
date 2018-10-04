@@ -14,6 +14,7 @@ const INTERNED_STRINGS_POOL = [WeakKeyDict{String, Nothing}()]
 end
 @inline intern(::Type{S}, x::Tuple{Ptr{UInt8}, Int}) where {S <: AbstractString} = intern!(INTERNED_STRINGS_POOL[Threads.threadid()], x)
 @inline intern(::Type{Tuple{Ptr{UInt8}, Int}}, x::Tuple{Ptr{UInt8}, Int}) = x
+@inline intern(::Type{WeakRefString{UInt8}}, x::Tuple{Ptr{UInt8}, Int}) = WeakRefString(x)
 
 # taken from Base.hash for String
 function Base.hash(x::Tuple{Ptr{UInt8},Int}, h::UInt)

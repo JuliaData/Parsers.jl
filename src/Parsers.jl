@@ -1,6 +1,7 @@
 module Parsers
 
-using Dates
+using Dates, WeakRefStrings
+
 Dates.default_format(T) = Dates.dateformat""
 
 function __init__()
@@ -157,7 +158,7 @@ parsetype(r::Result{T}) where {T} = T
 # pre-allocated Results for default supported types
 const DEFAULT_TYPES = (Int8, UInt8, Int16, UInt16, Int32, UInt32, Int64, UInt64, Int128, UInt128,
     Float16, Float32, Float64,
-    Tuple{Ptr{UInt8}, Int}, String,
+    Tuple{Ptr{UInt8}, Int}, String, WeakRefString{UInt8},
     Date, DateTime, Time,
     Bool)
 
