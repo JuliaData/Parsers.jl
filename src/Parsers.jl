@@ -276,6 +276,22 @@ function tryparse(f::Base.Callable, io::IO, ::Type{T}; kwargs...) where {T}
     return ok(res.code) ? res.result : nothing
 end
 
+function checknewline(io, r)
+    eof(io) && return true
+    b = peekbyte(io)
+    if b === UInt8('\n')
+        readbyte(io)
+        r.code |= NEWLINE | ifelse(eof(io), EOF, SUCCESS)
+        return true
+    elseif b === UInt8('\r')
+        readbyte(io)
+        r.code |= NEWLINE | ifelse(eof(io), EOF, SUCCESS)
+        !eof(io) && peekbyte(io) === UInt8('\n') && readbyte(io)
+        return true
+    end
+    return false
+end
+
 """
     Parsers.Delimited(next, delims::Union{Char, String}...=',')
 
@@ -284,15 +300,15 @@ end
     Parsing on a `Parsers.Delimited` will first call `Parsers.parse!(d.next, io, result; kwargs...)`, then expect the next bytes to be one of the expected `delims` arguments.
     If one of `delims` is not found, the result is `Parsers.INVALID`, but parsing will continue until a valid `delims` is found. An `eof(io)` is _always_ considered a valid termination state in place of a delimiter.
 """
-struct Delimited{IR, I, T <: Trie} <: Layer
+struct Delimited{IR, N, I, T <: Trie} <: Layer
     next::I
     delims::T
 end
-Delimited(ignore_repeated::Bool, next::I, delims::T) where {I, T <: Trie} = Delimited{ignore_repeated, I, T}(next, delims)
-Delimited(next::Union{Layer, Base.Callable}=defaultparser, delims::Union{Char, String}...; ignore_repeated::Bool=false) = Delimited(ignore_repeated, next, Trie(String[string(d) for d in (isempty(delims) ? (",",) : delims)], DELIMITED))
-Delimited(delims::Union{Char, String}...; ignore_repeated::Bool=false) = Delimited(ignore_repeated, defaultparser, Trie(String[string(d) for d in (isempty(delims) ? (",",) : delims)], DELIMITED))
+Delimited(ignorerepeated::Bool, newline::Bool, next::I, delims::T) where {I, T <: Trie} = Delimited{ignorerepeated, newline, I, T}(next, delims)
+Delimited(next::Union{Layer, Base.Callable}=defaultparser, delims::Union{Char, String}...; ignorerepeated::Bool=false, newline::Bool=false) = Delimited(ignorerepeated, newline, next, Trie(String[string(d) for d in (isempty(delims) ? (",",) : delims)], DELIMITED))
+Delimited(delims::Union{Char, String}...; ignorerepeated::Bool=false, newline::Bool=false) = Delimited(ignorerepeated, newline, defaultparser, Trie(String[string(d) for d in (isempty(delims) ? (",",) : delims)], DELIMITED))
 
-@inline function parse!(d::Delimited{ignore_repeated}, io::IO, r::Result{T}; kwargs...) where {ignore_repeated, T}
+@inline function parse!(d::Delimited{ignorerepeated, newline}, io::IO, r::Result{T}; kwargs...) where {ignorerepeated, newline, T}
     # @debug "xparse Delimited - $T"
     parse!(d.next, io, r; kwargs...)
     # @debug "Delimited - $T: r.code=$(r.code), r.result=$(r.result)"
@@ -300,14 +316,14 @@ Delimited(delims::Union{Char, String}...; ignore_repeated::Bool=false) = Delimit
         r.code |= EOF
         return r
     end
-    if ignore_repeated
+    if ignorerepeated
         matched = false
         while match!(d.delims, io, r, false)
             matched = true
         end
-        matched && return r
+        (matched || (newline && checknewline(io, r))) && return r
     else
-        match!(d.delims, io, r, false) && return r
+        (match!(d.delims, io, r, false) || (newline && checknewline(io, r))) && return r
     end
     # @debug "didn't find delimiters at expected location; result is invalid, parsing until delimiter is found"
     while true
@@ -316,14 +332,14 @@ Delimited(delims::Union{Char, String}...; ignore_repeated::Bool=false) = Delimit
             r.code |= EOF
             break
         end
-        if ignore_repeated
+        if ignorerepeated
             matched = false
             while match!(d.delims, io, r, false)
                 matched = true
             end
-            matched && break
+            (matched || (newline && checknewline(io, r))) && break
         else
-            match!(d.delims, io, r, false) && break
+            (match!(d.delims, io, r, false) || (newline && checknewline(io, r))) && break
         end
     end
     r.code |= INVALID_DELIMITER
