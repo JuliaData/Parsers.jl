@@ -267,22 +267,22 @@ r = Parsers.parse(Parsers.Delimited(), IOBuffer("1;"), Int)
 @test r.result === 1
 @test r.code === INVALID | EOF | OK | INVALID_DELIMITER
 @test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(',', '\n'), IOBuffer("1\n"), Int)
+r = Parsers.parse(Parsers.Delimited(','; newline=true), IOBuffer("1\n"), Int)
 @test r.result === 1
-@test r.code === OK | DELIMITED | EOF | NEWLINE
+@test r.code === OK | EOF | NEWLINE
 @test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(',', '\n'), IOBuffer("1abc\n"), Int)
+r = Parsers.parse(Parsers.Delimited(','; newline=true), IOBuffer("1abc\n"), Int)
 @test r.result === 1
-@test r.code === INVALID | OK | NEWLINE | EOF | INVALID_DELIMITER | DELIMITED
+@test r.code === INVALID | OK | NEWLINE | EOF | INVALID_DELIMITER
 @test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(',', '\n'), IOBuffer("1abc"), Int)
+r = Parsers.parse(Parsers.Delimited(','; newline=true), IOBuffer("1abc"), Int)
 @test r.result === 1
 @test r.code === INVALID | OK | EOF | INVALID_DELIMITER
 @test r.pos == 0
 
-r = Parsers.parse(Parsers.Delimited(',', '\n', '\r', "\r\n"), IOBuffer("1\r2"), Int)
+r = Parsers.parse(Parsers.Delimited(','; newline=true), IOBuffer("1\r2"), Int)
 @test r.result === 1
-@test r.code === OK | DELIMITED | NEWLINE
+@test r.code === OK | NEWLINE
 @test r.pos == 0
 
 end # @testset
@@ -503,7 +503,7 @@ include("bools.jl")
 
 @testset "ignore repeated delimiters" begin
 
-let io=IOBuffer("1,,,2,null,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"])); ignore_repeated=true)
+let io=IOBuffer("1,,,2,null,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"])); ignorerepeated=true)
     r = Parsers.parse(layers, io, Int)
     @test r.result === 1
     @test r.code === OK | DELIMITED
@@ -522,7 +522,7 @@ let io=IOBuffer("1,,,2,null,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers
     @test r.pos == 11
 end
 
-let io=IOBuffer("1,,,2,null,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"])); ignore_repeated=true)
+let io=IOBuffer("1,,,2,null,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"])); ignorerepeated=true)
     r = Parsers.parse(layers, io, String)
     @test r.result === "1"
     @test r.code === OK | DELIMITED

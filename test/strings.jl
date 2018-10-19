@@ -155,12 +155,12 @@ r = Parsers.parse(Parsers.Delimited(), IOBuffer("1,"), String)
 r = Parsers.parse(Parsers.Delimited(), IOBuffer("1;"), String)
 @test r.result === "1;"
 @test r.code === OK | EOF
-r = Parsers.parse(Parsers.Delimited(',', '\n'), IOBuffer("1\n"), String)
+r = Parsers.parse(Parsers.Delimited(','; newline=true), IOBuffer("1\n"), String)
 @test r.result === "1"
-@test r.code === OK | EOF | DELIMITED | NEWLINE
-r = Parsers.parse(Parsers.Delimited(',', '\n'), IOBuffer("1abc\n"), String)
+@test r.code === OK | EOF | NEWLINE
+r = Parsers.parse(Parsers.Delimited(','; newline=true), IOBuffer("1abc\n"), String)
 @test r.result === "1abc"
-@test r.code === OK | EOF | DELIMITED | NEWLINE
+@test r.code === OK | EOF | NEWLINE
 
 end # @testset
 

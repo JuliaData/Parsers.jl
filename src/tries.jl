@@ -106,7 +106,6 @@ function generatebranches(leaves, isparentleaf, parentvalue, parentcode, parentb
         block = elseifblock
     end
     if isparentleaf
-        (parentb === UInt8('\n') || parentb === UInt8('\r')) && (parentcode |= NEWLINE)
         push!(block.args, :(value = $parentvalue; code = $parentcode; b = $parentb; @goto match))
     end
     return quote
@@ -117,7 +116,7 @@ end
 
 function generatebranch(::Type{Trie{label, leaf, value, code, L}}) where {label, leaf, value, code, L}
     leaves = L.parameters
-    c = (label === UInt8('\n') || label === UInt8('\r')) ? (code | NEWLINE) : code
+    c = code
     if isempty(leaves)
         body = :(value = $value; code = $c | ifelse(eof(io), EOF, SUCCESS); @goto match)
     else

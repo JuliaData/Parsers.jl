@@ -30,19 +30,19 @@ getptr(io::IOBuffer, pos) = pointer(io.data, pos+1)
 incr(io::IO, b) = Base.write(BUF, b)
 incr(io::IOBuffer, b) = 1
 
-@inline parse!(d::Delimited{ignore_repeated}, io::IO, r::Result{T}; kwargs...) where {ignore_repeated, T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
-    parse!(d.next, io, r, d.delims, ignore_repeated; kwargs...)
-@inline parse!(q::Quoted, io::IO, r::Result{T}, delims=nothing, ignore_repeated=false; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
-    parse!(q.next, io, r, delims, ignore_repeated, q.openquotechar, q.closequotechar, q.escapechar, q.ignore_quoted_whitespace; kwargs...)
-@inline parse!(s::Strip, io::IO, r::Result{T}, delims=nothing, ignore_repeated=false, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, ignore_quoted_whitespace=false; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
-    parse!(s.next, io, r, delims, ignore_repeated, openquotechar, closequotechar, escapechar, ignore_quoted_whitespace; kwargs...)
-@inline parse!(s::Sentinel, io::IO, r::Result{T}, delims=nothing, ignore_repeated=false, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, ignore_quoted_whitespace=false; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
-    parse!(s.next, io, r, delims, ignore_repeated, openquotechar, closequotechar, escapechar, ignore_quoted_whitespace, s.sentinels; kwargs...)
-@inline parse!(::typeof(defaultparser), io::IO, r::Result{T}, delims=nothing, ignore_repeated=false, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, ignore_quoted_whitespace=false, node=nothing; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
-    defaultparser(io, r, delims, ignore_repeated, openquotechar, closequotechar, escapechar, ignore_quoted_whitespace, node; kwargs...)
+@inline parse!(d::Delimited{ignorerepeated, newline}, io::IO, r::Result{T}; kwargs...) where {ignorerepeated, newline, T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
+    parse!(d.next, io, r, d.delims, ignorerepeated, newline; kwargs...)
+@inline parse!(q::Quoted, io::IO, r::Result{T}, delims=nothing, ignorerepeated=false, newline=false; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
+    parse!(q.next, io, r, delims, ignorerepeated, newline, q.openquotechar, q.closequotechar, q.escapechar, q.ignore_quoted_whitespace; kwargs...)
+@inline parse!(s::Strip, io::IO, r::Result{T}, delims=nothing, ignorerepeated=false, newline=false, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, ignore_quoted_whitespace=false; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
+    parse!(s.next, io, r, delims, ignorerepeated, newline, openquotechar, closequotechar, escapechar, ignore_quoted_whitespace; kwargs...)
+@inline parse!(s::Sentinel, io::IO, r::Result{T}, delims=nothing, ignorerepeated=false, newline=false, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, ignore_quoted_whitespace=false; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
+    parse!(s.next, io, r, delims, ignorerepeated, newline, openquotechar, closequotechar, escapechar, ignore_quoted_whitespace, s.sentinels; kwargs...)
+@inline parse!(::typeof(defaultparser), io::IO, r::Result{T}, delims=nothing, ignorerepeated=false, newline=false, openquotechar=nothing, closequotechar=nothing, escapechar=nothing, ignore_quoted_whitespace=false, node=nothing; kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}} =
+    defaultparser(io, r, delims, ignorerepeated, newline, openquotechar, closequotechar, escapechar, ignore_quoted_whitespace, node; kwargs...)
 
 @inline function defaultparser(io::IO, r::Result{T},
-    delims=nothing, ignore_repeated=false, openquotechar=nothing, closequotechar=nothing,
+    delims=nothing, ignorerepeated=false, newline=false, openquotechar=nothing, closequotechar=nothing,
     escapechar=nothing, ignore_quoted_whitespace=false, node=nothing;
     kwargs...) where {T <: Union{Tuple{Ptr{UInt8}, Int}, AbstractString}}
     # @debug "xparse Sentinel, String: quotechar='$quotechar', delims='$delims'"
@@ -89,9 +89,12 @@ incr(io::IOBuffer, b) = 1
         end
         if delims !== nothing
             if !eof(io)
-                if ignore_repeated
+                if ignorerepeated
                     matched = false
                     while match!(delims, io, r, false)
+                        matched = true
+                    end
+                    if !matched && (newline && checknewline(io, r))
                         matched = true
                     end
                     if !matched
@@ -101,16 +104,19 @@ incr(io::IOBuffer, b) = 1
                             while match!(delims, io, r, false)
                                 matched = true
                             end
+                            if !matched && (newline && checknewline(io, r))
+                                matched = true
+                            end
                             matched && break
                             b = readbyte(io)
                         end
                         code |= INVALID_DELIMITER
                     end
                 else
-                    if !match!(delims, io, r, false)
+                    if !(match!(delims, io, r, false) || (newline && checknewline(io, r)))
                         b = readbyte(io)
                         while !eof(io)
-                            match!(delims, io, r, false) && break
+                            (match!(delims, io, r, false) || (newline && checknewline(io, r))) && break
                             b = readbyte(io)
                         end
                         code |= INVALID_DELIMITER
@@ -120,10 +126,13 @@ incr(io::IOBuffer, b) = 1
         end
     elseif delims !== nothing
         # read until we find a delimiter
-        if ignore_repeated
+        if ignorerepeated
             while !eof(io)
                 matched = false
                 while match!(delims, io, r, false)
+                    matched = true
+                end
+                if !matched && (newline && checknewline(io, r))
                     matched = true
                 end
                 matched && break
@@ -132,7 +141,7 @@ incr(io::IOBuffer, b) = 1
             end
         else
             while !eof(io)
-                match!(delims, io, r, false) && break
+                (match!(delims, io, r, false) || (newline && checknewline(io, r))) && break
                 b = readbyte(io)
                 len += incr(io, b)
             end
