@@ -27,7 +27,7 @@ function readbyte end
 function peekbyte end
 
 readbyte(from::IO) = Base.read(from, UInt8)
-peekbyte(from::IO) = Base.peek(from)
+peekbyte(from::IO) = UInt8(Base.peek(from))
 
 function readbyte(from::IOBuffer)
     @inbounds byte = from.data[from.ptr]
@@ -285,8 +285,8 @@ function checknewline(io, r)
         return true
     elseif b === UInt8('\r')
         readbyte(io)
-        r.code |= NEWLINE | ifelse(eof(io), EOF, SUCCESS)
         !eof(io) && peekbyte(io) === UInt8('\n') && readbyte(io)
+        r.code |= NEWLINE | ifelse(eof(io), EOF, SUCCESS)
         return true
     end
     return false
