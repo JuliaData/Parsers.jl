@@ -649,6 +649,33 @@ let io=IOBuffer("1,2,null,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers.S
     @test r.pos == 9
 end
 
+# https://github.com/JuliaData/CSV.jl/issues/344
+open("temp", "w+") do io
+    write(io, "1,2,null,4")
+end
+
+let layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"])))
+    open("temp") do io
+        r = Parsers.parse(layers, io, Int)
+        @test r.result === 1
+        @test r.code === OK | DELIMITED
+        @test r.pos == 0
+        r = Parsers.parse(layers, io, Int)
+        @test r.result === 2
+        @test r.code === OK | DELIMITED
+        @test r.pos == 2
+        r = Parsers.parse(layers, io, Int)
+        @test r.result === missing
+        @test r.code === SENTINEL | DELIMITED
+        @test r.pos == 4
+        r = Parsers.parse(layers, io, Int)
+        @test r.result === 4
+        @test r.code === OK | EOF
+        @test r.pos == 9
+    end
+end
+rm("temp")
+
 # 6: AbstractString input
 @test Parsers.parse(SubString("101"), Int) === 101
 @test Parsers.parse(SubString("101,101"), Float64; decimal=',') === 101.101
