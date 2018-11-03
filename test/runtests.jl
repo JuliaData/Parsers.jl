@@ -649,6 +649,20 @@ let io=IOBuffer("1,2,null,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers.S
     @test r.pos == 9
 end
 
+# https://github.com/JuliaData/CSV.jl/issues/345
+open("temp", "w+") do io
+    write(io, "\"DALLAS BLACK DANCE THEATRE\",")
+end
+
+let layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"])))
+    open("temp") do io
+        r = Parsers.parse(layers, io, String)
+        @test r.result == "DALLAS BLACK DANCE THEATRE"
+        @test r.code === OK | QUOTED | DELIMITED | EOF
+    end
+end
+rm("temp")
+
 # https://github.com/JuliaData/CSV.jl/issues/344
 open("temp", "w+") do io
     write(io, "1,2,null,4")

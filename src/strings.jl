@@ -25,8 +25,8 @@ Base.isequal(x::Tuple{Ptr{UInt8}, Int}, y::String) = hash(x) === hash(y)
 Base.convert(::Type{String}, x::Tuple{Ptr{UInt8}, Int}) = unsafe_string(x[1], x[2])
 
 const BUF = IOBuffer()
-getptr(io::IO, pos) = pointer(BUF.data, 1)
-getptr(io::IOBuffer, pos) = pointer(io.data, pos+1)
+getptr(io::IO, pos, ptroff) = pointer(BUF.data, 1)
+getptr(io::IOBuffer, pos, ptroff) = pointer(io.data, pos+1) + ptroff
 incr(io::IO, b) = Base.write(BUF, b)
 incr(io::IOBuffer, b) = 1
 
@@ -155,7 +155,7 @@ incr(io::IOBuffer, b) = 1
     end
     # @debug "node=$node"
     eof(io) && (code |= EOF)
-    ptr = getptr(io, pos) + ptroff
+    ptr = getptr(io, pos, ptroff)
     if match!(node, ptr, len)
         code |= SENTINEL
         setfield!(r, 1, missing)
