@@ -65,7 +65,7 @@ end
 function BufferedIO(io::IO)
     buffer = zeros(UInt8, 8192)
     nbytes = readbytes!(io, buffer)
-    return BufferedIO(io, position(io), buffer, 0, nbytes)
+    return BufferedIO(io, Int(position(io)), buffer, Int(0), Int(nbytes))
 end
 
 function Base.eof(io::BufferedIO)
@@ -81,15 +81,20 @@ function readbyte(io::BufferedIO)
     io.pos += 1
     @inbounds b = io.buffer[io.pos]
     if io.pos == io.nbytes
-        io.nbytes = readbytes!(io.io, io.buffer)
-        io.iopos = position(io.io)
-        io.pos = 0
+        buffer!(io)
     end
     return b
 end
 
 function Base.position(io::BufferedIO)
     return (io.iopos - io.nbytes) + io.pos
+end
+
+function buffer!(io::BufferedIO)
+    io.nbytes = Int(readbytes!(io.io, io.buffer))
+    io.iopos = Int(position(io.io))
+    io.pos = Int(0)
+    return
 end
 
 function fastseek!(io::BufferedIO, pos::Int)
@@ -104,9 +109,7 @@ function fastseek!(io::BufferedIO, pos::Int)
             io.pos -= relpos
         else
             seek(io.io, pos)
-            io.nbytes = readbytes!(io.io, io.buffer)
-            io.iopos = position(io.io)
-            io.pos = 0
+            buffer!(io)
         end
     else
         # seek forwards
@@ -115,9 +118,7 @@ function fastseek!(io::BufferedIO, pos::Int)
             io.pos += relpos
         else
             seek(io.io, pos)
-            io.nbytes = readbytes!(io.io, io.buffer)
-            io.iopos = position(io.io)
-            io.pos = 0
+            buffer!(io)
         end
     end
     return
