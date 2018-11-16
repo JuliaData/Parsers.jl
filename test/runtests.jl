@@ -724,4 +724,20 @@ r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["-"]))), IO
 
 end # @testset
 
+@testset "BufferedIO" begin
+
+io = IOBuffer("hey there sally")
+b = Parsers.BufferedIO(io)
+@test !eof(b)
+@test Parsers.peekbyte(b) === UInt8('h')
+@test position(b) == 0
+@test Parsers.readbyte(b) === UInt8('h')
+@test position(b) == 1
+Parsers.fastseek!(b, 4)
+@test Parsers.readbyte(b) === UInt8('t')
+Parsers.fastseek!(b, 2)
+@test Parsers.readbyte(b) === UInt8('y')
+
+end
+
 end # @testset

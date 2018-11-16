@@ -53,6 +53,76 @@ function fastseek!(io::IOBuffer, n::Integer)
     return
 end
 
+# buffered IO type
+mutable struct BufferedIO{T} <: IO
+    io::T
+    iopos::Int
+    buffer::Vector{UInt8}
+    pos::Int
+    nbytes::Int
+end
+
+function BufferedIO(io::IO)
+    buffer = zeros(UInt8, 8192)
+    nbytes = readbytes!(io, buffer)
+    return BufferedIO(io, position(io), buffer, 0, nbytes)
+end
+
+function Base.eof(io::BufferedIO)
+    return io.pos == io.nbytes
+end
+
+function peekbyte(io::BufferedIO)
+    @inbounds b = io.buffer[io.pos + 1]
+    return b
+end
+
+function readbyte(io::BufferedIO)
+    io.pos += 1
+    @inbounds b = io.buffer[io.pos]
+    if io.pos == io.nbytes
+        io.nbytes = readbytes!(io.io, io.buffer)
+        io.iopos = position(io.io)
+        io.pos = 0
+    end
+    return b
+end
+
+function Base.position(io::BufferedIO)
+    return (io.iopos - io.nbytes) + io.pos
+end
+
+function fastseek!(io::BufferedIO, pos::Int)
+    p = position(io)
+    if p == pos
+        return
+    elseif pos < p
+        # seek backwards
+        relpos = p - pos
+        if relpos <= io.pos
+            # seeking within buffered bytes
+            io.pos -= relpos
+        else
+            seek(io.io, pos)
+            io.nbytes = readbytes!(io.io, io.buffer)
+            io.iopos = position(io.io)
+            io.pos = 0
+        end
+    else
+        # seek forwards
+        relpos = pos - p
+        if relpos < (io.nbytes - io.pos)
+            io.pos += relpos
+        else
+            seek(io.io, pos)
+            io.nbytes = readbytes!(io.io, io.buffer)
+            io.iopos = position(io.io)
+            io.pos = 0
+        end
+    end
+    return
+end
+
 """
     Each `Parsers.Result` has a `r.code` field which has type `Parsers.ReturnCode` and is a set of bit flags for various parsing states.
     The top bit is used to indicate "SUCCESS" (0) and "INVALID" (1), so all failed parsing attempts will have a code < 0, while successful parsings will be > 0.
