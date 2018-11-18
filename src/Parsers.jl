@@ -97,7 +97,7 @@ function buffer!(io::BufferedIO)
     return
 end
 
-function fastseek!(io::BufferedIO, pos::Int)
+function fastseek!(io::BufferedIO, pos::Integer)
     p = position(io)
     if p == pos
         return

@@ -738,6 +738,23 @@ Parsers.fastseek!(b, 4)
 Parsers.fastseek!(b, 2)
 @test Parsers.readbyte(b) === UInt8('y')
 
+open("test", "w+") do io
+    write(io, "hey there sally")
+end
+
+b = Parsers.BufferedIO(open("test"))
+@test !eof(b)
+@test Parsers.peekbyte(b) === UInt8('h')
+@test position(b) == 0
+@test Parsers.readbyte(b) === UInt8('h')
+@test position(b) == 1
+Parsers.fastseek!(b, 4)
+@test Parsers.readbyte(b) === UInt8('t')
+Parsers.fastseek!(b, 2)
+@test Parsers.readbyte(b) === UInt8('y')
+close(b.io)
+rm("test")
+
 end
 
 end # @testset
