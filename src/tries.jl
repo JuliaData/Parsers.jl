@@ -106,7 +106,7 @@ function generatebranches(leaves, isparentleaf, parentvalue, parentcode, parentb
         block = elseifblock
     end
     if isparentleaf
-        push!(block.args, :(val = $parentvalue; code = $parentcode; b = $parentb; @goto match))
+        push!(block.args, :(val = $parentvalue; c = $parentcode; b = $parentb; @goto match))
     end
     return quote
         $ifblock
@@ -116,11 +116,10 @@ end
 
 function generatebranch(::Type{Trie{label, leaf, value, code, L}}) where {label, leaf, value, code, L}
     leaves = L.parameters
-    c = code
     if isempty(leaves)
-        body = :(val = $value; code = $c | ifelse(eof(io), EOF, SUCCESS); @goto match)
+        body = :(val = $value; c = $code | ifelse(eof(io), EOF, SUCCESS); @goto match)
     else
-        eof = leaf ? :(eof(io) && (val = $value; code = $c | EOF; @goto match)) : :(eof(io) && @goto nomatch)
+        eof = leaf ? :(eof(io) && (val = $value; c = $code | EOF; @goto match)) : :(eof(io) && @goto nomatch)
         body = quote
             $eof
             b = peekbyte(io)
@@ -148,7 +147,7 @@ end
             if setvalue
                 setfield!(r, 1, val)
             end
-            r.code |= code
+            r.code |= c
             return true
         @label nomatch
             fastseek!(io, pos)
