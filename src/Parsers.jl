@@ -379,6 +379,22 @@ Delimited(ignorerepeated::Bool, newline::Bool, next::I, delims::T) where {I, T <
 Delimited(next::Union{Layer, Base.Callable}=defaultparser, delims::Union{Char, String}...; ignorerepeated::Bool=false, newline::Bool=false) = Delimited(ignorerepeated, newline, next, Trie(String[string(d) for d in (isempty(delims) ? (",",) : delims)], DELIMITED))
 Delimited(delims::Union{Char, String}...; ignorerepeated::Bool=false, newline::Bool=false) = Delimited(ignorerepeated, newline, defaultparser, Trie(String[string(d) for d in (isempty(delims) ? (",",) : delims)], DELIMITED))
 
+const STRING_RESULT = Result(String)
+
+function checkdelim!(d::Delimited{ignorerepeated, newline}, io::IO) where {ignorerepeated, newline}
+    eof(io) && return
+    if ignorerepeated
+        matched = false
+        while match!(d.delims, io, STRING_RESULT, false)
+            matched = true
+        end
+        (matched || (newline && checknewline(io, STRING_RESULT))) && return
+    else
+        (match!(d.delims, io, STRING_RESULT, false) || (newline && checknewline(io, STRING_RESULT))) && return
+    end
+    return
+end
+
 @inline function parse!(d::Delimited{ignorerepeated, newline}, io::IO, r::Result{T}; kwargs...) where {ignorerepeated, newline, T}
     # @debug "xparse Delimited - $T"
     parse!(d.next, io, r; kwargs...)
