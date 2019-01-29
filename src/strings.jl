@@ -21,7 +21,9 @@ function Base.hash(x::Tuple{Ptr{UInt8},Int}, h::UInt)
     h += Base.memhash_seed
     ccall(Base.memhash, UInt, (Ptr{UInt8}, Csize_t, UInt32), x[1], x[2], h % UInt32) + h
 end
-Base.isequal(x::Tuple{Ptr{UInt8}, Int}, y::String) = hash(x) === hash(y)
+# taken from Base.:(==) for String
+Base.isequal(x::Tuple{Ptr{UInt8}, Int}, y::String) =
+    x[2] == sizeof(y) && 0 == ccall(:memcmp, Int32, (Ptr{UInt8}, Ptr{UInt8}, UInt), x[1], y, x[2])
 Base.convert(::Type{String}, x::Tuple{Ptr{UInt8}, Int}) = unsafe_string(x[1], x[2])
 
 const BUF = IOBuffer()
