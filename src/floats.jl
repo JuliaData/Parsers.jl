@@ -206,7 +206,7 @@ wider(::Type{Int128}) = BigInt
             exp, ov_add = Base.add_with_overflow(exp, IntType(b - ZERO))
             (ov_mul | ov_add) && (fastseek!(io, r.pos); return _defaultparser(io, r, wider(IntType); decimal=decimal))
             if eof(io)
-                if (parseddigits | parseddigitsfrac) & parseddigitsexp
+                if (parseddigits | parseddigitsfrac)
                     r.result = scale(T, v, ifelse(negativeexp, -exp, exp) - frac, negative)
                     code |= OK | EOF
                 else
