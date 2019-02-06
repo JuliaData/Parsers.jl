@@ -367,4 +367,13 @@ r = Parsers.defaultparser(IOBuffer("-4.803915800699462224e+00"), Parsers.Result(
 @test r.result === -4.803915800699462224e+00
 @test r.code === OK | EOF
 
+# issue #18
+r = Parsers.defaultparser(IOBuffer(".24409E+03"), Parsers.Result(Float64))
+@test r.result === 244.09
+@test r.code === OK | EOF
+
+r = Parsers.defaultparser(IOBuffer(".24409E+03 "), Parsers.Result(Float64))
+@test r.result === 244.09
+@test r.code === OK | EOF
+
 end # @testset
