@@ -154,9 +154,11 @@ wider(::Type{Int128}) = BigInt
     end
     # parse fractional part
     frac = 0
+    parseddigitsfrac = false
     while NEG_ONE < b < TEN
         readbyte(io)
         frac += 1
+        parseddigitsfrac = true
         # process digits
         v, ov_mul = Base.mul_with_overflow(v, IntType(10))
         v, ov_add = Base.add_with_overflow(v, IntType(b - ZERO))
@@ -204,7 +206,7 @@ wider(::Type{Int128}) = BigInt
             exp, ov_add = Base.add_with_overflow(exp, IntType(b - ZERO))
             (ov_mul | ov_add) && (fastseek!(io, r.pos); return _defaultparser(io, r, wider(IntType); decimal=decimal))
             if eof(io)
-                if parseddigits
+                if (parseddigits | parseddigitsfrac) & parseddigitsexp
                     r.result = scale(T, v, ifelse(negativeexp, -exp, exp) - frac, negative)
                     code |= OK | EOF
                 else
@@ -214,7 +216,7 @@ wider(::Type{Int128}) = BigInt
             end
             b = peekbyte(io)
         end
-        if parseddigits & parseddigitsexp
+        if (parseddigits | parseddigitsfrac) & parseddigitsexp
             r.result = scale(T, v, ifelse(negativeexp, -exp, exp) - frac, negative)
             code |= OK | EOF
         else
