@@ -32,6 +32,13 @@ run(@benchmarkable Parsers.parse!($l, io, r) setup=(io = IOBuffer("0"); r = Pars
 l = Parsers.Delimited(Parsers.Quoted(Parsers.Strip(Parsers.Sentinel(["NA"]))))
 run(@benchmarkable Parsers.parse!($l, io, r) setup=(io = IOBuffer("0"); r = Parsers.Result($T)))
 
+run(@benchmarkable Parsers.defaultparser(io, r) setup=(io = IOBuffer("99999999999999974834176"); r = Parsers.Result($T)))
+run(@benchmarkable Parsers.defaultparser(io, r) setup=(io = IOBuffer("1.7976931348623157e308"); r = Parsers.Result($T)))
+
+run(@benchmarkable Parsers.defaultparser(io, r) setup=(io = IOBuffer("2.2250738585072011e-308"); r = Parsers.Result($T)))
+run(@benchmarkable Parsers.defaultparser(io, r) setup=(io = IOBuffer("0.0017138347201173243"); r = Parsers.Result($T)))
+
+
 # Tuple{Ptr{UInt8}, Int}
 T = Tuple{Ptr{UInt8}, Int}
 run(@benchmarkable Parsers.defaultparser(io, r) setup=(io = IOBuffer("0"); r = Parsers.Result($T)))

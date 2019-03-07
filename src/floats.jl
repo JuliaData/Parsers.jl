@@ -4,7 +4,7 @@ const ONE = BigInt(1)
 const NUM = BigInt()
 const QUO = BigInt()
 const REM = BigInt()
-const ODD = big(22250738585072011)
+const SCL = BigInt()
 
 const BIG_E = UInt8('E')
 const LITTLE_E = UInt8('e')
@@ -42,6 +42,7 @@ bitlength(this) = GMP.MPZ.sizeinbase(this, 2)
 bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
 
 BigInt!(y::BigInt, x::BigInt) = x
+BigInt!(y::BigInt, x::Union{Clong,Int32}) = MPZ.set_si!(y, x)
 # copied from gmp.jl:285
 function BigInt!(y::BigInt, x::Integer)
     x == 0 && return y
@@ -84,15 +85,20 @@ end
         return ldexp(T(quo), bex + exp)
     elseif -327 < exp < 0
         maxpow = length(bipows5) - 1
-        scl = (-exp <= maxpow) ? bipows5[-exp+1] :
-            bipows5[maxpow+1] * bipows5[-exp-maxpow+1]
+        scl = SCL
+        if -exp <= maxpow
+            MPZ.set!(scl, bipows5[-exp+1])
+        else
+            MPZ.set!(scl, bipows5[maxpow+1])
+            MPZ.mul!(scl, bipows5[-exp-maxpow+1])
+        end
         bex = bitlength(mant) - bitlength(scl) - significantbits(T)
         num = MPZ.mul_2exp!(mant, -bex)
         quo = roundQuotient(num, scl)
         # @info "debug" mant=mant exp=exp num=num quo=quo lh=(bits(T) - leading_zeros(quo)) rh=significantbits(T) bex=bex
         if (bits(T) - leading_zeros(quo) > significantbits(T)) || exp == -324
             bex += 1
-            quo = roundQuotient(num, scl << 1)
+            quo = roundQuotient(num, MPZ.mul_2exp!(scl, 1))
         end
         if exp <= -324
             return T(ldexp(BigFloat(quo), bex + exp))
