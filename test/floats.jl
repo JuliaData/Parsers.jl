@@ -292,7 +292,6 @@ r = Parsers.defaultparser(IOBuffer("1e+18446744073709551616"), Parsers.Result(Fl
 @test r.result === +Inf
 @test r.code === OK | EOF
 
-
 # Parse errors
 r = Parsers.defaultparser(IOBuffer("1e"), Parsers.Result(Float64))
 @test r.result === missing
@@ -311,7 +310,7 @@ r = Parsers.defaultparser(IOBuffer("1\x00.2"), Parsers.Result(Float64))
 r = Parsers.defaultparser(IOBuffer("2.2250738585072012e-308"), Parsers.Result(Float64))
 @test r.result === 2.2250738585072014e-308
 @test r.code === OK | EOF
-# http:#www.exploringbinary.com/php-hangs-on-numeric-value-2-2250738585072011e-308/
+# http://www.exploringbinary.com/php-hangs-on-numeric-value-2-2250738585072011e-308/
 r = Parsers.defaultparser(IOBuffer("2.2250738585072011e-308"), Parsers.Result(Float64))
 @test r.result === 2.225073858507201e-308
 @test r.code === OK | EOF

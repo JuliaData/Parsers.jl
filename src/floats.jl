@@ -1,12 +1,20 @@
+using Base.GMP, Base.GMP.MPZ
+
+const ONE = BigInt(1)
+const NUM = BigInt()
+const QUO = BigInt()
+const REM = BigInt()
+const ODD = big(22250738585072011)
+
 const BIG_E = UInt8('E')
 const LITTLE_E = UInt8('e')
 
 const bipows5 = [big(5)^x for x = 0:325]
 
 function roundQuotient(num, den)
-    quo, rem = divrem(num, den)
-    q = Int64(quo)
-    cmpflg = cmp(rem << 1, den)
+    MPZ.tdiv_qr!(QUO, REM, num, den)
+    q = Int64(QUO)
+    cmpflg = cmp(MPZ.mul_2exp!(REM, 1), den)
     return ((q & 1) == 0 ? 1 == cmpflg : -1 < cmpflg) ? q + 1 : q
 end
 
@@ -30,8 +38,29 @@ significantbits(::Type{Float16}) = 11
 significantbits(::Type{Float32}) = 24
 significantbits(::Type{Float64}) = 53
 
-bitlength(this) = Base.GMP.MPZ.sizeinbase(this, 2)
+bitlength(this) = GMP.MPZ.sizeinbase(this, 2)
 bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
+
+BigInt!(y::BigInt, x::BigInt) = x
+# copied from gmp.jl:285
+function BigInt!(y::BigInt, x::Integer)
+    x == 0 && return y
+    nd = ndigits(x, base=2)
+    z = GMP.MPZ.realloc2!(y, nd)
+    s = sign(x)
+    s == -1 && (x = -x)
+    x = unsigned(x)
+    size = 0
+    limbnbits = sizeof(GMP.Limb) << 3
+    while nd > 0
+        size += 1
+        unsafe_store!(z.d, x % GMP.Limb, size)
+        x >>>= limbnbits
+        nd -= limbnbits
+    end
+    z.size = s*size
+    z
+end
 
 @inline function scale(::Type{T}, v, exp) where {T <: Union{Float16, Float32, Float64}}
     ms = maxsig(T)
@@ -45,29 +74,23 @@ bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
         end
     end
     v == 0 && return zero(T)
-    # if v < 2ms
-    #     if 0 <= exp < 2cl
-    #         return T(Base.twiceprecision(Base.TwicePrecision{T}(v) * pow10(T, exp), significantbits(T)))
-    #     elseif -2cl < exp < 0
-    #         return T(Base.twiceprecision(Base.TwicePrecision{T}(v) / pow10(T, -exp), significantbits(T)))
-    #     end
-    # end
-    mant = big(v)
+    mant = BigInt!(NUM, v)
     if 0 <= exp < 327
-        num = mant * bipows5[exp+1]
+        num = MPZ.mul!(mant, bipows5[exp+1])
         bex = bitlength(num) - significantbits(T)
         bex <= 0 && return ldexp(T(num), exp)
-        quo = roundQuotient(num, big(1) << bex)
+        MPZ.mul_2exp!(MPZ.set_si!(ONE, 1), bex)
+        quo = roundQuotient(num, ONE)
         return ldexp(T(quo), bex + exp)
     elseif -327 < exp < 0
         maxpow = length(bipows5) - 1
         scl = (-exp <= maxpow) ? bipows5[-exp+1] :
             bipows5[maxpow+1] * bipows5[-exp-maxpow+1]
         bex = bitlength(mant) - bitlength(scl) - significantbits(T)
-        num = mant << -bex
+        num = MPZ.mul_2exp!(mant, -bex)
         quo = roundQuotient(num, scl)
         # @info "debug" mant=mant exp=exp num=num quo=quo lh=(bits(T) - leading_zeros(quo)) rh=significantbits(T) bex=bex
-        if (bits(T) - leading_zeros(quo) > significantbits(T)) || mant == big(22250738585072011)
+        if (bits(T) - leading_zeros(quo) > significantbits(T)) || exp == -324
             bex += 1
             quo = roundQuotient(num, scl << 1)
         end
