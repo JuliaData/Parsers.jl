@@ -1,10 +1,10 @@
 using Base.GMP, Base.GMP.MPZ
 
-const ONE = BigInt(1)
-const NUM = BigInt()
-const QUO = BigInt()
-const REM = BigInt()
-const SCL = BigInt()
+const ONES = [BigInt(1)]
+const NUMS = [BigInt()]
+const QUOS = [BigInt()]
+const REMS = [BigInt()]
+const SCLS = [BigInt()]
 
 const BIG_E = UInt8('E')
 const LITTLE_E = UInt8('e')
@@ -12,9 +12,9 @@ const LITTLE_E = UInt8('e')
 const bipows5 = [big(5)^x for x = 0:325]
 
 function roundQuotient(num, den)
-    MPZ.tdiv_qr!(QUO, REM, num, den)
-    q = Int64(QUO)
-    cmpflg = cmp(MPZ.mul_2exp!(REM, 1), den)
+    @inbounds quo, rem = MPZ.tdiv_qr!(QUOS[Threads.threadid()], REMS[Threads.threadid()], num, den)
+    q = Int64(quo)
+    cmpflg = cmp(MPZ.mul_2exp!(rem, 1), den)
     return ((q & 1) == 0 ? 1 == cmpflg : -1 < cmpflg) ? q + 1 : q
 end
 
@@ -75,17 +75,17 @@ end
         end
     end
     v == 0 && return zero(T)
-    mant = BigInt!(NUM, v)
+    @inbounds mant = BigInt!(NUMS[Threads.threadid()], v)
     if 0 <= exp < 327
         num = MPZ.mul!(mant, bipows5[exp+1])
         bex = bitlength(num) - significantbits(T)
         bex <= 0 && return ldexp(T(num), exp)
-        MPZ.mul_2exp!(MPZ.set_si!(ONE, 1), bex)
-        quo = roundQuotient(num, ONE)
+        @inbounds one = MPZ.mul_2exp!(MPZ.set_si!(ONES[Threads.threadid()], 1), bex)
+        quo = roundQuotient(num, one)
         return ldexp(T(quo), bex + exp)
     elseif -327 < exp < 0
         maxpow = length(bipows5) - 1
-        scl = SCL
+        @inbounds scl = SCLS[Threads.threadid()]
         if -exp <= maxpow
             MPZ.set!(scl, bipows5[-exp+1])
         else
