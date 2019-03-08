@@ -50,10 +50,11 @@ function bench(n=100_000)
 end
 
 
-function prof(n)
-    io = IOBuffer("3.2925339999999996e-18")
+function prof(str, n)
+    io = IOBuffer(str)
+    res = Parsers.Result(Float64)
     for i = 1:n
         seekstart(io)
-        Main.Parsers.xparse(io, Float64)
+        r = Parsers.defaultparser(io, res)
     end
 end

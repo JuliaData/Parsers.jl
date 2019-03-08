@@ -1,12 +1,20 @@
+using Base.GMP, Base.GMP.MPZ
+
+const ONES = [BigInt(1)]
+const NUMS = [BigInt()]
+const QUOS = [BigInt()]
+const REMS = [BigInt()]
+const SCLS = [BigInt()]
+
 const BIG_E = UInt8('E')
 const LITTLE_E = UInt8('e')
 
 const bipows5 = [big(5)^x for x = 0:325]
 
 function roundQuotient(num, den)
-    quo, rem = divrem(num, den)
+    @inbounds quo, rem = MPZ.tdiv_qr!(QUOS[Threads.threadid()], REMS[Threads.threadid()], num, den)
     q = Int64(quo)
-    cmpflg = cmp(rem << 1, den)
+    cmpflg = cmp(MPZ.mul_2exp!(rem, 1), den)
     return ((q & 1) == 0 ? 1 == cmpflg : -1 < cmpflg) ? q + 1 : q
 end
 
@@ -30,8 +38,30 @@ significantbits(::Type{Float16}) = 11
 significantbits(::Type{Float32}) = 24
 significantbits(::Type{Float64}) = 53
 
-bitlength(this) = Base.GMP.MPZ.sizeinbase(this, 2)
+bitlength(this) = GMP.MPZ.sizeinbase(this, 2)
 bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
+
+BigInt!(y::BigInt, x::BigInt) = x
+BigInt!(y::BigInt, x::Union{Clong,Int32}) = MPZ.set_si!(y, x)
+# copied from gmp.jl:285
+function BigInt!(y::BigInt, x::Integer)
+    x == 0 && return y
+    nd = ndigits(x, base=2)
+    z = GMP.MPZ.realloc2!(y, nd)
+    s = sign(x)
+    s == -1 && (x = -x)
+    x = unsigned(x)
+    size = 0
+    limbnbits = sizeof(GMP.Limb) << 3
+    while nd > 0
+        size += 1
+        unsafe_store!(z.d, x % GMP.Limb, size)
+        x >>>= limbnbits
+        nd -= limbnbits
+    end
+    z.size = s*size
+    z
+end
 
 @inline function scale(::Type{T}, v, exp) where {T <: Union{Float16, Float32, Float64}}
     ms = maxsig(T)
@@ -45,31 +75,30 @@ bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
         end
     end
     v == 0 && return zero(T)
-    # if v < 2ms
-    #     if 0 <= exp < 2cl
-    #         return T(Base.twiceprecision(Base.TwicePrecision{T}(v) * pow10(T, exp), significantbits(T)))
-    #     elseif -2cl < exp < 0
-    #         return T(Base.twiceprecision(Base.TwicePrecision{T}(v) / pow10(T, -exp), significantbits(T)))
-    #     end
-    # end
-    mant = big(v)
+    @inbounds mant = BigInt!(NUMS[Threads.threadid()], v)
     if 0 <= exp < 327
-        num = mant * bipows5[exp+1]
+        num = MPZ.mul!(mant, bipows5[exp+1])
         bex = bitlength(num) - significantbits(T)
         bex <= 0 && return ldexp(T(num), exp)
-        quo = roundQuotient(num, big(1) << bex)
+        @inbounds one = MPZ.mul_2exp!(MPZ.set_si!(ONES[Threads.threadid()], 1), bex)
+        quo = roundQuotient(num, one)
         return ldexp(T(quo), bex + exp)
     elseif -327 < exp < 0
         maxpow = length(bipows5) - 1
-        scl = (-exp <= maxpow) ? bipows5[-exp+1] :
-            bipows5[maxpow+1] * bipows5[-exp-maxpow+1]
+        @inbounds scl = SCLS[Threads.threadid()]
+        if -exp <= maxpow
+            MPZ.set!(scl, bipows5[-exp+1])
+        else
+            MPZ.set!(scl, bipows5[maxpow+1])
+            MPZ.mul!(scl, bipows5[-exp-maxpow+1])
+        end
         bex = bitlength(mant) - bitlength(scl) - significantbits(T)
-        num = mant << -bex
+        num = MPZ.mul_2exp!(mant, -bex)
         quo = roundQuotient(num, scl)
         # @info "debug" mant=mant exp=exp num=num quo=quo lh=(bits(T) - leading_zeros(quo)) rh=significantbits(T) bex=bex
-        if (bits(T) - leading_zeros(quo) > significantbits(T)) || mant == big(22250738585072011)
+        if (bits(T) - leading_zeros(quo) > significantbits(T)) || exp == -324
             bex += 1
-            quo = roundQuotient(num, scl << 1)
+            quo = roundQuotient(num, MPZ.mul_2exp!(scl, 1))
         end
         if exp <= -324
             return T(ldexp(BigFloat(quo), bex + exp))

@@ -9,7 +9,33 @@ function __init__()
     for results in RESULTS
         Threads.resize_nthreads!(results)
     end
+    Threads.resize_nthreads!(STRINGBUFFERS)
+    Threads.resize_nthreads!(ONES)
+    Threads.resize_nthreads!(NUMS)
+    Threads.resize_nthreads!(QUOS)
+    Threads.resize_nthreads!(REMS)
+    Threads.resize_nthreads!(SCLS)
     return
+end
+
+mutable struct StringBuffer <: IO
+    data::String
+    ptr::Int64
+    size::Int64
+    StringBuffer() = new("", 1, 0)
+end
+
+Base.eof(io::StringBuffer) = (io.ptr - 1) == io.size
+Base.position(io::StringBuffer) = io.ptr - 1
+
+const STRINGBUFFERS = [StringBuffer()]
+
+function getio(str)
+    io = STRINGBUFFERS[Threads.threadid()]
+    io.data = str
+    io.ptr = 1
+    io.size = sizeof(str)
+    return io
 end
 
 """
@@ -30,14 +56,27 @@ readbyte(from::IO) = Base.read(from, UInt8)
 peekbyte(from::IO) = UInt8(Base.peek(from))
 
 function readbyte(from::IOBuffer)
-    @inbounds byte = from.data[from.ptr]
-    from.ptr = from.ptr + 1
+    i = from.ptr
+    @inbounds byte = from.data[i]
+    from.ptr = i + 1
     return byte
 end
 
 function peekbyte(from::IOBuffer)
     @inbounds byte = from.data[from.ptr]
     return byte
+end
+
+function readbyte(from::StringBuffer)
+    i = from.ptr
+    s = from.data
+    from.ptr = i + 1
+    GC.@preserve s unsafe_load(pointer(s, i))
+end
+
+function peekbyte(from::StringBuffer)
+    s = from.data
+    GC.@preserve s unsafe_load(pointer(s, from.ptr))
 end
 
 """
@@ -48,8 +87,8 @@ end
 function fastseek! end
 
 fastseek!(io::IO, n::Integer) = seek(io, n)
-function fastseek!(io::IOBuffer, n::Integer)
-    io.ptr = n+1
+function fastseek!(io::Union{IOBuffer, StringBuffer}, n::Integer)
+    io.ptr = n + 1
     return
 end
 
@@ -312,7 +351,7 @@ function parse end
 function tryparse end
 
 function parse(str::AbstractString, ::Type{T}; kwargs...) where {T}
-    io = IOBuffer(str)
+    io = getio(str)
     res = parse(defaultparser, io, T; kwargs...)
     return ok(res.code) ? res.result : throw(Error(io, res))
 end
@@ -321,7 +360,7 @@ function parse(io::IO, ::Type{T}; kwargs...) where {T}
     return ok(res.code) ? res.result : throw(Error(io, res))
 end
 function parse(f::Base.Callable, str::AbstractString, ::Type{T}; kwargs...) where {T}
-    io = IOBuffer(str)
+    io = getio(str)
     res = parse!(f, io, Result(T); kwargs...)
     return ok(res.code) ? res.result : throw(Error(io, res))
 end
@@ -331,7 +370,8 @@ function parse(f::Base.Callable, io::IO, ::Type{T}; kwargs...) where {T}
 end
 
 function tryparse(str::AbstractString, ::Type{T}; kwargs...) where {T}
-    res = parse(defaultparser, IOBuffer(str), T; kwargs...)
+    io = getio(str)
+    res = parse(defaultparser, io, T; kwargs...)
     return ok(res.code) ? res.result : nothing
 end
 function tryparse(io::IO, ::Type{T}; kwargs...) where {T}
@@ -339,7 +379,8 @@ function tryparse(io::IO, ::Type{T}; kwargs...) where {T}
     return ok(res.code) ? res.result : nothing
 end
 function tryparse(f::Base.Callable, str::AbstractString, ::Type{T}; kwargs...) where {T}
-    res = parse!(f, IOBuffer(str), Result(T); kwargs...)
+    io = getio(str)
+    res = parse!(f, io, Result(T); kwargs...)
     return ok(res.code) ? res.result : nothing
 end
 function tryparse(f::Base.Callable, io::IO, ::Type{T}; kwargs...) where {T}
