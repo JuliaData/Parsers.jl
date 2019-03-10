@@ -709,12 +709,16 @@ const TEN     = UInt8('9')+UInt8(1)
     end
     parseddigits = false
     while true
-        if UInt8('0') <= b <= UInt8('9')
+        if NEG_ONE < b < TEN
             off = ZERO
-        elseif UInt8('A') <= b <= UInt8('Z')
-            off = UInt8('A') + UInt8(10)
-        elseif UInt8('a') <= b <= UInt8('z')
-            off = UInt8('a') + ifelse(base <= 36, UInt8(10), UInt8(36))
+        elseif base > 10
+            if UInt8('A') <= b <= UInt8('Z')
+                off = UInt8('A') + UInt8(10)
+            elseif UInt8('a') <= b <= UInt8('z')
+                off = UInt8('a') + ifelse(base <= 36, UInt8(10), UInt8(36))
+            else
+                break
+            end
         else
             break
         end
