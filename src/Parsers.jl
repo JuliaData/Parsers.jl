@@ -700,32 +700,41 @@ const TEN     = UInt8('9')+UInt8(1)
         readbyte(io)
         eof(io) && (r.code |= INVALID | EOF; return r)
         b = peekbyte(io)
-    elseif base !== 10
-        readbyte(io) # leading '0'
-        eof(io) && (r.code |= INVALID | EOF; return r)
-        readbyte(io) # 'b', 'o', 'x'
-        eof(io) && (r.code |= INVALID | EOF; return r)
-        b = peekbyte(io)
     end
-    parseddigits = false
+    if b === ZERO
+        parseddigits = true
+        readbyte(io) # leading '0'
+        if eof(io)
+            r.result = v
+            r.code |= OK | EOF
+            return r
+        else
+            b = peekbyte(io)
+            if b === UInt8('b') | b === UInt8('o') | b === UInt8('x')
+                readbyte(io) # 'b', 'o', 'x'
+                eof(io) && (r.code |= INVALID | EOF; return r)
+                b = peekbyte(io)
+            end
+        end
+    else
+        parseddigits = false
+    end
+    a = ifelse(base <= 36, UInt8(10), UInt8(36))
     while true
         if NEG_ONE < b < TEN
-            off = ZERO
-        elseif base > 10
-            if UInt8('A') <= b <= UInt8('Z')
-                off = UInt8('A') + UInt8(10)
-            elseif UInt8('a') <= b <= UInt8('z')
-                off = UInt8('a') + ifelse(base <= 36, UInt8(10), UInt8(36))
-            else
-                break
-            end
+            b -= ZERO
+        elseif UInt8('A') <= b <= UInt8('Z')
+            b -= UInt8('A') + UInt8(10)
+        elseif UInt8('a') <= b <= UInt8('z')
+            b -= UInt8('a') + a
         else
             break
         end
+        b >= base && (r.result = v; r.code |= INVALID | ifelse(eof(io), EOF, SUCCESS); return r)
         parseddigits = true
         b = readbyte(io)
         v, ov_mul = Base.mul_with_overflow(v, T(base))
-        v, ov_add = Base.add_with_overflow(v, T(b - off))
+        v, ov_add = Base.add_with_overflow(v, T(b))
         (ov_mul | ov_add) && (r.result = v; r.code |= OVERFLOW | ifelse(eof(io), EOF, SUCCESS); return r)
         eof(io) && break
         b = peekbyte(io)
