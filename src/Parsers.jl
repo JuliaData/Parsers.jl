@@ -2,10 +2,22 @@ module Parsers
 
 import Base: @deprecate
 
-@deprecate parse(str::AbstractString, ::Type{T}; kwargs...) where {T} parse(T, str; kwargs...)
-@deprecate parse(f::Base.Callable, str::AbstractString, ::Type{T}; kwargs...) where {T} parse(f, T, str; kwargs...)
-@deprecate tryparse(str::AbstractString, ::Type{T}; kwargs...) where {T} tryparse(T, str; kwargs...)
-@deprecate tryparse(f::Base.Callable, str::AbstractString, ::Type{T}; kwargs...) where {T} tryparse(f, T, str; kwargs...)
+function parse(str::AbstractString, ::Type{T}; kwargs...) where {T}
+    Base.depwarn("Parsers.parse(str, T) is deprecated in favor of Parsers.parse(T, str)", :parse)
+    Parsers.parse(T, str; kwargs...)
+end
+function parse(f::Base.Callable, str::AbstractString, ::Type{T}; kwargs...) where {T}
+    Base.depwarn("Parsers.parse(str, T) is deprecated in favor of Parsers.parse(T, str)", :parse)
+    Parsers.parse(f, T, str; kwargs...)
+end
+function tryparse(str::AbstractString, ::Type{T}; kwargs...) where {T}
+    Base.depwarn("Parsers.tryparse(str, T) is deprecated in favor of Parsers.parse(T, str)", :tryparse)
+    Parsers.tryparse(T, str; kwargs...)
+end
+function tryparse(f::Base.Callable, str::AbstractString, ::Type{T}; kwargs...) where {T}
+    Base.depwarn("Parsers.tryparse(str, T) is deprecated in favor of Parsers.parse(T, str)", :tryparse)
+    Parsers.tryparse(f, T, str; kwargs...)
+end
 
 using Dates, WeakRefStrings
 
@@ -726,13 +738,15 @@ const TEN     = UInt8('9')+UInt8(1)
         elseif UInt8('A') <= b <= UInt8('Z')
             b -= UInt8('A') + UInt8(10)
         elseif UInt8('a') <= b <= UInt8('z')
+            println("here 1 = $(Char(b))")
             b -= UInt8('a') + a
+            println("here 2 = $(Char(b))")
         else
             break
         end
-        b >= base && (r.result = v; r.code |= INVALID | ifelse(eof(io), EOF, SUCCESS); return r)
+        b >= base && break
         parseddigits = true
-        b = readbyte(io)
+        readbyte(io)
         v, ov_mul = Base.mul_with_overflow(v, T(base))
         v, ov_add = Base.add_with_overflow(v, T(b))
         (ov_mul | ov_add) && (r.result = v; r.code |= OVERFLOW | ifelse(eof(io), EOF, SUCCESS); return r)
