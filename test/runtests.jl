@@ -593,16 +593,6 @@ end
 
 end # @testset
 
-@testset "Misc" begin
-
-@test Parsers.parse("101", Int) === 101
-@test Parsers.parse("101,101", Float64; decimal=',') === 101.101
-@test Parsers.parse(IOBuffer("true"), Bool) === true
-@test_throws Parsers.Error Parsers.parse("abc", Int)
-
-@test Parsers.tryparse("abc", Int) === nothing
-@test Parsers.tryparse(IOBuffer("101,101"), Float32; decimal=',') === Float32(101.101)
-
 # custom parser
 function int2str(io::IO, r::Parsers.Result{Int}, args...)
     v = 0
@@ -615,15 +605,25 @@ function int2str(io::IO, r::Parsers.Result{Int}, args...)
     return r
 end
 
-@test Parsers.parse(int2str, "101", Int) === 101
+@testset "Misc" begin
+
+@test Parsers.parse(Int, "101") === 101
+@test Parsers.parse(Float64, "101,101"; decimal=',') === 101.101
+@test Parsers.parse(IOBuffer("true"), Bool) === true
+@test_throws Parsers.Error Parsers.parse(Int, "abc")
+
+@test Parsers.tryparse(Int, "abc") === nothing
+@test Parsers.tryparse(IOBuffer("101,101"), Float32; decimal=',') === Float32(101.101)
+
+@test Parsers.parse(int2str, Int, "101") === 101
 @test Parsers.parse(int2str, IOBuffer("101"), Int) === 101
-@test Parsers.tryparse(int2str, "101", Int) === 101
+@test Parsers.tryparse(int2str, Int, "101") === 101
 @test Parsers.tryparse(int2str, IOBuffer("101"), Int) === 101
 
-@test Parsers.parse("01/20/2018", Date; dateformat="mm/dd/yyyy") === Date(2018, 1, 20)
+@test Parsers.parse(Date, "01/20/2018"; dateformat="mm/dd/yyyy") === Date(2018, 1, 20)
 
-@test_throws Parsers.Error Parsers.parse("", Missing)
-@test Parsers.tryparse("", Missing) === nothing
+@test_throws Parsers.Error Parsers.parse(Missing, "")
+@test Parsers.tryparse(Missing, "") === nothing
 
 r = Parsers.parse(Parsers.Quoted('{', '}', '\\'), IOBuffer("{1}"), Int)
 @test r.result === 1
@@ -691,17 +691,17 @@ end
 rm("temp")
 
 # 6: AbstractString input
-@test Parsers.parse(SubString("101"), Int) === 101
-@test Parsers.parse(SubString("101,101"), Float64; decimal=',') === 101.101
+@test Parsers.parse(Int, SubString("101")) === 101
+@test Parsers.parse(Float64, SubString("101,101"); decimal=',') === 101.101
 @test Parsers.parse(IOBuffer("true"), Bool) === true
-@test_throws Parsers.Error Parsers.parse("abc", Int)
+@test_throws Parsers.Error Parsers.parse(Int, "abc")
 
-@test Parsers.tryparse("abc", Int) === nothing
+@test Parsers.tryparse(Int, "abc") === nothing
 @test Parsers.tryparse(IOBuffer(SubString("101,101")), Float32; decimal=',') === Float32(101.101)
 
-@test Parsers.parse(int2str, SubString("101"), Int) === 101
+@test Parsers.parse(int2str, Int, SubString("101")) === 101
 @test Parsers.parse(int2str, IOBuffer(SubString("101")), Int) === 101
-@test Parsers.tryparse(int2str, SubString("101"), Int) === 101
+@test Parsers.tryparse(int2str, Int, SubString("101")) === 101
 @test Parsers.tryparse(int2str, IOBuffer(SubString("101")), Int) === 101
 
 # https://github.com/JuliaData/CSV.jl/issues/306
@@ -754,6 +754,15 @@ Parsers.fastseek!(b, 2)
 @test Parsers.readbyte(b) === UInt8('y')
 close(b.io)
 rm("test")
+
+end
+
+@testset "deprecations" begin
+
+@test Parsers.parse("101", Int) === 101
+@test Parsers.tryparse("101", Int) === 101
+@test Parsers.parse(int2str, "101", Int) === 101
+@test Parsers.tryparse(int2str, "101", Int) === 101
 
 end
 

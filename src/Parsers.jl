@@ -1,5 +1,12 @@
 module Parsers
 
+import Base: @deprecate
+
+@deprecate parse(str::AbstractString, ::Type{T}; kwargs...) where {T} parse(T, str; kwargs...)
+@deprecate parse(f::Base.Callable, str::AbstractString, ::Type{T}; kwargs...) where {T} parse(f, T, str; kwargs...)
+@deprecate tryparse(str::AbstractString, ::Type{T}; kwargs...) where {T} tryparse(T, str; kwargs...)
+@deprecate tryparse(f::Base.Callable, str::AbstractString, ::Type{T}; kwargs...) where {T} tryparse(f, T, str; kwargs...)
+
 using Dates, WeakRefStrings
 
 Dates.default_format(T) = Dates.dateformat""
@@ -350,7 +357,7 @@ function parse end
 "Attempt to parse a value of type `T` from `IO` `io`. Returns `nothing` on parser failures and invalid values."
 function tryparse end
 
-function parse(str::AbstractString, ::Type{T}; kwargs...) where {T}
+function parse(::Type{T}, str::AbstractString; kwargs...) where {T}
     io = getio(str)
     res = parse(defaultparser, io, T; kwargs...)
     return ok(res.code) ? res.result : throw(Error(io, res))
@@ -359,7 +366,7 @@ function parse(io::IO, ::Type{T}; kwargs...) where {T}
     res = parse(defaultparser, io, T; kwargs...)
     return ok(res.code) ? res.result : throw(Error(io, res))
 end
-function parse(f::Base.Callable, str::AbstractString, ::Type{T}; kwargs...) where {T}
+function parse(f::Base.Callable, ::Type{T}, str::AbstractString; kwargs...) where {T}
     io = getio(str)
     res = parse!(f, io, Result(T); kwargs...)
     return ok(res.code) ? res.result : throw(Error(io, res))
@@ -369,7 +376,7 @@ function parse(f::Base.Callable, io::IO, ::Type{T}; kwargs...) where {T}
     return ok(res.code) ? res.result : throw(Error(io, res))
 end
 
-function tryparse(str::AbstractString, ::Type{T}; kwargs...) where {T}
+function tryparse(::Type{T}, str::AbstractString; kwargs...) where {T}
     io = getio(str)
     res = parse(defaultparser, io, T; kwargs...)
     return ok(res.code) ? res.result : nothing
@@ -378,7 +385,7 @@ function tryparse(io::IO, ::Type{T}; kwargs...) where {T}
     res = parse(defaultparser, io, T; kwargs...)
     return ok(res.code) ? res.result : nothing
 end
-function tryparse(f::Base.Callable, str::AbstractString, ::Type{T}; kwargs...) where {T}
+function tryparse(f::Base.Callable, ::Type{T}, str::AbstractString; kwargs...) where {T}
     io = getio(str)
     res = parse!(f, io, Result(T); kwargs...)
     return ok(res.code) ? res.result : nothing
