@@ -18,10 +18,15 @@ function __init__()
     end
     Threads.resize_nthreads!(STRINGBUFFERS)
     Threads.resize_nthreads!(ONES)
+    foreach(x->MPZ.init!(x), ONES)
     Threads.resize_nthreads!(NUMS)
+    foreach(x->MPZ.init!(x), NUMS)
     Threads.resize_nthreads!(QUOS)
+    foreach(x->MPZ.init!(x), QUOS)
     Threads.resize_nthreads!(REMS)
+    foreach(x->MPZ.init!(x), REMS)
     Threads.resize_nthreads!(SCLS)
+    foreach(x->MPZ.init!(x), SCLS)
     return
 end
 
@@ -681,6 +686,57 @@ const PLUS    = UInt8('+')
 const NEG_ONE = UInt8('0')-UInt8(1)
 const ZERO    = UInt8('0')
 const TEN     = UInt8('9')+UInt8(1)
+
+@inline function parseint(io::IO, len::Int)
+    if len == 1
+        return Int(Parsers.readbyte(io) - Parsers.ZERO)
+    end
+    v = zero(Int)
+    b = Parsers.readbyte(io)
+    negative = false
+    if b === Parsers.MINUS # check for leading '-' or '+'
+        negative = true
+    elseif b !== Parsers.PLUS
+        v = Int(b - Parsers.ZERO)
+    end
+    for _ = 1:(len - 1)
+        v *= Int(10)
+        v += Int(Parsers.readbyte(io) - Parsers.ZERO)
+    end
+    return ifelse(negative, -v, v)
+end
+
+function checkint2(str::String)
+    len = sizeof(str)
+    BUF.data = str
+    BUF.ptr = 1
+    BUF.size = len
+    return checkint(BUF)
+end
+
+@inline function checkint(io::IO)
+    eof(io) && return false
+    b = Parsers.peekbyte(io)
+    negative = false
+    if b === Parsers.MINUS # check for leading '-' or '+'
+        negative = true
+        Parsers.readbyte(io)
+        eof(io) && return false
+        b = Parsers.peekbyte(io)
+    elseif b === Parsers.PLUS
+        Parsers.readbyte(io)
+        eof(io) && return false
+        b = Parsers.peekbyte(io)
+    end
+    parseddigits = false
+    while Parsers.NEG_ONE < b < Parsers.TEN
+        parseddigits = true
+        b = Parsers.readbyte(io)
+        eof(io) && break
+        b = Parsers.peekbyte(io)
+    end
+    return parseddigits
+end
 
 @inline function defaultparser(io::IO, r::Result{T}; kwargs...) where {T <: Integer}
     # @debug "xparse Int"
