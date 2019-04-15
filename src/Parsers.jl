@@ -429,8 +429,13 @@ struct Delimited{IR, N, I, T <: Trie} <: Layer
     delims::T
 end
 Delimited(ignorerepeated::Bool, newline::Bool, next::I, delims::T) where {I, T <: Trie} = Delimited{ignorerepeated, newline, I, T}(next, delims)
-Delimited(next::Union{Layer, Base.Callable}=defaultparser, delims::Union{Char, String}...; ignorerepeated::Bool=false, newline::Bool=false) = Delimited(ignorerepeated, newline, next, Trie(String[string(d) for d in (isempty(delims) ? (",",) : delims)], DELIMITED))
-Delimited(delims::Union{Char, String}...; ignorerepeated::Bool=false, newline::Bool=false) = Delimited(ignorerepeated, newline, defaultparser, Trie(String[string(d) for d in (isempty(delims) ? (",",) : delims)], DELIMITED))
+Delimited(next::Layer, delim::String, delims::String...; ignorerepeated::Bool=false, newline::Bool=false) = Delimited(ignorerepeated, newline, next, Trie(pushfirst!(String[string(d) for d in delims], delim), DELIMITED))
+Delimited(next::Base.Callable, delim::String, delims::String...; ignorerepeated::Bool=false, newline::Bool=false) = Delimited(ignorerepeated, newline, next, Trie(pushfirst!(String[string(d) for d in delims], delim), DELIMITED))
+Delimited(next::Layer, delims::Char...; ignorerepeated::Bool=false, newline::Bool=false) = Delimited(ignorerepeated, newline, next, Trie(String[string(d) for d in (isempty(delims) ? (",",) : delims)], DELIMITED))
+Delimited(next::Base.Callable, delims::Char...; ignorerepeated::Bool=false, newline::Bool=false) = Delimited(ignorerepeated, newline, next, Trie(String[string(d) for d in (isempty(delims) ? (",",) : delims)], DELIMITED))
+Delimited(delims::Char...; ignorerepeated::Bool=false, newline::Bool=false) = Delimited(ignorerepeated, newline, defaultparser, Trie(String[string(d) for d in (isempty(delims) ? (",",) : delims)], DELIMITED))
+Delimited(delim::String, delims::String...; ignorerepeated::Bool=false, newline::Bool=false) = Delimited(ignorerepeated, newline, defaultparser, Trie(pushfirst!(String[string(d) for d in delims], ","), DELIMITED))
+# cannot mix and match Char and String as final argument anymore...
 
 const STRING_RESULT = Result(String)
 
@@ -501,10 +506,35 @@ struct Quoted{I} <: Layer
     escapechar::UInt8
     ignore_quoted_whitespace::Bool
 end
-Quoted(next, q::Union{Char, UInt8}='"', e::Union{Char, UInt8}='\\', i::Bool=false) = Quoted(next, UInt8(q), UInt8(q), UInt8(e), i)
-Quoted(next, q1::Union{Char, UInt8}, q2::Union{Char, UInt8}, e::Union{Char, UInt8}, i::Bool) = Quoted(next, UInt8(q1), UInt8(q2), UInt8(e), i)
-Quoted(q::Union{Char, UInt8}='"', e::Union{Char, UInt8}='\\', i::Bool=false) = Quoted(defaultparser, UInt8(q), UInt8(q), UInt8(e), i)
-Quoted(q1::Union{Char, UInt8}, q2::Union{Char, UInt8}, e::Union{Char, UInt8}, i::Bool) = Quoted(defaultparser, UInt8(q1), UInt8(q2), UInt8(e), i)
+Quoted(next) = Quoted(next, '"')
+Quoted(next, q::Char) = Quoted(next, q, '\\')
+Quoted(next, q::UInt8) = Quoted(next, q, '\\')
+Quoted(next, q::Char, e::Char, i::Bool=false) = Quoted(next, UInt8(q), UInt8(q), UInt8(e), i)
+Quoted(next, q::Char, e::UInt8, i::Bool=false) = Quoted(next, UInt8(q), UInt8(q), UInt8(e), i)
+Quoted(next, q::UInt8, e::Char, i::Bool=false) = Quoted(next, UInt8(q), UInt8(q), UInt8(e), i)
+Quoted(next, q::UInt8, e::UInt8, i::Bool=false) = Quoted(next, UInt8(q), UInt8(q), UInt8(e), i)
+Quoted(next, q1::Char, q2::Char, e::Char, i::Bool) = Quoted(next, UInt8(q1), UInt8(q2), UInt8(e), i)
+Quoted(next, q1::UInt8, q2::Char, e::Char, i::Bool) = Quoted(next, UInt8(q1), UInt8(q2), UInt8(e), i)
+Quoted(next, q1::Char, q2::UInt8, e::Char, i::Bool) = Quoted(next, UInt8(q1), UInt8(q2), UInt8(e), i)
+Quoted(next, q1::UInt8, q2::UInt8, e::Char, i::Bool) = Quoted(next, UInt8(q1), UInt8(q2), UInt8(e), i)
+Quoted(next, q1::Char, q2::Char, e::UInt8, i::Bool) = Quoted(next, UInt8(q1), UInt8(q2), UInt8(e), i)
+Quoted(next, q1::UInt8, q2::Char, e::UInt8, i::Bool) = Quoted(next, UInt8(q1), UInt8(q2), UInt8(e), i)
+Quoted(next, q1::Char, q2::UInt8, e::UInt8, i::Bool) = Quoted(next, UInt8(q1), UInt8(q2), UInt8(e), i)
+
+Quoted(q::Char='"') = Quoted(q, '\\')
+Quoted(q::Char, e::Char, i::Bool=false) = Quoted(defaultparser, UInt8(q), UInt8(q), UInt8(e), i)
+Quoted(q::Char, e::UInt8, i::Bool=false) = Quoted(defaultparser, UInt8(q), UInt8(q), UInt8(e), i)
+Quoted(q::UInt8) = Quoted(q, '\\')
+Quoted(q::UInt8, e::Char, i::Bool=false) = Quoted(defaultparser, UInt8(q), UInt8(q), UInt8(e), i)
+Quoted(q::UInt8, e::UInt8, i::Bool=false) = Quoted(defaultparser, UInt8(q), UInt8(q), UInt8(e), i)
+Quoted(q1::Char, q2::Char, e::Char, i::Bool) = Quoted(defaultparser, UInt8(q1), UInt8(q2), UInt8(e), i)
+Quoted(q1::UInt8, q2::Char, e::Char, i::Bool) = Quoted(defaultparser, UInt8(q1), UInt8(q2), UInt8(e), i)
+Quoted(q1::Char, q2::UInt8, e::Char, i::Bool) = Quoted(defaultparser, UInt8(q1), UInt8(q2), UInt8(e), i)
+Quoted(q1::UInt8, q2::UInt8, e::Char, i::Bool) = Quoted(defaultparser, UInt8(q1), UInt8(q2), UInt8(e), i)
+Quoted(q1::Char, q2::Char, e::UInt8, i::Bool) = Quoted(defaultparser, UInt8(q1), UInt8(q2), UInt8(e), i)
+Quoted(q1::UInt8, q2::Char, e::UInt8, i::Bool) = Quoted(defaultparser, UInt8(q1), UInt8(q2), UInt8(e), i)
+Quoted(q1::Char, q2::UInt8, e::UInt8, i::Bool) = Quoted(defaultparser, UInt8(q1), UInt8(q2), UInt8(e), i)
+Quoted(q1::UInt8, q2::UInt8, e::UInt8, i::Bool) = Quoted(defaultparser, UInt8(q1), UInt8(q2), UInt8(e), i)
 
 function handlequoted!(q, io, r)
     if eof(io)
@@ -599,8 +629,13 @@ struct Strip{I} <: Layer
     wh1::UInt8
     wh2::UInt8
 end
-Strip(next, wh1::Union{Char, UInt8}=' ', wh2::Union{Char, UInt8}='\t') = Strip(next, wh1 % UInt8, wh2 % UInt8)
-Strip(wh1::Union{Char, UInt8}=' ', wh2::Union{Char, UInt8}='\t') = Strip(defaultparser, wh1 % UInt8, wh2 % UInt8)
+Strip(next, wh1::Char=' ', wh2::Char='\t') = Strip(next, wh1 % UInt8, wh2 % UInt8)
+Strip(next, wh1::Char, wh2::UInt8) = Strip(next, wh1 % UInt8, wh2 % UInt8)
+Strip(next, wh1::UInt8, wh2::Char='\t') = Strip(next, wh1 % UInt8, wh2 % UInt8)
+Strip(wh1::Char=' ', wh2::Char='\t') = Strip(defaultparser, wh1 % UInt8, wh2 % UInt8)
+Strip(wh1::Char, wh2::UInt8) = Strip(defaultparser, wh1 % UInt8, wh2 % UInt8)
+Strip(wh1::UInt8, wh2::Char='\t') = Strip(defaultparser, wh1 % UInt8, wh2 % UInt8)
+Strip(wh1::UInt8, wh2::UInt8) = Strip(defaultparser, wh1 % UInt8, wh2 % UInt8)
 
 function wh!(io, wh1, wh2)
     stripped = false
