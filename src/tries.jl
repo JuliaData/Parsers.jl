@@ -139,7 +139,7 @@ end
             r.code |= EOF
             return false
         end
-        pos = position(io)
+        pos = Int64(position(io))
         b = peekbyte(io)
         $(generatebranches(L.parameters, false, value, code, label))
         return false

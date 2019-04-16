@@ -16,6 +16,19 @@ run(@benchmarkable Parsers.parse!($l, io, r) setup=(io = IOBuffer("0"); r = Pars
 l = Parsers.Delimited(Parsers.Quoted(Parsers.Strip(Parsers.Sentinel(["NA"]))))
 run(@benchmarkable Parsers.parse!($l, io, r) setup=(io = IOBuffer("0"); r = Parsers.Result($T)))
 
+run(@benchmarkable Parsers.parse!($l, io, r) setup=(io = IOBuffer("-8670696756038515498"); r = Parsers.Result($T)))
+
+run(@benchmarkable Parsers.parse($l, io, Int64; NamedTuple()...) setup=(io = IOBuffer("-8670696756038515498");))
+
+function bench(l, n)
+    io = IOBuffer("-8670696756038515498")
+    for i = 1:n
+        io.ptr = 1
+        Parsers.parse(l, io, Int64; NamedTuple()...)
+    end
+    return
+end
+
 # Float64
 T = Float64
 run(@benchmarkable Parsers.defaultparser(io, r) setup=(io = IOBuffer("0"); r = Parsers.Result($T)))

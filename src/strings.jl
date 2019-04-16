@@ -58,6 +58,7 @@ incr(io::IOBuffer, b) = 1
     quoted = hasescapechars = false
     if b === openquotechar
         readbyte(io)
+        r.pos += 1
         ptroff += 1
         quoted = true
         code |= QUOTED
@@ -69,6 +70,7 @@ incr(io::IOBuffer, b) = 1
             b = eof(io) ? 0x00 : peekbyte(io)
             if b === openquotechar
                 readbyte(io)
+                r.pos += off
                 ptroff += off
                 quoted = true
                 code |= QUOTED
@@ -165,11 +167,13 @@ incr(io::IOBuffer, b) = 1
         code |= OK
         if hasescapechars
             setfield!(r, 1, unescape(T, intern(T, (ptr, len)), escapechar, closequotechar))
+            code |= ESCAPED_STRING
         else
             setfield!(r, 1, intern(T, (ptr, len)))
         end
     end
     r.code |= code
+    r.len = len
     return r
 end
 

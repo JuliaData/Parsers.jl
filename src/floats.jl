@@ -258,5 +258,6 @@ wider(::Type{Int128}) = BigInt
 
 @label done
     r.code |= code
+    r.len = Int64(position(io)) - r.pos
     return r
 end

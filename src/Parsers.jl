@@ -64,6 +64,8 @@ function readbyte end
 """
 function peekbyte end
 
+incr!(io::IO) = readbyte(io)
+
 readbyte(from::IO) = Base.read(from, UInt8)
 peekbyte(from::IO) = UInt8(Base.peek(from))
 
@@ -79,6 +81,11 @@ function peekbyte(from::IOBuffer)
     return byte
 end
 
+function incr!(from::IOBuffer)
+    from.ptr += 1
+    return
+end
+
 function readbyte(from::StringBuffer)
     i = from.ptr
     s = from.data
@@ -89,6 +96,11 @@ end
 function peekbyte(from::StringBuffer)
     s = from.data
     GC.@preserve s unsafe_load(pointer(s, from.ptr))
+end
+
+function incr!(from::StringBuffer)
+    from.ptr += 1
+    return
 end
 
 """
@@ -187,6 +199,7 @@ end
       * `DELIMITED`: a valid delimiter was found while parsing; note that EOF is always a valid delimiter
       * `NEWLINE`: a newline character was matched as a delimiter (useful for applications where newlines have special delimiting purposes)
       * `EOF`: parsing encountered the end-of-file while parsing
+      * `ESCAPED_STRING`: an escape character was encountered while parsing
       * `INVALID_QUOTED_FIELD`: a corresponding closing quote character was not found for a `QUOTED` field
       * `INVALID_DELIMITER`: a delimiter was found, but not at the expected position while parsing
       * `OVERFLOW`: a numeric type overflowed while parsing its value
@@ -206,6 +219,7 @@ const QUOTED               = 0b0000000000000100 % ReturnCode
 const DELIMITED            = 0b0000000000001000 % ReturnCode
 const NEWLINE              = 0b0000000000010000 % ReturnCode
 const EOF                  = 0b0000000000100000 % ReturnCode
+const ESCAPED_STRING       = 0b0000001000000000 % ReturnCode
 
 # invalid flags
 const INVALID_QUOTED_FIELD = 0b1000000001000000 % ReturnCode
@@ -269,11 +283,13 @@ codes(r::ReturnCode) = chop(chop(string(
         * `result::Union{T, Missing}`: holds the parsed result of type `T` or `missing` if unable to parse or a valid `Parsers.Sentinel` value was found
         * `code::Parsers.ReturnCode`: a value signaling whether parsing succeeded (`Parsers.OK`) or not (`Parsers.INVALID`); see `?Parsers.ReturnCode` for all possible codes
         * `pos::Int64`: the byte position when a parsing operation started
+        * `len::Int64`: number of bytes consumed while parsing a value
 """
 mutable struct Result{T}
     result::Union{T, Missing}
     code::ReturnCode
     pos::Int64
+    len::Int64
 end
 parsetype(r::Result{T}) where {T} = T
 
@@ -284,7 +300,7 @@ const DEFAULT_TYPES = (Int8, UInt8, Int16, UInt16, Int32, UInt32, Int64, UInt64,
     Date, DateTime, Time,
     Bool)
 
-const RESULTS = Tuple([Result{T}(missing, OK, Int64(0))] for T in DEFAULT_TYPES)
+const RESULTS = Tuple([Result{T}(missing, OK, Int64(0), Int64(0))] for T in DEFAULT_TYPES)
 
 for (i, T) in enumerate(DEFAULT_TYPES)
     @eval index(::Type{$T}) = $i
@@ -295,12 +311,12 @@ index(T) = length(RESULTS) + 1
     if @generated
         i = index(T)
         if i > length(RESULTS)
-            return :(Result{$T}(missing, SUCCESS, Int64(0)))
+            return :(Result{$T}(missing, SUCCESS, Int64(0), Int64(0)))
         else
-            return :(r = $(RESULTS[i])[Threads.threadid()]; r.code = SUCCESS; return r)
+            return :($(Expr(:meta, :inline)); @inbounds r = $(RESULTS[i])[Threads.threadid()]; r.code = SUCCESS; return r)
         end
     else
-        return Result{T}(missing, SUCCESS, Int64(0))
+        return Result{T}(missing, SUCCESS, Int64(0), Int64(0))
     end
 end
 
@@ -345,7 +361,7 @@ function defaultparser end
     Parsers.parse!(l::Parsers.Layer, io::IO, r::Result{T}; kwargs...)::Parsers.Result{T}
 
     Internal parsing function that returns a full `Parsers.Result` type to indicate the success of parsing a `T` from `io`.
-    
+
     A custom parsing function `f` can be passed, as the innermost "layer", which should have the form `f(io::IO, ::Type{T}, r::Result{T}, args...)::Result{T}`, i.e. it takes an `IO` stream, attemps to parse type `T`, takes a pre-allocated `Result{T}` and should return it after parsing.
 """
 function parse! end
@@ -354,6 +370,10 @@ function parse! end
 @inline parse!(f::Base.Callable, io::IO, r::Result{T}; kwargs...) where {T} = f(io, r; kwargs...)
 @inline parse!(io::IO, r::Result{T}; kwargs...) where {T} = parse!(defaultparser, io, r; kwargs...)
 @inline parse(layer::Union{typeof(defaultparser), Layer}, io::IO, ::Type{T}; kwargs...) where {T} = parse!(layer, io, Result(T); kwargs...)
+@inline function parse(layer::Union{typeof(defaultparser), Layer}, str::String, ::Type{T}; kwargs...) where {T}
+    io = getio(str)
+    parse!(layer, io, Result(T); kwargs...)
+end
 
 # high-level convenience functions like in Base
 "Attempt to parse a value of type `T` from string `str`. Throws `Parsers.Error` on parser failures and invalid values."
@@ -404,12 +424,12 @@ function checknewline(io, r)
     eof(io) && return true
     b = peekbyte(io)
     if b === UInt8('\n')
-        readbyte(io)
+        incr!(io)
         r.code |= NEWLINE | ifelse(eof(io), EOF, SUCCESS)
         return true
     elseif b === UInt8('\r')
-        readbyte(io)
-        !eof(io) && peekbyte(io) === UInt8('\n') && readbyte(io)
+        incr!(io)
+        !eof(io) && peekbyte(io) === UInt8('\n') && incr!(io)
         r.code |= NEWLINE | ifelse(eof(io), EOF, SUCCESS)
         return true
     end
@@ -468,18 +488,19 @@ end
     # @debug "didn't find delimiters at expected location; result is invalid, parsing until delimiter is found"
     while true
         b = readbyte(io)
+        r.len = Int64(position(io)) - r.pos
         if eof(io)
             r.code |= EOF
             break
         end
         if ignorerepeated
             matched = false
-            while match!(d.delims, io, r, false)
+            while match!(d.delims, io, r)
                 matched = true
             end
             (matched || (newline && checknewline(io, r))) && break
         else
-            (match!(d.delims, io, r, false) || (newline && checknewline(io, r))) && break
+            (match!(d.delims, io, r) || (newline && checknewline(io, r))) && break
         end
     end
     r.code |= INVALID_DELIMITER
@@ -515,7 +536,7 @@ function handlequoted!(q, io, r)
         while true
             b = peekbyte(io)
             if same && b === q.escapechar
-                readbyte(io)
+                incr!(io)
                 if eof(io) || peekbyte(io) !== q.closequotechar
                     first || (r.code |= INVALID)
                     break
@@ -523,7 +544,7 @@ function handlequoted!(q, io, r)
                 # otherwise, next byte is escaped, so read it
                 b = peekbyte(io)
             elseif b === q.escapechar
-                readbyte(io)
+                incr!(io)
                 if eof(io)
                     r.code |= INVALID_QUOTED_FIELD
                     break
@@ -531,11 +552,11 @@ function handlequoted!(q, io, r)
                 # regular escaped byte
                 b = peekbyte(io)
             elseif b === q.closequotechar
-                readbyte(io)
+                incr!(io)
                 first || (r.code |= INVALID)
                 break
             end
-            readbyte(io)
+            incr!(io)
             if eof(io)
                 r.code |= INVALID_QUOTED_FIELD
                 break
@@ -544,6 +565,7 @@ function handlequoted!(q, io, r)
         end
     end
     eof(io) && (r.code |= EOF)
+    r.len = Int64(position(io) - 1) - r.pos
     return
 end
 
@@ -553,18 +575,18 @@ end
     pos = 0
     b = eof(io) ? 0x00 : peekbyte(io)
     if b === q.openquotechar
+        incr!(io)
         pos = position(io)
-        readbyte(io)
         quoted = true
         r.code |= QUOTED
     elseif q.ignore_quoted_whitespace && (b === UInt8(' ') || b === UInt8('\t'))
         pos2 = position(io)
         while true
-            readbyte(io)
+            incr!(io)
             b = eof(io) ? 0x00 : peekbyte(io)
             if b === q.openquotechar
+                incr!(io)
                 pos = position(io)
-                readbyte(io)
                 quoted = true
                 r.code |= QUOTED
                 break
@@ -580,7 +602,7 @@ end
     if q.ignore_quoted_whitespace
         b = eof(io) ? 0x00 : peekbyte(io)
         while b === UInt8(' ') || b === UInt8('\t')
-            readbyte(io)
+            incr!(io)
             b = eof(io) ? 0x00 : peekbyte(io)
         end
     end
@@ -608,7 +630,7 @@ function wh!(io, wh1, wh2)
         b = peekbyte(io)
         while (b == wh1) | (b == wh2)
             stripped = true
-            readbyte(io)
+            incr!(io)
             eof(io) && break
             b = peekbyte(io)
         end
@@ -644,18 +666,19 @@ Sentinel(sentinels::Union{String, Vector{String}}) = Sentinel(defaultparser, Tri
 
 @inline function parse!(s::Sentinel, io::IO, r::Result{T}; kwargs...) where {T}
     # @debug "xparse Sentinel - $T"
-    pos = position(io)
+    pos = Int64(position(io))
     if isempty(s.sentinels.leaves)
         parse!(s.next, io, r; kwargs...)
         if !ok(r.code)
             if position(io) == pos
                 r.code &= ~INVALID
                 r.code |= (SENTINEL | ifelse(eof(io), EOF, SUCCESS))
+                r.len = Int64(0)
             end
         end
     else # non-empty sentinel value
         sent = match!(s.sentinels, io, r)
-        sentpos = position(io)
+        sentpos = Int64(position(io))
         fastseek!(io, pos)
         parse!(s.next, io, r; kwargs...)
         if sent
@@ -663,15 +686,18 @@ Sentinel(sentinels::Union{String, Vector{String}}) = Sentinel(defaultparser, Tri
                 r.code &= ~INVALID
                 setfield!(r, 1, missing)
                 fastseek!(io, sentpos)
+                r.len = sentpos - pos
             else
                 # both sentinel value parsing matched & type parsing succeeded
-                pos = position(io)
-                if pos > sentpos
+                newpos = Int64(position(io))
+                if newpos > sentpos
                     r.code &= ~SENTINEL
+                    r.len = newpos - pos
                 else
                     r.code &= ~OK
                     setfield!(r, 1, missing)
                     fastseek!(io, sentpos)
+                    r.len = sentpos - pos
                 end
             end
         end
@@ -687,57 +713,6 @@ const NEG_ONE = UInt8('0')-UInt8(1)
 const ZERO    = UInt8('0')
 const TEN     = UInt8('9')+UInt8(1)
 
-@inline function parseint(io::IO, len::Int)
-    if len == 1
-        return Int(Parsers.readbyte(io) - Parsers.ZERO)
-    end
-    v = zero(Int)
-    b = Parsers.readbyte(io)
-    negative = false
-    if b === Parsers.MINUS # check for leading '-' or '+'
-        negative = true
-    elseif b !== Parsers.PLUS
-        v = Int(b - Parsers.ZERO)
-    end
-    for _ = 1:(len - 1)
-        v *= Int(10)
-        v += Int(Parsers.readbyte(io) - Parsers.ZERO)
-    end
-    return ifelse(negative, -v, v)
-end
-
-function checkint2(str::String)
-    len = sizeof(str)
-    BUF.data = str
-    BUF.ptr = 1
-    BUF.size = len
-    return checkint(BUF)
-end
-
-@inline function checkint(io::IO)
-    eof(io) && return false
-    b = Parsers.peekbyte(io)
-    negative = false
-    if b === Parsers.MINUS # check for leading '-' or '+'
-        negative = true
-        Parsers.readbyte(io)
-        eof(io) && return false
-        b = Parsers.peekbyte(io)
-    elseif b === Parsers.PLUS
-        Parsers.readbyte(io)
-        eof(io) && return false
-        b = Parsers.peekbyte(io)
-    end
-    parseddigits = false
-    while Parsers.NEG_ONE < b < Parsers.TEN
-        parseddigits = true
-        b = Parsers.readbyte(io)
-        eof(io) && break
-        b = Parsers.peekbyte(io)
-    end
-    return parseddigits
-end
-
 @inline function defaultparser(io::IO, r::Result{T}; kwargs...) where {T <: Integer}
     # @debug "xparse Int"
     setfield!(r, 1, missing)
@@ -746,21 +721,22 @@ end
     eof(io) && (r.code |= INVALID | EOF; return r)
     v = zero(T)
     b = peekbyte(io)
-    negative = false
+    negative = b === MINUS
+    
     if b === MINUS # check for leading '-' or '+'
         negative = true
-        readbyte(io)
+        incr!(io)
         eof(io) && (r.code |= INVALID | EOF; return r)
         b = peekbyte(io)
     elseif b === PLUS
-        readbyte(io)
+        incr!(io)
         eof(io) && (r.code |= INVALID | EOF; return r)
         b = peekbyte(io)
     end
     parseddigits = false
     while NEG_ONE < b < TEN
         parseddigits = true
-        b = readbyte(io)
+        incr!(io)
         v, ov_mul = Base.mul_with_overflow(v, T(10))
         v, ov_add = Base.add_with_overflow(v, T(b - ZERO))
         (ov_mul | ov_add) && (r.result = v; r.code |= OVERFLOW | ifelse(eof(io), EOF, SUCCESS); return r)
@@ -773,6 +749,7 @@ end
         r.result = ifelse(negative, -v, v)
         r.code |= OK | ifelse(eof(io), EOF, SUCCESS)
     end
+    r.len = Int64(position(io)) - r.pos
     return r
 end
 

@@ -36,5 +36,6 @@ make(df::String) = Dates.DateFormat(df)
     code = (INVALID | (code & ~OK))
 @label done
     r.code |= code
+    r.len = Int64(position(io)) - r.pos
     return r
 end
