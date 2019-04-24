@@ -5,10 +5,8 @@ version = "0.2.22"
 
 [deps]
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
-WeakRefStrings = "ea10d353-3f73-51f8-a26c-33c1cb351aa5"
-
-[extras]
+Mmap = "a63ad114-7e13-5084-954f-fe012c677804"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
-[targets]
-test = ["Test"]
+[compat]
+julia = "≥ 0.7.0"

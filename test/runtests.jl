@@ -200,7 +200,7 @@ end # @testset "Core Parsers.xparse"
 # test lots of ints
 @time for i in typemin(Int64):100_000_000_000_000:typemax(Int64)
     str = string(i)
-    x, code, vpos, vlen, tlen = Parsers.xparse(Int, str)
+    x, code, vpos, vlen, tlen = Parsers.xparse(Int64, str)
     @test string(x) == str
     @test code == OK | EOF
     @test vlen == length(str)
