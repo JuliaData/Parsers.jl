@@ -1,769 +1,340 @@
 using Parsers, Test, Dates
 
-import Parsers: INVALID, OK, SENTINEL, QUOTED, DELIMITED, NEWLINE, EOF, INVALID_QUOTED_FIELD, INVALID_DELIMITER, OVERFLOW
+import Parsers: INVALID, OK, SENTINEL, QUOTED, DELIMITED, NEWLINE, EOF, INVALID_QUOTED_FIELD, INVALID_DELIMITER, OVERFLOW, ESCAPED_STRING
 
 @testset "Parsers" begin
 
-@testset "Int" begin
+@testset "Core Parsers.xparse" begin
 
-r = Parsers.parse(Parsers.defaultparser, IOBuffer(""), Int)
-@test r.result === missing
-@test r.code === INVALID | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.defaultparser, IOBuffer("-"), Int)
-@test r.result === missing
-@test r.code === INVALID | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.defaultparser, IOBuffer("+"), Int)
-@test r.result === missing
-@test r.code === INVALID | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.defaultparser, IOBuffer("-1"), Int)
-@test r.result === -1
-@test r.code === OK | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.defaultparser, IOBuffer("0"), Int)
-@test r.result === 0
-@test r.code === OK | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.defaultparser, IOBuffer("+1"), Int)
-@test r.result === 1
-@test r.code === OK | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.defaultparser, IOBuffer("-a"), Int)
-@test r.result === missing
-@test r.code === INVALID
-@test r.pos == 0
-r = Parsers.parse(Parsers.defaultparser, IOBuffer("+a"), Int)
-@test r.result === missing
-@test r.code === INVALID
-@test r.pos == 0
-r = Parsers.parse(Parsers.defaultparser, IOBuffer("-1a"), Int)
-@test r.result === -1
-@test r.code === OK
-@test r.pos == 0
-r = Parsers.parse(Parsers.defaultparser, IOBuffer("+1a"), Int)
-@test r.result === 1
-@test r.code === OK
-@test r.pos == 0
-r = Parsers.parse(Parsers.defaultparser, IOBuffer("129"), Int8)
-@test r.result === Int8(-127)
-@test r.code === OVERFLOW | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.defaultparser, IOBuffer("abc"), Int)
-@test r.result === missing
-@test r.code === INVALID
-@test r.pos == 0
+sentinels = ["NANA", "NAN", "NA"]
 
-end # @testset
+testcases = [
+    (str="", kwargs=(), x=0, code=(INVALID | EOF), vpos=1, vlen=0, tlen=0),
+    (str="", kwargs=(sentinel=missing,), x=0, code=(SENTINEL | EOF), vpos=1, vlen=0, tlen=0),
+    (str=" ", kwargs=(), x=0, code=(INVALID | EOF), vpos=1, vlen=0, tlen=1),
+    (str=" ", kwargs=(sentinel=missing,), x=0, code=(INVALID | EOF), vpos=1, vlen=0, tlen=1),
+    (str=" -", kwargs=(sentinel=missing,), x=0, code=(INVALID | EOF), vpos=1, vlen=2, tlen=2),
+    (str=" +", kwargs=(sentinel=missing,), x=0, code=(INVALID | EOF), vpos=1, vlen=2, tlen=2),
+    (str="-", kwargs=(sentinel=missing,), x=0, code=(INVALID | EOF), vpos=1, vlen=1, tlen=1),
+    (str=" {-", kwargs=(sentinel=missing,), x=0, code=(QUOTED | EOF | INVALID_QUOTED_FIELD), vpos=3, vlen=1, tlen=3),
+    (str="{+", kwargs=(sentinel=missing,), x=0, code=(QUOTED | EOF | INVALID_QUOTED_FIELD), vpos=2, vlen=1, tlen=2),
+    (str=" {+,", kwargs=(sentinel=missing,), x=0, code=(QUOTED | EOF | INVALID_QUOTED_FIELD), vpos=3, vlen=1, tlen=4),
+    (str="{-,", kwargs=(sentinel=missing,), x=0, code=(QUOTED | EOF | INVALID_QUOTED_FIELD), vpos=2, vlen=1, tlen=3),
+    (str="+,", kwargs=(sentinel=missing,), x=0, code=(INVALID | DELIMITED), vpos=1, vlen=1, tlen=2),
+    (str="-,", kwargs=(sentinel=missing,), x=0, code=(INVALID | DELIMITED), vpos=1, vlen=1, tlen=2),
+    (str=" {-},", kwargs=(sentinel=missing,), x=0, code=(INVALID | QUOTED | DELIMITED), vpos=3, vlen=1, tlen=5),
+    (str="{+} ,", kwargs=(sentinel=missing,), x=0, code=(INVALID | QUOTED | DELIMITED), vpos=2, vlen=1, tlen=5),
+    (str="{", kwargs=(), x=0, code=(QUOTED | INVALID_QUOTED_FIELD), vpos=2, vlen=-1, tlen=1),
+    (str="{}", kwargs=(), x=0, code=(INVALID | QUOTED | EOF), vpos=2, vlen=0, tlen=2),
+    (str=" {", kwargs=(), x=0, code=(QUOTED | INVALID_QUOTED_FIELD), vpos=3, vlen=-2, tlen=2),
+    (str=" {\\\\", kwargs=(), x=0, code=(QUOTED | INVALID_QUOTED_FIELD | ESCAPED_STRING | EOF), vpos=3, vlen=0, tlen=4),
+    (str=" {\\}} ", kwargs=(), x=0, code=(QUOTED | INVALID | ESCAPED_STRING | EOF), vpos=3, vlen=2, tlen=6),
+    (str=" {\\\\}", kwargs=(), x=0, code=(INVALID | QUOTED | ESCAPED_STRING | EOF), vpos=3, vlen=2, tlen=5),
+    
+    (str=" {}", kwargs=(), x=0, code=(INVALID | QUOTED | EOF), vpos=3, vlen=0, tlen=3),
+    (str=" { }", kwargs=(), x=0, code=(INVALID | QUOTED | EOF), vpos=3, vlen=1, tlen=4),
+    (str=" {,} ", kwargs=(), x=0, code=(INVALID | QUOTED | EOF), vpos=3, vlen=1, tlen=5),
+    (str=" { } ", kwargs=(), x=0, code=(INVALID | QUOTED | EOF), vpos=3, vlen=1, tlen=5),
+    (str=" {\t", kwargs=(), x=0, code=(INVALID_QUOTED_FIELD | QUOTED | EOF), vpos=3, vlen=-2, tlen=3),
 
-@testset "Parsers.Sentinel" begin
+    (str="NA", kwargs=(sentinel=sentinels,), x=0, code=(SENTINEL | EOF), vpos=1, vlen=2, tlen=2),
+    (str="£", kwargs=(sentinel=["£"],), x=0, code=(SENTINEL | EOF), vpos=1, vlen=2, tlen=2),
+    (str="NA2", kwargs=(sentinel=sentinels,), x=0, code=(SENTINEL | EOF | INVALID_DELIMITER), vpos=1, vlen=3, tlen=3),
+    (str="NAN", kwargs=(sentinel=sentinels,), x=0, code=(SENTINEL | EOF), vpos=1, vlen=3, tlen=3),
+    (str="NANA", kwargs=(sentinel=sentinels,), x=0, code=(SENTINEL | EOF), vpos=1, vlen=4, tlen=4),
+    (str=" NA", kwargs=(sentinel=sentinels,), x=0, code=(SENTINEL | EOF), vpos=1, vlen=3, tlen=3),
+    (str="{NAN", kwargs=(sentinel=sentinels,), x=0, code=(SENTINEL | EOF | QUOTED | INVALID_QUOTED_FIELD), vpos=2, vlen=3, tlen=4),
+    (str="{NANA}", kwargs=(sentinel=sentinels,), x=0, code=(SENTINEL | QUOTED | EOF), vpos=2, vlen=4, tlen=6),
+    (str=" {NA", kwargs=(sentinel=sentinels,), x=0, code=(SENTINEL | QUOTED | EOF | INVALID_QUOTED_FIELD), vpos=3, vlen=2, tlen=4),
+    (str=" {NANA}", kwargs=(sentinel=sentinels,), x=0, code=(SENTINEL | QUOTED | EOF), vpos=3, vlen=4, tlen=7),
+    (str=" { NAN}", kwargs=(sentinel=sentinels,), x=0, code=(SENTINEL | QUOTED | EOF), vpos=3, vlen=4, tlen=7),
+    (str=" {NAN }", kwargs=(sentinel=sentinels,), x=0, code=(SENTINEL | QUOTED | EOF), vpos=3, vlen=4, tlen=7),
+    (str=" {NA} ", kwargs=(sentinel=sentinels,), x=0, code=(SENTINEL | QUOTED | EOF), vpos=3, vlen=2, tlen=6),
+    (str=" { NANA} ", kwargs=(sentinel=sentinels,), x=0, code=(SENTINEL | QUOTED | EOF), vpos=3, vlen=5, tlen=9),
+    (str=" {\tNA", kwargs=(sentinel=sentinels,), x=0, code=(SENTINEL | EOF | QUOTED | INVALID_QUOTED_FIELD), vpos=3, vlen=3, tlen=5),
 
-r = Parsers.parse(Parsers.Sentinel(["NA"]), IOBuffer("NA"), Int)
-@test r.result === missing
-@test r.code === SENTINEL | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Sentinel(["\\N"]), IOBuffer("\\N"), Int)
-@test r.result === missing
-@test r.code === SENTINEL | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Sentinel(["NA"]), IOBuffer("NA2"), Int)
-@test r.result === missing
-@test r.code === SENTINEL
-@test r.pos == 0
-r = Parsers.parse(Parsers.Sentinel(["-", "NA", "\\N"]), IOBuffer("-"), Int)
-@test r.result === missing
-@test r.code === SENTINEL | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Sentinel(["£"]), IOBuffer("£"), Int)
-@test r.result === missing
-@test r.code === SENTINEL | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Sentinel(["NA"]), IOBuffer("null"), Int)
-@test r.result === missing
-@test r.code === INVALID
-@test r.pos == 0
-r = Parsers.parse(Parsers.Sentinel(String[]), IOBuffer("null"), Int)
-@test r.result === missing
-@test r.code === SENTINEL
-@test r.pos == 0
-r = Parsers.parse(Parsers.Sentinel(String[]), IOBuffer(""), Int)
-@test r.result === missing
-@test r.code === SENTINEL | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Sentinel(String["NA"]), IOBuffer(""), Int)
-@test r.result === missing
-@test r.code === INVALID | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Sentinel(String[]), IOBuffer(","), Int)
-@test r.result === missing
-@test r.code === SENTINEL
-@test r.pos == 0
-r = Parsers.parse(Parsers.Sentinel(String[]), IOBuffer("1,"), Int)
-@test r.result === 1
-@test r.code === OK
-@test r.pos == 0
+    (str="-", kwargs=(sentinel=["-"],), x=0, code=(SENTINEL | EOF), vpos=1, vlen=1, tlen=1),
+    (str=" +", kwargs=(sentinel=["+"],), x=0, code=(SENTINEL | EOF), vpos=1, vlen=2, tlen=2),
+    (str="+1 ", kwargs=(sentinel=["+1"],), x=1, code=(SENTINEL | EOF), vpos=1, vlen=3, tlen=3),
+    (str=" -1 ", kwargs=(sentinel=["-1"],), x=-1, code=(SENTINEL | EOF), vpos=1, vlen=4, tlen=4),
+    (str="{1", kwargs=(sentinel=["1"],), x=1, code=(SENTINEL | EOF | QUOTED | INVALID_QUOTED_FIELD), vpos=2, vlen=1, tlen=2),
+    (str="{1 ", kwargs=(sentinel=["1"],), x=1, code=(SENTINEL | EOF | QUOTED | INVALID_QUOTED_FIELD), vpos=2, vlen=2, tlen=3),
+    (str="{-1}", kwargs=(sentinel=["-1"],), x=-1, code=(SENTINEL | QUOTED | EOF), vpos=2, vlen=2, tlen=4),
+    (str=" {+1", kwargs=(sentinel=["+1"],), x=1, code=(SENTINEL | EOF | QUOTED | INVALID_QUOTED_FIELD), vpos=3, vlen=2, tlen=4),
+    (str=" {-}", kwargs=(sentinel=["-"],), x=0, code=(SENTINEL | QUOTED | EOF), vpos=3, vlen=1, tlen=4),
+    (str=" { +}", kwargs=(sentinel=["+"],), x=0, code=(SENTINEL | QUOTED | EOF), vpos=3, vlen=2, tlen=5),
+    (str=" {-1 }", kwargs=(sentinel=["-1"],), x=-1, code=(SENTINEL | QUOTED | EOF), vpos=3, vlen=3, tlen=6),
+    (str=" {+1} ", kwargs=(sentinel=["+1"],), x=1, code=(SENTINEL | QUOTED | EOF), vpos=3, vlen=2, tlen=6),
+    (str=" { 1} ", kwargs=(sentinel=["1"],), x=1, code=(SENTINEL | QUOTED | EOF), vpos=3, vlen=2, tlen=6),
+    (str=" {\t-", kwargs=(sentinel=["-"],), x=0, code=(SENTINEL | EOF | QUOTED | INVALID_QUOTED_FIELD), vpos=3, vlen=2, tlen=4),
 
-end # @testset
+    (str="+a ", kwargs=(sentinel=["+1"],), x=0, code=(INVALID | EOF | INVALID_DELIMITER), vpos=1, vlen=3, tlen=3),
+    (str=" -a ", kwargs=(sentinel=["-1"],), x=0, code=(INVALID | EOF | INVALID_DELIMITER), vpos=1, vlen=4, tlen=4),
+    (str="{a", kwargs=(sentinel=["1"],), x=0, code=(INVALID | EOF | QUOTED | INVALID_QUOTED_FIELD), vpos=2, vlen=0, tlen=2),
+    (str="{-a}", kwargs=(sentinel=["-1"],), x=0, code=(INVALID | EOF | QUOTED), vpos=2, vlen=2, tlen=4),
+    (str=" {+1a", kwargs=(sentinel=["+1"],), x=1, code=(SENTINEL | QUOTED | EOF | INVALID_QUOTED_FIELD), vpos=3, vlen=2, tlen=5),
+    (str=" {-1a }", kwargs=(sentinel=["-1"],), x=-1, code=(SENTINEL | QUOTED | INVALID | EOF), vpos=3, vlen=4, tlen=7),
+    (str=" {+a} ", kwargs=(sentinel=["+1"],), x=0, code=(INVALID | QUOTED | EOF), vpos=3, vlen=2, tlen=6),
+    (str=" { a} ", kwargs=(sentinel=["1"],), x=0, code=(INVALID | QUOTED | EOF), vpos=3, vlen=2, tlen=6),
 
-@testset "Parsers.Quoted" begin
+    (str="-", kwargs=(), x=0, code=(INVALID | EOF), vpos=1, vlen=1, tlen=1),
+    (str="0", kwargs=(), x=0, code=(OK | EOF), vpos=1, vlen=1, tlen=1),
+    (str=" +", kwargs=(), x=0, code=(INVALID | EOF), vpos=1, vlen=2, tlen=2),
+    (str=" +1", kwargs=(), x=1, code=(OK | EOF), vpos=1, vlen=3, tlen=3),
+    (str="-1 ", kwargs=(), x=-1, code=(OK | EOF), vpos=1, vlen=3, tlen=3),
+    (str=" +1 ", kwargs=(), x=1, code=(OK | EOF), vpos=1, vlen=4, tlen=4),
+    (str="{1", kwargs=(), x=1, code=(OK | QUOTED | EOF | INVALID_QUOTED_FIELD), vpos=2, vlen=1, tlen=2),
+    (str="{1 ", kwargs=(), x=1, code=(OK | QUOTED | EOF | INVALID_QUOTED_FIELD), vpos=2, vlen=2, tlen=3),
+    (str="{-1}", kwargs=(), x=-1, code=(OK | QUOTED | EOF), vpos=2, vlen=2, tlen=4),
+    (str=" {+1", kwargs=(), x=1, code=(OK | QUOTED | EOF | INVALID_QUOTED_FIELD), vpos=3, vlen=2, tlen=4),
+    (str=" {-}", kwargs=(), x=0, code=(INVALID | QUOTED | EOF), vpos=3, vlen=1, tlen=4),
+    (str=" { +}", kwargs=(), x=0, code=(INVALID | QUOTED | EOF), vpos=3, vlen=2, tlen=5),
+    (str=" {-1 }", kwargs=(), x=-1, code=(OK | QUOTED | EOF), vpos=3, vlen=3, tlen=6),
+    (str=" {+1} ", kwargs=(), x=1, code=(OK | QUOTED | EOF), vpos=3, vlen=2, tlen=6),
+    (str=" { 1} ", kwargs=(), x=1, code=(OK | QUOTED | EOF), vpos=3, vlen=2, tlen=6),
+    (str=" {\t-", kwargs=(), x=0, code=(QUOTED | EOF | INVALID_QUOTED_FIELD), vpos=3, vlen=2, tlen=4),
+    (str="{1ab\\\\c}", kwargs=(), x=1, code=(OK | QUOTED | ESCAPED_STRING | EOF | INVALID), vpos=2, vlen=6, tlen=8),
+    (str="{1\\\\abc,", kwargs=(), x=1, code=(OK | QUOTED | ESCAPED_STRING | EOF | INVALID_QUOTED_FIELD), vpos=2, vlen=6, tlen=8),
+    (str="{1abc},", kwargs=(sentinel=["1abc"],), x=1, code=(SENTINEL | QUOTED | DELIMITED), vpos=2, vlen=4, tlen=7),
+    (str="{1abc", kwargs=(sentinel=["1abc"],), x=1, code=(SENTINEL | QUOTED | EOF | INVALID_QUOTED_FIELD), vpos=2, vlen=4, tlen=5),
 
-r = Parsers.parse(Parsers.Quoted(), IOBuffer(""), Int)
-@test r.result === missing
-@test r.code === INVALID | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(), IOBuffer("\"\""), Int)
-@test r.result === missing
-@test r.code === INVALID | QUOTED | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(), IOBuffer("1"), Int)
-@test r.result === 1
-@test r.code === OK | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(), IOBuffer("\"1\""), Int)
-@test r.result === 1
-@test r.code === OK | QUOTED | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(), IOBuffer("\"1a\""), Int)
-@test r.result === 1
-@test r.code === INVALID | QUOTED | EOF | OK
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(), IOBuffer("\"1abc\""), Int)
-@test r.result === 1
-@test r.code === INVALID | QUOTED | EOF | OK
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(), IOBuffer("1a"), Int)
-@test r.result === 1
-@test r.code === OK
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(), IOBuffer("1"), Int)
-@test r.result === 1
-@test r.code === OK | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(), IOBuffer("\"1"), Int)
-@test r.result == 1
-@test r.code === INVALID_QUOTED_FIELD | QUOTED | EOF | OK
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(), IOBuffer("\"1a"), Int)
-@test r.result == 1
-@test r.code === INVALID_QUOTED_FIELD | QUOTED | EOF | OK
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(), IOBuffer("\"1abc"), Int)
-@test r.result == 1
-@test r.code === INVALID_QUOTED_FIELD | QUOTED | EOF | OK
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(), IOBuffer("\"1\\"), Int)
-@test r.result == 1
-@test r.code === INVALID_QUOTED_FIELD | QUOTED | EOF | OK
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(), IOBuffer("\"1\\\""), Int)
-@test r.result == 1
-@test r.code === INVALID_QUOTED_FIELD | QUOTED | EOF | OK
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(), IOBuffer("\"1\\\"\""), Int)
-@test r.result == 1
-@test r.code === INVALID | QUOTED | EOF | OK
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted('"', '"'), IOBuffer("\"1ab\"\"c\""), Int)
-@test r.result === 1
-@test r.code === INVALID | QUOTED | EOF | OK
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted('"', '"'), IOBuffer("\"1ab\""), Int)
-@test r.result === 1
-@test r.code === INVALID | QUOTED | EOF | OK
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted('"', '"'), IOBuffer("\"1ab\"\""), Int)
-@test r.result === 1
-@test r.code === INVALID_QUOTED_FIELD | QUOTED | EOF | OK
-@test r.pos == 0
+    (str="922337203,", kwargs=(sentinel=["92233"],), x=922337203, code=(OK | DELIMITED), vpos=1, vlen=9, tlen=10),
+    (str="92233,", kwargs=(sentinel=["92233"],), x=92233, code=(SENTINEL | DELIMITED), vpos=1, vlen=5, tlen=6),
+    (str="92233  ", kwargs=(sentinel=["92233"],), x=92233, code=(SENTINEL | EOF), vpos=1, vlen=7, tlen=7),
+    (str="{92233  ,", kwargs=(sentinel=["92233"],), x=92233, code=(SENTINEL | QUOTED | EOF | INVALID_QUOTED_FIELD), vpos=2, vlen=7, tlen=9),
+    (str="{92233} ,", kwargs=(sentinel=["92233"],), x=92233, code=(SENTINEL | QUOTED | DELIMITED), vpos=2, vlen=5, tlen=9),
+    (str=" { 92233 },", kwargs=(sentinel=["92233"],), x=92233, code=(SENTINEL | QUOTED | DELIMITED), vpos=3, vlen=7, tlen=11),
+    (str="922337203685477580", kwargs=(), x=922337203685477580, code=(OK | EOF), vpos=1, vlen=18, tlen=18),
+    (str="9223372036854775808", kwargs=(), x=-9223372036854775808, code=(OVERFLOW | EOF), vpos=1, vlen=19, tlen=19),
+    (str="9223372036854775808a", kwargs=(sentinel=["9223372036854775808a"],), x=-9223372036854775808, code=(SENTINEL | EOF), vpos=1, vlen=20, tlen=20),
+    (str="{9223372036854775808a", kwargs=(sentinel=["9223372036854775808a"],), x=-9223372036854775808, code=(SENTINEL | QUOTED | EOF | INVALID_QUOTED_FIELD), vpos=2, vlen=20, tlen=21),
 
-end # @testset
+    (str="{9223372036854775808", kwargs=(), x=-9223372036854775808, code=(OVERFLOW | EOF | QUOTED | INVALID_QUOTED_FIELD), vpos=2, vlen=19, tlen=20),
+    (str="{9223372036854775807", kwargs=(), x=9223372036854775807, code=(OK | EOF | QUOTED | INVALID_QUOTED_FIELD), vpos=2, vlen=19, tlen=20),
+    (str="{9223372036854775807a", kwargs=(), x=9223372036854775807, code=(OK | EOF | QUOTED | INVALID_QUOTED_FIELD), vpos=2, vlen=19, tlen=21),
+    (str="9223372036854775807a", kwargs=(), x=9223372036854775807, code=(OK | EOF | INVALID_DELIMITER), vpos=1, vlen=20, tlen=20),
+    (str="9223372036854775807,", kwargs=(), x=9223372036854775807, code=(OK | DELIMITED), vpos=1, vlen=19, tlen=20),
+    (str="9223372036854775807", kwargs=(sentinel=["9223372036854775807"],), x=9223372036854775807, code=(SENTINEL | EOF), vpos=1, vlen=19, tlen=19),
+    (str="{9223372036854775807a", kwargs=(sentinel=["9223372036854775807a"],), x=9223372036854775807, code=(SENTINEL | EOF | QUOTED | INVALID_QUOTED_FIELD), vpos=2, vlen=20, tlen=21),
 
-@testset "Parsers.Quoted + Parsers.Sentinel" begin
+    (str="9223372036854775808", kwargs=(sentinel=["92233"],), x=-9223372036854775808, code=(OVERFLOW | EOF), vpos=1, vlen=19, tlen=19),
+    (str="922337203685477580", kwargs=(sentinel=["92233"],), x=922337203685477580, code=(OK | EOF), vpos=1, vlen=18, tlen=18),
+    (str="922337203685477580,", kwargs=(), x=922337203685477580, code=(OK | DELIMITED), vpos=1, vlen=18, tlen=19),
+    (str="922337203685477580,", kwargs=(sentinel=["92233"],), x=922337203685477580, code=(OK | DELIMITED), vpos=1, vlen=18, tlen=19),
+    (str="9223372036854775800000,", kwargs=(sentinel=["92233"],), x=-80, code=(DELIMITED | INVALID_DELIMITER | OVERFLOW), vpos=1, vlen=22, tlen=23),
 
-r = Parsers.parse(Parsers.Quoted(Parsers.Sentinel(["NA"])), IOBuffer(""), Int)
-@test r.result === missing
-@test r.code === INVALID | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(Parsers.Sentinel(["NA"])), IOBuffer("\"\""), Int)
-@test r.result === missing
-@test r.code === INVALID | EOF | QUOTED
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(Parsers.Sentinel(String[])), IOBuffer("\"\""), Int)
-@test r.result === missing
-@test r.code === SENTINEL | EOF | QUOTED
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(Parsers.Sentinel(["NA"])), IOBuffer("NA"), Int)
-@test r.result === missing
-@test r.code === SENTINEL | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(Parsers.Sentinel(["NA"])), IOBuffer("\"NA\""), Int)
-@test r.result === missing
-@test r.code === SENTINEL | EOF | QUOTED
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(Parsers.Sentinel(["NA"])), IOBuffer("\"NA"), Int)
-@test r.result === missing
-@test r.code === INVALID_QUOTED_FIELD | QUOTED | EOF | SENTINEL
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(Parsers.Sentinel(["NA"])), IOBuffer("\"NA2"), Int)
-@test r.result === missing
-@test r.code === INVALID_QUOTED_FIELD | QUOTED | EOF | SENTINEL
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(Parsers.Sentinel(["NA"])), IOBuffer("\"NA2\""), Int)
-@test r.result === missing
-@test r.code === INVALID | QUOTED | EOF | SENTINEL
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(Parsers.Sentinel(["NA"])), IOBuffer("\"+1\""), Int)
-@test r.result === 1
-@test r.code === OK | QUOTED | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(Parsers.Sentinel(["NA"])), IOBuffer("\"+1"), Int)
-@test r.result === 1
-@test r.code === INVALID_QUOTED_FIELD | QUOTED | EOF | OK
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(Parsers.Sentinel(["NA"])), IOBuffer("\"NAabc\""), Int)
-@test r.result === missing
-@test r.code === INVALID | QUOTED | SENTINEL | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(Parsers.Sentinel(["NA"])), IOBuffer("\"NA\\\"abc\""), Int)
-@test r.result === missing
-@test r.code === INVALID | QUOTED | SENTINEL | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(Parsers.Sentinel(String[]), '"', '"'), IOBuffer("\"1ab\"\"c\""), Int)
-@test r.result === 1
-@test r.code === INVALID | QUOTED | OK | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(Parsers.Sentinel(String[]), '"', '"'), IOBuffer("\"1ab\""), Int)
-@test r.result === 1
-@test r.code === INVALID | QUOTED | OK | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Quoted(Parsers.Sentinel(String[]), '"', '"'), IOBuffer("\"1ab\"\""), Int)
-@test r.result === 1
-@test r.code === INVALID_QUOTED_FIELD | QUOTED | OK | EOF
-@test r.pos == 0
+    (str="1;", kwargs=(), x=1, code=(OK | EOF | INVALID_DELIMITER), vpos=1, vlen=2, tlen=2),
+    (str="1;", kwargs=(delim=UInt8(';'),), x=1, code=(OK | DELIMITED), vpos=1, vlen=1, tlen=2),
+    (str="1abc;", kwargs=(delim=UInt8(';'),), x=1, code=(OK | DELIMITED | INVALID_DELIMITER), vpos=1, vlen=4, tlen=5),
+    (str="1\n", kwargs=(), x=1, code=(OK | NEWLINE | EOF), vpos=1, vlen=1, tlen=2),
+    (str="1\r", kwargs=(), x=1, code=(OK | NEWLINE | EOF), vpos=1, vlen=1, tlen=2),
+    (str="1\r\n", kwargs=(), x=1, code=(OK | NEWLINE | EOF), vpos=1, vlen=1, tlen=3),
+    (str="1\n2", kwargs=(), x=1, code=(OK | NEWLINE), vpos=1, vlen=1, tlen=2),
+    (str="1\r2", kwargs=(), x=1, code=(OK | NEWLINE), vpos=1, vlen=1, tlen=2),
+    (str="1\r\n2", kwargs=(), x=1, code=(OK | NEWLINE), vpos=1, vlen=1, tlen=3),
+    (str="1a\n", kwargs=(), x=1, code=(OK | NEWLINE | EOF | INVALID_DELIMITER), vpos=1, vlen=2, tlen=3),
+    (str="1a\r", kwargs=(), x=1, code=(OK | NEWLINE | EOF | INVALID_DELIMITER), vpos=1, vlen=2, tlen=3),
+    (str="1a\r\n", kwargs=(), x=1, code=(OK | NEWLINE | EOF | INVALID_DELIMITER), vpos=1, vlen=2, tlen=4),
+    (str="1a\n2", kwargs=(), x=1, code=(OK | NEWLINE | INVALID_DELIMITER), vpos=1, vlen=2, tlen=3),
+    (str="1a\r2", kwargs=(), x=1, code=(OK | NEWLINE | INVALID_DELIMITER), vpos=1, vlen=2, tlen=3),
+    (str="1a\r\n2", kwargs=(), x=1, code=(OK | NEWLINE | INVALID_DELIMITER), vpos=1, vlen=2, tlen=4),
 
-r = Parsers.parse(Parsers.Quoted('"', '"'), IOBuffer("\"1\"\"abc,"), Int)
-@test r.result === 1
-@test r.code === OK | QUOTED | EOF | INVALID_QUOTED_FIELD
-@test r.pos == 0
+    (str="1,,,2,null,4", kwargs=(), x=1, code=(OK | DELIMITED), vpos=1, vlen=1, tlen=2),
+    (str="1,,,2,null,4", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED), vpos=1, vlen=1, tlen=4),
+    (str="1,", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED), vpos=1, vlen=1, tlen=2),
+    (str="1,,", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED), vpos=1, vlen=1, tlen=3),
+    (str="1,,,", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED), vpos=1, vlen=1, tlen=4),
+    (str="1::2", kwargs=(delim="::",), x=1, code=(OK | DELIMITED), vpos=1, vlen=1, tlen=3),
+    (str="1::::2", kwargs=(ignorerepeated=true, delim="::"), x=1, code=(OK | DELIMITED), vpos=1, vlen=1, tlen=5),
+    (str="1a::::2", kwargs=(ignorerepeated=true, delim="::"), x=1, code=(OK | DELIMITED | INVALID_DELIMITER), vpos=1, vlen=2, tlen=6),
+    (str="1[][]", kwargs=(delim="[]", ignorerepeated = true), x = 1, code=(OK | DELIMITED), vpos=1, vlen=1, tlen=5),
+    (str="1a[][]", kwargs=(delim="[]", ignorerepeated = true), x = 1, code=(OK | DELIMITED | INVALID_DELIMITER), vpos=1, vlen=2, tlen=6),
+    (str="1a[][]", kwargs=(delim="[]",), x = 1, code=(OK | DELIMITED | INVALID_DELIMITER), vpos=1, vlen=2, tlen=4),
+    # ignorerepeated
+    (str="1a,,", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED | INVALID_DELIMITER), vpos=1, vlen=2, tlen=4),
+    (str="1a,,2", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED | INVALID_DELIMITER), vpos=1, vlen=2, tlen=4),
+];
 
-end # @testset
-
-@testset "Parsers.Delimited" begin
-
-r = Parsers.parse(Parsers.Delimited(), IOBuffer(""), Int)
-@test r.result === missing
-@test r.code === INVALID | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(), IOBuffer("1"), Int)
-@test r.result === 1
-@test r.code === OK | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(), IOBuffer("1,"), Int)
-@test r.result === 1
-@test r.code === OK | DELIMITED | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(), IOBuffer("1;"), Int)
-@test r.result === 1
-@test r.code === INVALID | EOF | OK | INVALID_DELIMITER
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(','; newline=true), IOBuffer("1\n"), Int)
-@test r.result === 1
-@test r.code === OK | EOF | NEWLINE
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(','; newline=true), IOBuffer("1abc\n"), Int)
-@test r.result === 1
-@test r.code === INVALID | OK | NEWLINE | EOF | INVALID_DELIMITER
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(','; newline=true), IOBuffer("1abc"), Int)
-@test r.result === 1
-@test r.code === INVALID | OK | EOF | INVALID_DELIMITER
-@test r.pos == 0
-
-r = Parsers.parse(Parsers.Delimited(','; newline=true), IOBuffer("1\r2"), Int)
-@test r.result === 1
-@test r.code === OK | NEWLINE
-@test r.pos == 0
-
-end # @testset
-
-@testset "Parsers.Delimited + Parsers.Sentinel" begin
-
-r = Parsers.parse(Parsers.Delimited(Parsers.Sentinel(["NA"])), IOBuffer("NA"), Int)
-@test r.result === missing
-@test r.code === EOF | SENTINEL
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Sentinel(["\\N"])), IOBuffer("\\N"), Int)
-@test r.result === missing
-@test r.code === EOF | SENTINEL
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Sentinel(["NA"])), IOBuffer("NA2"), Int)
-@test r.result === missing
-@test r.code === INVALID | SENTINEL | EOF | INVALID_DELIMITER
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Sentinel(["-", "NA", "\\N"])), IOBuffer("-"), Int)
-@test r.result === missing
-@test r.code === EOF | SENTINEL
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Sentinel(["£"])), IOBuffer("£"), Int)
-@test r.result === missing
-@test r.code === EOF | SENTINEL
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Sentinel(["NA"])), IOBuffer("null"), Int)
-@test r.result === missing
-@test r.code === EOF | INVALID_DELIMITER
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Sentinel(String[])), IOBuffer("null"), Int)
-@test r.result === missing
-@test r.code === SENTINEL | EOF | INVALID_DELIMITER
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Sentinel(String[])), IOBuffer(""), Int)
-@test r.result === missing
-@test r.code === SENTINEL | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Sentinel(String["NA"])), IOBuffer(""), Int)
-@test r.result === missing
-@test r.code === INVALID | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Sentinel(String[])), IOBuffer(","), Int)
-@test r.result === missing
-@test r.code === SENTINEL | EOF | DELIMITED
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Sentinel(String[])), IOBuffer("1,"), Int)
-@test r.result === 1
-@test r.code === OK | DELIMITED | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Sentinel(String[])), IOBuffer("1abc,"), Int)
-@test r.result === 1
-@test r.code === OK | EOF | INVALID_DELIMITER | DELIMITED
-@test r.pos == 0
-
-end # @testset
-
-@testset "Parsers.Delimited + Parsers.Quoted" begin
-
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted()), IOBuffer(""), Int)
-@test r.result === missing
-@test r.code === INVALID | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted()), IOBuffer("\"\""), Int)
-@test r.result === missing
-@test r.code === INVALID | QUOTED | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted()), IOBuffer("1"), Int)
-@test r.result === 1
-@test r.code === OK | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted()), IOBuffer("\"1\""), Int)
-@test r.result === 1
-@test r.code === OK | QUOTED | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted()), IOBuffer("\"1a\""), Int)
-@test r.result === 1
-@test r.code === INVALID | OK | QUOTED | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted()), IOBuffer("\"1abc\""), Int)
-@test r.result === 1
-@test r.code === INVALID | OK | QUOTED | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted()), IOBuffer("1a"), Int)
-@test r.result === 1
-@test r.code === INVALID | OK | EOF | INVALID_DELIMITER
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted()), IOBuffer("1"), Int)
-@test r.result === 1
-@test r.code === OK | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted()), IOBuffer("\"1"), Int)
-@test r.result == 1
-@test r.code === OK | EOF | QUOTED | INVALID_QUOTED_FIELD
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted()), IOBuffer("\"1a"), Int)
-@test r.result == 1
-@test r.code === OK | EOF | QUOTED | INVALID_QUOTED_FIELD
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted()), IOBuffer("\"1abc"), Int)
-@test r.result == 1
-@test r.code === OK | EOF | QUOTED | INVALID_QUOTED_FIELD
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted()), IOBuffer("\"1\\"), Int)
-@test r.result == 1
-@test r.code === OK | EOF | QUOTED | INVALID_QUOTED_FIELD
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted()), IOBuffer("\"1\\\""), Int)
-@test r.result == 1
-@test r.code === OK | EOF | QUOTED | INVALID_QUOTED_FIELD
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted()), IOBuffer("\"1\\\"\""), Int)
-@test r.result == 1
-@test r.code === QUOTED | OK | EOF | INVALID
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted()), IOBuffer("\"1\"abc,"), Int)
-@test r.result === 1
-@test r.code === QUOTED | OK | INVALID | DELIMITED | EOF | INVALID_DELIMITER
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted('"', '"')), IOBuffer("\"1ab\"\"c\""), Int)
-@test r.result === 1
-@test r.code === QUOTED | OK | INVALID | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted('"', '"')), IOBuffer("\"1ab\""), Int)
-@test r.result === 1
-@test r.code === QUOTED | OK | INVALID | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted('"', '"')), IOBuffer("\"1ab\"\""), Int)
-@test r.result === 1
-@test r.code === OK | EOF | QUOTED | INVALID_QUOTED_FIELD
-@test r.pos == 0
-
-end # @testset
-
-@testset "Parsers.Delimited + Parsers.Quoted + Parsers.Sentinel" begin
-
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["NA"]))), IOBuffer(""), Int)
-@test r.result === missing
-@test r.code === INVALID | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["NA"]))), IOBuffer("\"\""), Int)
-@test r.result === missing
-@test r.code === INVALID | EOF | QUOTED
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(String[]))), IOBuffer("\"\""), Int)
-@test r.result === missing
-@test r.code === SENTINEL | EOF | QUOTED
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["NA"]))), IOBuffer("NA"), Int)
-@test r.result === missing
-@test r.code === SENTINEL | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["NA"]))), IOBuffer("\"NA\""), Int)
-@test r.result === missing
-@test r.code === SENTINEL | QUOTED | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["NA"]))), IOBuffer("\"NA"), Int)
-@test r.result === missing
-@test r.code === QUOTED | SENTINEL | INVALID_QUOTED_FIELD | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["NA"]))), IOBuffer("\"NA2"), Int)
-@test r.result === missing
-@test r.code === QUOTED | SENTINEL | INVALID_QUOTED_FIELD | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["NA"]))), IOBuffer("\"NA2\""), Int)
-@test r.result === missing
-@test r.code === QUOTED | SENTINEL | INVALID | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["NA"]))), IOBuffer("\"+1\""), Int)
-@test r.result === 1
-@test r.code === OK | QUOTED | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["NA"]))), IOBuffer("\"+1"), Int)
-@test r.result === 1
-@test r.code === QUOTED | OK | EOF | INVALID_QUOTED_FIELD
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["NA"]))), IOBuffer("\"NAabc\""), Int)
-@test r.result === missing
-@test r.code === QUOTED | SENTINEL | INVALID | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["NA"]))), IOBuffer("\"NA\\\"abc\""), Int)
-@test r.result === missing
-@test r.code === QUOTED | SENTINEL | INVALID | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(String[]), '"', '"')), IOBuffer("\"1ab\"\"c\""), Int)
-@test r.result === 1
-@test r.code === QUOTED | OK | INVALID | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(String[]), '"', '"')), IOBuffer("\"1ab\""), Int)
-@test r.result === 1
-@test r.code === QUOTED | OK | INVALID | EOF
-@test r.pos == 0
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(String[]), '"', '"')), IOBuffer("\"1ab\"\""), Int)
-@test r.result === 1
-@test r.code === QUOTED | OK | INVALID_QUOTED_FIELD | EOF
-@test r.pos == 0
-
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["NA"]))), IOBuffer("\"quoted field 1\","), Int)
-@test r.result === missing
-@test r.code === QUOTED | INVALID | DELIMITED | EOF
-@test r.pos == 0
-
-end # @testset
-
-@testset "Parsers.Strip" begin
-
-r = Parsers.parse(Parsers.Strip(), IOBuffer("      64.348\t  "), Float64)
-@test r.result === 64.348
-@test r.code === OK | EOF
-@test r.pos == 0
-
-end
-
-include("strings.jl")
-include("floats.jl")
-include("dates.jl")
-include("bools.jl")
-
-@testset "ignore repeated delimiters" begin
-
-let io=IOBuffer("1,,,2,null,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"])); ignorerepeated=true)
-    r = Parsers.parse(layers, io, Int)
-    @test r.result === 1
-    @test r.code === OK | DELIMITED
-    @test r.pos == 0
-    r = Parsers.parse(layers, io, Int)
-    @test r.result === 2
-    @test r.code === OK | DELIMITED
-    @test r.pos == 4
-    r = Parsers.parse(layers, io, Int)
-    @test r.result === missing
-    @test r.code === SENTINEL | DELIMITED
-    @test r.pos == 6
-    r = Parsers.parse(layers, io, Int)
-    @test r.result === 4
-    @test r.code === OK | EOF
-    @test r.pos == 11
-end
-
-let io=IOBuffer("1,,,2,null,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"])); ignorerepeated=true)
-    r = Parsers.parse(layers, io, String)
-    @test r.result === "1"
-    @test r.code === OK | DELIMITED
-    @test r.pos == 0
-    r = Parsers.parse(layers, io, String)
-    @test r.result === "2"
-    @test r.code === OK | DELIMITED
-    @test r.pos == 4
-    r = Parsers.parse(layers, io, String)
-    @test r.result === missing
-    @test r.code === SENTINEL | DELIMITED
-    @test r.pos == 6
-    r = Parsers.parse(layers, io, String)
-    @test r.result === "4"
-    @test r.code === OK | EOF
-    @test r.pos == 11
-end
-
-end
-
-@testset "ignore quoted whitespace" begin
-
-r = Parsers.parse(Parsers.Quoted('"', '"', true), IOBuffer(" \"1\""), Int)
-@test r.result === 1
-@test r.code === QUOTED | OK | EOF
-
-r = Parsers.parse(Parsers.Quoted('"', '"', true), IOBuffer(" \t \"1\"\t "), Int)
-@test r.result === 1
-@test r.code === QUOTED | OK
-
-r = Parsers.parse(Parsers.Quoted('"', '"', true), IOBuffer(" \"1\""), String)
-@test r.result === "1"
-@test r.code === QUOTED | OK | EOF
-
-r = Parsers.parse(Parsers.Quoted('"', '"', true), IOBuffer(" \t \"1\"\t "), String)
-@test r.result === "1"
-@test r.code === QUOTED | OK | EOF
-
-let io=IOBuffer("1, \"2\"\t, \"null\"  ,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"]), '"', '"', true))
-    r = Parsers.parse(layers, io, Int)
-    @test r.result === 1
-    @test r.code === OK | DELIMITED
-    r = Parsers.parse(layers, io, Int)
-    @test r.result === 2
-    @test r.code === OK | QUOTED | DELIMITED
-    r = Parsers.parse(layers, io, Int)
-    @test r.result === missing
-    @test r.code === SENTINEL | QUOTED | DELIMITED
-    r = Parsers.parse(layers, io, Int)
-    @test r.result === 4
-    @test r.code === OK | EOF
-end
-
-let io=IOBuffer("1, \"2\"\t, \"null\"  ,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"]), '"', '"', true))
-    r = Parsers.parse(layers, io, String)
-    @test r.result === "1"
-    @test r.code === OK | DELIMITED
-    r = Parsers.parse(layers, io, String)
-    @test r.result === "2"
-    @test r.code === OK | QUOTED | DELIMITED
-    r = Parsers.parse(layers, io, String)
-    @test r.result === missing
-    @test r.code === SENTINEL | QUOTED | DELIMITED
-    r = Parsers.parse(layers, io, String)
-    @test r.result === "4"
-    @test r.code === OK | EOF
-end
-
-end # @testset
-
-# custom parser
-function int2str(io::IO, r::Parsers.Result{Int}, args...)
-    v = 0
-    while !eof(io) && (UInt8('0') <= Parsers.peekbyte(io) <= UInt8('9'))
-        v *= 10
-        v += Int(Parsers.readbyte(io) - UInt8('0'))
+for useio in (false, true)
+    for (oq, cq, e) in ((UInt8('"'), UInt8('"'), UInt8('"')), (UInt8('"'), UInt8('"'), UInt8('\\')), (UInt8('{'), UInt8('}'), UInt8('\\')))
+        for (i, case) in enumerate(testcases)
+            str = replace(replace(replace(case.str, '{'=>Char(oq)), '}'=>Char(cq)), '\\'=>Char(e))
+            source = useio ? IOBuffer(str) : str
+            x, code, vpos, vlen, tlen = Parsers.xparse(Int64, source; openquotechar=oq, closequotechar=cq, escapechar=e, case.kwargs...)
+            if x != case.x || code != case.code || vpos != case.vpos || vlen != case.vlen || tlen != case.tlen
+                println("ERROR on useio=$useio, case=$i, oq='$(Char(oq))', cq='$(Char(cq))', e='$(Char(e))', str=$(escape_string(str)), $case")
+                source = useio ? IOBuffer(str) : str
+                x, code, vpos, vlen, tlen = Parsers.xparse(Int64, source; debug=true, openquotechar=oq, closequotechar=cq, escapechar=e, case.kwargs...)
+            end
+            @test x == case.x
+            @test code == case.code
+            @test vpos == case.vpos
+            @test vlen == case.vlen
+            @test tlen == case.tlen
+        end
     end
-    r.result = v
-    r.code = OK
-    return r
 end
 
-@testset "Misc" begin
+# strings
+oq = UInt8('{')
+cq = UInt8('}')
+e = UInt8('\\')
+for (i, case) in enumerate(testcases)
+    str = replace(replace(replace(case.str, '{'=>Char(oq)), '}'=>Char(cq)), '\\'=>Char(e))
+    x, code, vpos, vlen, tlen = Parsers.xparse(String, case.str; openquotechar=oq, closequotechar=cq, escapechar=e, case.kwargs...)
+    if vpos != case.vpos || vlen != case.vlen || tlen != case.tlen
+        println("ERROR on case=$i, oq='$(Char(oq))', cq='$(Char(cq))', e='$(Char(e))', str=$(escape_string(str)), $case")
+        x, code, vpos, vlen, tlen = Parsers.xparse(String, case.str; debug=true, openquotechar=oq, closequotechar=cq, escapechar=e, case.kwargs...)
+    end
+    if !Parsers.invalidquotedfield(code)
+        @test vpos == case.vpos
+        @test vlen == case.vlen
+        @test tlen == case.tlen
+    end
+end
+
+end # @testset "Core Parsers.xparse"
+
+@testset "ints" begin
+
+# test lots of ints
+@time for i in typemin(Int64):100_000_000_000_000:typemax(Int64)
+    str = string(i)
+    x, code, vpos, vlen, tlen = Parsers.xparse(Int64, str)
+    @test string(x) == str
+    @test code == OK | EOF
+    @test vlen == length(str)
+end
+
+end # @testset "ints"
+
+@testset "bools" begin
+
+trues1 = ["T"]
+falses1 = ["F"]
+trues2 = ["truthy"]
+falses2 = ["falsy"]
+
+testcases = [
+    (str="", kwargs=(), x=false, code=(INVALID | EOF), vpos=1, vlen=0),
+    (str="t", kwargs=(), x=false, code=(INVALID | EOF), vpos=1, vlen=1),
+    (str="tr", kwargs=(), x=false, code=(INVALID | EOF), vpos=1, vlen=2),
+    (str="tru", kwargs=(), x=false, code=(INVALID | EOF), vpos=1, vlen=3),
+    (str="true", kwargs=(), x=true, code=(OK | EOF), vpos=1, vlen=4),
+
+    (str="f", kwargs=(), x=false, code=(INVALID | EOF), vpos=1, vlen=1),
+    (str="fa", kwargs=(), x=false, code=(INVALID | EOF), vpos=1, vlen=2),
+    (str="fal", kwargs=(), x=false, code=(INVALID | EOF), vpos=1, vlen=3),
+    (str="fals", kwargs=(), x=false, code=(INVALID | EOF), vpos=1, vlen=4),
+    (str="false", kwargs=(), x=false, code=(OK | EOF), vpos=1, vlen=5),
+
+    (str="t,", kwargs=(), x=false, code=(INVALID | DELIMITED), vpos=1, vlen=1),
+    (str="tr,", kwargs=(), x=false, code=(INVALID | DELIMITED), vpos=1, vlen=2),
+    (str="tru,", kwargs=(), x=false, code=(INVALID | DELIMITED), vpos=1, vlen=3),
+    (str="true,", kwargs=(), x=true, code=(OK | DELIMITED), vpos=1, vlen=4),
+
+    (str="f,", kwargs=(), x=false, code=(INVALID | DELIMITED), vpos=1, vlen=1),
+    (str="fa,", kwargs=(), x=false, code=(INVALID | DELIMITED), vpos=1, vlen=2),
+    (str="fal,", kwargs=(), x=false, code=(INVALID | DELIMITED), vpos=1, vlen=3),
+    (str="fals,", kwargs=(), x=false, code=(INVALID | DELIMITED), vpos=1, vlen=4),
+    (str="false,", kwargs=(), x=false, code=(OK | DELIMITED), vpos=1, vlen=5),
+
+    (str="0", kwargs=(), x=false, code=(OK | EOF), vpos=1, vlen=1),
+    (str="1", kwargs=(), x=true, code=(OK | EOF), vpos=1, vlen=1),
+    (str="001", kwargs=(), x=true, code=(OK | EOF), vpos=1, vlen=3),
+    (str="2", kwargs=(), x=false, code=(INVALID | EOF | INVALID_DELIMITER), vpos=1, vlen=1),
+
+    (str="t", kwargs=(trues=trues1, falses=falses1,), x=false, code=(INVALID | EOF | INVALID_DELIMITER), vpos=1, vlen=1),
+    (str="T", kwargs=(trues=trues1, falses=falses1,), x=true, code=(OK | EOF), vpos=1, vlen=1),
+    (str="T,", kwargs=(trues=trues1, falses=falses1,), x=true, code=(OK | DELIMITED), vpos=1, vlen=1),
+    (str="Tr", kwargs=(trues=trues1, falses=falses1,), x=true, code=(OK | EOF | INVALID_DELIMITER), vpos=1, vlen=2),
+    (str="F", kwargs=(trues=trues1, falses=falses1,), x=false, code=(OK | EOF), vpos=1, vlen=1),
+    (str="truthy", kwargs=(trues=trues2, falses=falses2,), x=true, code=(OK | EOF), vpos=1, vlen=6),
+    (str="truthyfalsy", kwargs=(trues=trues2, falses=falses2,), x=true, code=(OK | EOF | INVALID_DELIMITER), vpos=1, vlen=11),
+    (str="falsytruthy", kwargs=(trues=trues2, falses=falses2,), x=false, code=(OK | EOF | INVALID_DELIMITER), vpos=1, vlen=11),
+];
+
+for useio in (false, true)
+    for (i, case) in enumerate(testcases)
+        x, code, vpos, vlen, tot = Parsers.xparse(Bool, useio ? IOBuffer(case.str) : case.str; case.kwargs...)
+        if x != case.x || code != case.code || vlen != case.vlen
+            println("error for case = $i: useio=$useio, $case")
+            println(Parsers.codes(code))
+        end
+        @test x == case.x
+        @test code == case.code
+        @test vlen == case.vlen
+    end
+end
+
+end # @testset "bools"
+
+@testset "misc" begin
+
+# additional tests for full xparse branch coverage
+oq = UInt8('{')
+cq = UInt8('}')
+e = UInt8('\\')
+str=" {\\"
+x, code, vpos, vlen, tlen = Parsers.xparse(Int64, str; openquotechar=oq, closequotechar=cq, escapechar=e)
+@test x == 0
+@test code == QUOTED | EOF | INVALID_QUOTED_FIELD
+@test tlen == 3
 
 @test Parsers.parse(Int, "101") === 101
 @test Parsers.parse(Float64, "101,101"; decimal=',') === 101.101
-@test Parsers.parse(IOBuffer("true"), Bool) === true
+@test Parsers.parse(Bool, IOBuffer("true")) === true
 @test_throws Parsers.Error Parsers.parse(Int, "abc")
 
 @test Parsers.tryparse(Int, "abc") === nothing
-@test Parsers.tryparse(IOBuffer("101,101"), Float32; decimal=',') === Float32(101.101)
-
-@test Parsers.parse(int2str, Int, "101") === 101
-@test Parsers.parse(int2str, IOBuffer("101"), Int) === 101
-@test Parsers.tryparse(int2str, Int, "101") === 101
-@test Parsers.tryparse(int2str, IOBuffer("101"), Int) === 101
-
+@test Parsers.tryparse(Float32, IOBuffer("101,101"); decimal=',') === Float32(101.101)
 @test Parsers.parse(Date, "01/20/2018"; dateformat="mm/dd/yyyy") === Date(2018, 1, 20)
 
-@test_throws Parsers.Error Parsers.parse(Missing, "")
-@test Parsers.tryparse(Missing, "") === nothing
-
-r = Parsers.parse(Parsers.Quoted('{', '}', '\\'), IOBuffer("{1}"), Int)
-@test r.result === 1
-@test r.code === OK | QUOTED | EOF
-@test r.pos == 0
-
-let io=IOBuffer("1,2,null,4"), layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"])))
-    r = Parsers.parse(layers, io, Int)
-    @test r.result === 1
-    @test r.code === OK | DELIMITED
-    @test r.pos == 0
-    r = Parsers.parse(layers, io, Int)
-    @test r.result === 2
-    @test r.code === OK | DELIMITED
-    @test r.pos == 2
-    r = Parsers.parse(layers, io, Int)
-    @test r.result === missing
-    @test r.code === SENTINEL | DELIMITED
-    @test r.pos == 4
-    r = Parsers.parse(layers, io, Int)
-    @test r.result === 4
-    @test r.code === OK | EOF
-    @test r.pos == 9
-end
-
 # https://github.com/JuliaData/CSV.jl/issues/345
-open("temp", "w+") do io
-    write(io, "\"DALLAS BLACK DANCE THEATRE\",")
-end
-
-let layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"])))
-    open("temp") do io
-        r = Parsers.parse(layers, io, String)
-        @test r.result == "DALLAS BLACK DANCE THEATRE"
-        @test r.code === OK | QUOTED | DELIMITED | EOF
-    end
-end
-rm("temp")
+x, code, vpos, vlen, tlen = Parsers.xparse(String, "\"DALLAS BLACK DANCE THEATRE\",")
+@test vpos == 2
+@test vlen == 26
+@test tlen == 29
+@test code == OK | QUOTED | DELIMITED
 
 # https://github.com/JuliaData/CSV.jl/issues/344
-open("temp", "w+") do io
-    write(io, "1,2,null,4")
-end
+str = "1,2,null,4"
+pos = 1
+x, code, vpos, vlen, tlen = Parsers.xparse(Int, str; pos=pos, sentinel=["null"])
+pos += tlen
+@test x === 1
+@test code === OK | DELIMITED
+@test vpos == 1
+@test vlen == 1
+@test pos == 3
+x, code, vpos, vlen, tlen = Parsers.xparse(Int, str; pos=pos, sentinel=["null"])
+pos += tlen
+@test x === 2
+@test code === OK | DELIMITED
+@test vpos == 3
+@test vlen == 1
+@test pos == 5
+x, code, vpos, vlen, tlen = Parsers.xparse(Int, str; pos=pos, sentinel=["null"])
+pos += tlen
+@test x == 0
+@test code === SENTINEL | DELIMITED
+@test vpos == 5
+@test vlen == 4
+@test pos == 10
+x, code, vpos, vlen, tlen = Parsers.xparse(Int, str; pos=pos, sentinel=["null"])
+pos += tlen
+@test x === 4
+@test code === OK | EOF
+@test vpos == 10
+@test vlen == 1
+@test pos == 11
 
-let layers=Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["null"])))
-    open("temp") do io
-        r = Parsers.parse(layers, io, Int)
-        @test r.result === 1
-        @test r.code === OK | DELIMITED
-        @test r.pos == 0
-        r = Parsers.parse(layers, io, Int)
-        @test r.result === 2
-        @test r.code === OK | DELIMITED
-        @test r.pos == 2
-        r = Parsers.parse(layers, io, Int)
-        @test r.result === missing
-        @test r.code === SENTINEL | DELIMITED
-        @test r.pos == 4
-        r = Parsers.parse(layers, io, Int)
-        @test r.result === 4
-        @test r.code === OK | EOF
-        @test r.pos == 9
-    end
-end
-rm("temp")
-
-# 6: AbstractString input
 @test Parsers.parse(Int, SubString("101")) === 101
 @test Parsers.parse(Float64, SubString("101,101"); decimal=',') === 101.101
-@test Parsers.parse(IOBuffer("true"), Bool) === true
-@test_throws Parsers.Error Parsers.parse(Int, "abc")
 
-@test Parsers.tryparse(Int, "abc") === nothing
-@test Parsers.tryparse(IOBuffer(SubString("101,101")), Float32; decimal=',') === Float32(101.101)
+end # @testset "misc"
 
-@test Parsers.parse(int2str, Int, SubString("101")) === 101
-@test Parsers.parse(int2str, IOBuffer(SubString("101")), Int) === 101
-@test Parsers.tryparse(int2str, Int, SubString("101")) === 101
-@test Parsers.tryparse(int2str, IOBuffer(SubString("101")), Int) === 101
+include("floats.jl")
+include("dates.jl")
 
-# https://github.com/JuliaData/CSV.jl/issues/306
-# ensure sentinels are matched before trying to parse type values
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["1"]))), IOBuffer("1"), Int)
-@test r.result === missing
-@test r.code === SENTINEL | EOF
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["1"]))), IOBuffer("1"), String)
-@test r.result === missing
-@test r.code === SENTINEL | EOF
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["-"]))), IOBuffer("1"), Int)
-@test r.result === 1
-@test r.code === OK | EOF
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["-"]))), IOBuffer("-1"), Int)
-@test r.result === -1
-@test r.code === OK | EOF
-r = Parsers.parse(Parsers.Delimited(Parsers.Quoted(Parsers.Sentinel(["-"]))), IOBuffer("-"), Int)
-@test r.result === missing
-@test r.code === SENTINEL | EOF
-
-end # @testset
-
-@testset "BufferedIO" begin
-
-io = IOBuffer("hey there sally")
-b = Parsers.BufferedIO(io)
-@test !eof(b)
-@test Parsers.peekbyte(b) === UInt8('h')
-@test position(b) == 0
-@test Parsers.readbyte(b) === UInt8('h')
-@test position(b) == 1
-Parsers.fastseek!(b, 4)
-@test Parsers.readbyte(b) === UInt8('t')
-Parsers.fastseek!(b, 2)
-@test Parsers.readbyte(b) === UInt8('y')
-
-open("test", "w+") do io
-    write(io, "hey there sally")
-end
-
-b = Parsers.BufferedIO(open("test"))
-@test !eof(b)
-@test Parsers.peekbyte(b) === UInt8('h')
-@test position(b) == 0
-@test Parsers.readbyte(b) === UInt8('h')
-@test position(b) == 1
-Parsers.fastseek!(b, 4)
-@test Parsers.readbyte(b) === UInt8('t')
-Parsers.fastseek!(b, 2)
-@test Parsers.readbyte(b) === UInt8('y')
-close(b.io)
-rm("test")
-
-end
-
-@testset "deprecations" begin
-
-@test Parsers.parse("101", Int) === 101
-@test Parsers.tryparse("101", Int) === 101
-@test Parsers.parse(int2str, "101", Int) === 101
-@test Parsers.tryparse(int2str, "101", Int) === 101
-
-end
-
-end # @testset
+end # @testset "Parsers"
