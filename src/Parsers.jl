@@ -48,25 +48,25 @@ const XOPTIONS = Options(missing, UInt8(' '), UInt8('\t'), UInt8('"'), UInt8('"'
 
 # high-level convenience functions like in Base
 "Attempt to parse a value of type `T` from string `str`. Throws `Parsers.Error` on parser failures and invalid values."
-function parse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Int=1, len::Int=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=false, openquotechar::Union{UInt8, Char}=UInt8('"'), closequotechar::Union{UInt8, Char}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, delim::Union{UInt8, Char, Tuple{Ptr{UInt8}, Int}, AbstractString, Nothing}=nothing, decimal::Union{UInt8, Char}=UInt8('.'), trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, debug::Bool=false) where {T}
+function parse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Int64=1, len::Int64=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=false, openquotechar::Union{UInt8, Char}=UInt8('"'), closequotechar::Union{UInt8, Char}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, delim::Union{UInt8, Char, Tuple{Ptr{UInt8}, Int}, AbstractString, Nothing}=nothing, decimal::Union{UInt8, Char}=UInt8('.'), trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, debug::Bool=false) where {T}
     options = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, quoted, debug)
     x, code, vpos, vlen, tlen = xparse(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
     return ok(code) ? x : throw(Error(buf, T, code, pos, tlen))
 end
 
-function parse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, pos::Int, len::Int, options::Options=OPTIONS) where {T}
+function parse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, pos::Int64, len::Int64, options::Options=OPTIONS) where {T}
     x, code, vpos, vlen, tlen = xparse(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
     return ok(code) ? x : throw(Error(buf, T, code, pos, tlen))
 end
 
 "Attempt to parse a value of type `T` from `IO` `io`. Returns `nothing` on parser failures and invalid values."
-function tryparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Int=1, len::Int=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=false, openquotechar::Union{UInt8, Char}=UInt8('"'), closequotechar::Union{UInt8, Char}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, delim::Union{UInt8, Char, Tuple{Ptr{UInt8}, Int}, AbstractString, Nothing}=nothing, decimal::Union{UInt8, Char}=UInt8('.'), trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, debug::Bool=false) where {T}
+function tryparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Int64=1, len::Int64=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=false, openquotechar::Union{UInt8, Char}=UInt8('"'), closequotechar::Union{UInt8, Char}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, delim::Union{UInt8, Char, Tuple{Ptr{UInt8}, Int}, AbstractString, Nothing}=nothing, decimal::Union{UInt8, Char}=UInt8('.'), trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, debug::Bool=false) where {T}
     options = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, quoted, debug)
     x, code, vpos, vlen, tlen = xparse(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
     return ok(code) ? x : nothing
 end
 
-function tryparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, pos::Int, len::Int, options::Options=OPTIONS) where {T}
+function tryparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, pos::Int64, len::Int64, options::Options=OPTIONS) where {T}
     x, code, vpos, vlen, tlen = xparse(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
     return ok(code) ? x : nothing
 end
@@ -75,7 +75,7 @@ default(::Type{T}) where {T <: Integer} = zero(T)
 default(::Type{T}) where {T <: AbstractFloat} = T(0.0)
 default(::Type{T}) where {T <: Dates.TimeType} = T(0)
 
-function xparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Int=1, len::Int=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=true, openquotechar::Union{UInt8, Char}=UInt8('"'), closequotechar::Union{UInt8, Char}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, delim::Union{UInt8, Char, Tuple{Ptr{UInt8}, Int}, AbstractString, Nothing}=UInt8(','), decimal::Union{UInt8, Char}=UInt8('.'), trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, debug::Bool=false) where {T}
+function xparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Int64=1, len::Int64=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=true, openquotechar::Union{UInt8, Char}=UInt8('"'), closequotechar::Union{UInt8, Char}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, delim::Union{UInt8, Char, Tuple{Ptr{UInt8}, Int}, AbstractString, Nothing}=UInt8(','), decimal::Union{UInt8, Char}=UInt8('.'), trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, debug::Bool=false) where {T}
     options = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, quoted, debug)
     return xparse(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
 end
