@@ -201,8 +201,8 @@ function peekbyte(from::AbstractVector{UInt8}, pos)
     return b
 end
 
-eof(source::AbstractVector{UInt8}, pos::Int, len::Int) = pos > len
-eof(source::IO, pos::Int, len::Int) = Base.eof(source)
+eof(source::AbstractVector{UInt8}, pos::Integer, len::Integer) = pos > len
+eof(source::IO, pos::Integer, len::Integer) = Base.eof(source)
 
 function text(r)
     str = ""
