@@ -1,3 +1,270 @@
+wider(::Type{Int64}) = Int128
+wider(::Type{Int128}) = BigInt
+
+function typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, Q, debug, S, D, DF}, ::Type{IntType}=Int64) where {T <: AbstractFloat, ignorerepeated, Q, debug, S, D, DF, IntType}
+    startpos = pos
+    origb = b
+    x = zero(T)
+    digits = zero(IntType)
+    if debug
+        println("float parsing")
+    end
+    neg = b == UInt8('-')
+    if neg || b == UInt8('+')
+        pos += 1
+        incr!(source)
+    end
+    if eof(source, pos, len)
+        code |= INVALID | EOF
+        @goto done
+    end
+    if b == options.decimal
+        @goto decimalcheck
+    end
+    b = peekbyte(source, pos) - UInt8('0')
+    if debug
+        println("float 1) $(b + UInt8('0'))")
+    end
+    if b > 0x09
+        # character isn't a digit, check for special values, otherwise INVALID
+        b += UInt8('0')
+        if b == UInt8('n') || b == UInt8('N')
+            pos += 1
+            incr!(source)
+            if eof(source, pos, len)
+                code |= EOF
+                @goto invalid
+            end
+            b = peekbyte(source, pos)
+            if b == UInt8('a') || b == UInt8('A')
+                pos += 1
+                incr!(source)
+                if eof(source, pos, len)
+                    code |= EOF
+                    @goto invalid
+                end
+                b = peekbyte(source, pos)
+                if b == UInt8('n') || b == UInt8('N')
+                    x = T(NaN)
+                    pos += 1
+                    incr!(source)
+                    if eof(source, pos, len)
+                        code |= EOF
+                    end
+                    code |= OK
+                    @goto done
+                end
+            end
+        elseif b == UInt8('i') || b == UInt8('I')
+            pos += 1
+            incr!(source)
+            if eof(source, pos, len)
+                code |= EOF
+                @goto invalid
+            end
+            b = peekbyte(source, pos)
+            if b == UInt8('n') || b == UInt8('N')
+                pos += 1
+                incr!(source)
+                if eof(source, pos, len)
+                    code |= EOF
+                    @goto invalid
+                end
+                b = peekbyte(source, pos)
+                if b == UInt8('f') || b == UInt8('F')
+                    x = ifelse(neg, T(-Inf), T(Inf))
+                    code |= OK
+                    pos += 1
+                    incr!(source)
+                    if eof(source, pos, len)
+                        code |= EOF
+                        @goto done
+                    end
+                    b = peekbyte(source, pos)
+                    if b == UInt8('i') || b == UInt8('I')
+                        pos += 1
+                        incr!(source)
+                        if eof(source, pos, len)
+                            code |= EOF
+                            @goto done
+                        end
+                        b = peekbyte(source, pos)
+                        if b == UInt8('n') || b == UInt8('N')
+                            pos += 1
+                            incr!(source)
+                            if eof(source, pos, len)
+                                code |= EOF
+                                @goto done
+                            end
+                            b = peekbyte(source, pos)
+                            if b == UInt8('i') || b == UInt8('I')
+                                pos += 1
+                                incr!(source)
+                                if eof(source, pos, len)
+                                    code |= EOF
+                                    @goto done
+                                end
+                                b = peekbyte(source, pos)
+                                if b == UInt8('t') || b == UInt8('T')
+                                    pos += 1
+                                    incr!(source)
+                                    if eof(source, pos, len)
+                                        code |= EOF
+                                        @goto done
+                                    end
+                                    b = peekbyte(source, pos)
+                                    if b == UInt8('y') || b == UInt8('Y')
+                                        pos += 1
+                                        incr!(source)
+                                        if eof(source, pos, len)
+                                            code |= EOF
+                                        end
+                                        @goto done
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    @goto done
+                end
+            end
+        else
+        end
+@label invalid
+        fastseek!(source, startpos)
+        code |= INVALID
+        @goto done
+    end
+    while true
+        digits = IntType(10) * digits + b
+        pos += 1
+        incr!(source)
+        if eof(source, pos, len)
+            x = T(ifelse(neg, -digits, digits))
+            code |= OK | EOF
+            @goto done
+        end
+        b = peekbyte(source, pos) - UInt8('0')
+        if debug
+            println("float 2) $(b + UInt8('0'))")
+        end
+        b > 0x09 && break
+        if overflows(IntType) && digits > overflowval(IntType)
+            fastseek!(source, startpos)
+            return typeparser(T, source, startpos, len, origb, code, options, wider(IntType))
+        end
+    end
+    b += UInt8('0')
+    if debug
+        println("float 3) $(Char(b))")
+    end
+@label decimalcheck
+    if b == options.decimal
+        pos += 1
+        incr!(source)
+        if eof(source, pos, len)
+            x = T(ifelse(neg, -digits, digits))
+            code |= OK | EOF
+            @goto done
+        end
+        b = peekbyte(source, pos)
+        if b - UInt8('0') > 0x09
+            x = T(ifelse(neg, -digits, digits))
+            code |= OK
+            @goto done
+        end
+    end
+    frac = 0
+    if debug
+        println("float 4) $(Char(b))")
+    end
+    b -= UInt8('0')
+    if b < 0x0a
+        while true
+            digits = IntType(10) * digits + b
+            pos += 1
+            incr!(source)
+            frac += 1
+            if eof(source, pos, len)
+                x = scale(T, digits, -frac, neg)
+                code |= OK | EOF
+                @goto done
+            end
+            b = peekbyte(source, pos) - UInt8('0')
+            if debug
+                println("float 5) $b")
+            end
+            b > 0x09 && break
+            if overflows(IntType) && digits > overflowval(IntType)
+                fastseek!(source, startpos)
+                return typeparser(T, source, startpos, len, origb, code, options, wider(IntType))
+            end
+        end
+    end
+    b += UInt8('0')
+    if debug
+        println("float 6) $(Char(b))")
+    end
+    # check for exponent notation
+    if b == UInt8('e') || b == UInt8('E') || b == UInt8('f') || b == UInt8('F')
+        pos += 1
+        incr!(source)
+        # error to have a "dangling" 'e'
+        if eof(source, pos, len)
+            code |= INVALID | EOF
+            @goto done
+        end
+        b = peekbyte(source, pos)
+        if debug
+            println("float 7) $(Char(b))")
+        end
+        exp = zero(IntType)
+        negexp = b == UInt8('-')
+        if negexp || b == UInt8('+')
+            pos += 1
+            incr!(source)
+        end
+        b = peekbyte(source, pos) - UInt8('0')
+        if debug
+            println("float 8) $b")
+        end
+        if b > 0x09
+            # invalid to have a "dangling" 'e'
+            code |= INVALID
+            @goto done
+        end
+        while true
+            exp = IntType(10) * exp + b
+            pos += 1
+            incr!(source)
+            if eof(source, pos, len)
+                x = scale(T, digits, ifelse(negexp, -exp, exp) - frac, neg)
+                code |= OK | EOF
+                @goto done
+            end
+            b = peekbyte(source, pos) - UInt8('0')
+            if debug
+                println("float 9) $b")
+            end
+            if b > 0x09
+                x = scale(T, digits, ifelse(negexp, -exp, exp) - frac, neg)
+                code |= OK
+                @goto done
+            end
+            if overflows(IntType) && exp > overflowval(IntType)
+                fastseek!(source, startpos)
+                return typeparser(T, source, startpos, len, origb, code, options, wider(IntType))
+            end
+        end
+    else
+        x = scale(T, digits, -frac, neg)
+        code |= OK
+    end
+
+@label done
+    return x, code, pos
+end
+
 using Base.GMP, Base.GMP.MPZ
 
 const ONES = [BigInt(1)]
@@ -43,7 +310,7 @@ bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
 
 BigInt!(y::BigInt, x::BigInt) = x
 BigInt!(y::BigInt, x::Union{Clong,Int32}) = MPZ.set_si!(y, x)
-# copied from gmp.jl:285
+# copied from base/gmp.jl:285
 function BigInt!(y::BigInt, x::Integer)
     x == 0 && return y
     nd = ndigits(x, base=2)
@@ -63,7 +330,7 @@ function BigInt!(y::BigInt, x::Integer)
     z
 end
 
-@inline function scale(::Type{T}, v, exp) where {T <: Union{Float16, Float32, Float64}}
+function scale(::Type{T}, v, exp) where {T <: Union{Float16, Float32, Float64}}
     ms = maxsig(T)
     cl = ceillog5(T)
     if v < ms
@@ -89,13 +356,14 @@ end
         if -exp <= maxpow
             MPZ.set!(scl, bipows5[-exp+1])
         else
+            # this branch isn't tested
             MPZ.set!(scl, bipows5[maxpow+1])
             MPZ.mul!(scl, bipows5[-exp-maxpow+1])
         end
         bex = bitlength(mant) - bitlength(scl) - significantbits(T)
+        bex = min(bex, 0)
         num = MPZ.mul_2exp!(mant, -bex)
         quo = roundQuotient(num, scl)
-        # @info "debug" mant=mant exp=exp num=num quo=quo lh=(bits(T) - leading_zeros(quo)) rh=significantbits(T) bex=bex
         if (bits(T) - leading_zeros(quo) > significantbits(T)) || exp == -324
             bex += 1
             quo = roundQuotient(num, MPZ.mul_2exp!(scl, 1))
@@ -113,151 +381,4 @@ end
 @inline function scale(::Type{T}, lmant, exp, neg) where {T <: Union{Float16, Float32, Float64}}
     result = scale(T, lmant, exp)
     return ifelse(neg, -result, result)
-end
-
-const SPECIALS = Trie(["nan"=>NaN, "infinity"=>Inf, "inf"=>Inf])
-
-wider(::Type{Int64}) = Int128
-wider(::Type{Int128}) = BigInt
-
-@inline defaultparser(io::IO, r::Result{T}; kwargs...) where {T <: Union{Float16, Float32, Float64}} = _defaultparser(io, r, Int64; kwargs...)
-
-@inline function _defaultparser(io::IO, r::Result{T}, ::Type{IntType}; decimal::Union{Char, UInt8}=UInt8('.'), kwargs...) where {T <: Union{Float16, Float32, Float64}, IntType}
-    setfield!(r, 1, missing)
-    setfield!(r, 3, Int64(position(io)))
-    b = 0x00
-    code = SUCCESS
-    eof(io) && (code |= INVALID | EOF; @goto done)
-    b = peekbyte(io)
-    negative = false
-    if b == MINUS # check for leading '-' or '+'
-        negative = true
-        readbyte(io)
-        eof(io) && (code |= INVALID | EOF; @goto done)
-        b = peekbyte(io)
-    elseif b == PLUS
-        readbyte(io)
-        eof(io) && (code |= INVALID | EOF; @goto done)
-        b = peekbyte(io)
-    end
-    # float digit parsing
-    v = zero(IntType)
-    parseddigits = false
-    while NEG_ONE < b < TEN
-        readbyte(io)
-        parseddigits = true
-        # process digits
-        v, ov_mul = Base.mul_with_overflow(v, IntType(10))
-        v, ov_add = Base.add_with_overflow(v, IntType(b - ZERO))
-        (ov_mul | ov_add) && (fastseek!(io, r.pos); return _defaultparser(io, r, wider(IntType); decimal=decimal))
-        if eof(io)
-            r.result = T(ifelse(negative, -v, v))
-            code |= OK | EOF
-            @goto done
-        end
-        b = peekbyte(io)
-    end
-    # check for dot
-    if b == decimal % UInt8
-        readbyte(io)
-        if eof(io)
-            if parseddigits
-                r.result = T(ifelse(negative, -v, v))
-                code |= OK | EOF
-            else
-                code |= INVALID | EOF
-            end
-            @goto done
-        end
-        b = peekbyte(io)
-    elseif !parseddigits
-        if match!(SPECIALS, io, r, true, true)
-            v2 = r.result::Float64
-            r.result = T(ifelse(negative, -v2, v2))
-            eof(io) && (r.code |= EOF)
-            return r
-        else
-            code |= INVALID | ifelse(eof(io), EOF, SUCCESS)
-        end
-        @goto done
-    end
-    # parse fractional part
-    frac = 0
-    parseddigitsfrac = false
-    while NEG_ONE < b < TEN
-        readbyte(io)
-        frac += 1
-        parseddigitsfrac = true
-        # process digits
-        v, ov_mul = Base.mul_with_overflow(v, IntType(10))
-        v, ov_add = Base.add_with_overflow(v, IntType(b - ZERO))
-        (ov_mul | ov_add) && (fastseek!(io, r.pos); return _defaultparser(io, r, wider(IntType); decimal=decimal))
-        if eof(io)
-            r.result = scale(T, v, -frac, negative)
-            code |= OK | EOF
-            @goto done
-        end
-        b = peekbyte(io)
-    end
-    # parse potential exp
-    if b == LITTLE_E || b == BIG_E
-        readbyte(io)
-        # error to have a "dangling" 'e'
-        if eof(io)
-            code |= INVALID | EOF
-            @goto done
-        end
-        b = peekbyte(io)
-        exp = zero(IntType)
-        negativeexp = false
-        if b == MINUS
-            negativeexp = true
-            readbyte(io)
-            if eof(io)
-                code |= INVALID | EOF
-                @goto done
-            end
-            b = peekbyte(io)
-        elseif b == PLUS
-            readbyte(io)
-            if eof(io)
-                code |= INVALID | EOF
-                @goto done
-            end
-            b = peekbyte(io)
-        end
-        parseddigitsexp = false
-        while NEG_ONE < b < TEN
-            b = readbyte(io)
-            parseddigitsexp = true
-            # process digits
-            exp, ov_mul = Base.mul_with_overflow(exp, IntType(10))
-            exp, ov_add = Base.add_with_overflow(exp, IntType(b - ZERO))
-            (ov_mul | ov_add) && (fastseek!(io, r.pos); return _defaultparser(io, r, wider(IntType); decimal=decimal))
-            if eof(io)
-                if (parseddigits | parseddigitsfrac)
-                    r.result = scale(T, v, ifelse(negativeexp, -exp, exp) - frac, negative)
-                    code |= OK | EOF
-                else
-                    code |= INVALID | EOF
-                end
-                @goto done
-            end
-            b = peekbyte(io)
-        end
-        if (parseddigits | parseddigitsfrac) & parseddigitsexp
-            r.result = scale(T, v, ifelse(negativeexp, -exp, exp) - frac, negative)
-            code |= OK | EOF
-        else
-            code |= INVALID | ifelse(eof(io), EOF, SUCCESS)
-        end
-    else
-        r.result = scale(T, v, -frac, negative)
-        code |= OK | ifelse(eof(io), EOF, SUCCESS)
-    end
-
-@label done
-    r.code |= code
-    r.len = Int64(position(io)) - r.pos
-    return r
 end

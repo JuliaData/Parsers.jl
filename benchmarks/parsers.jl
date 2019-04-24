@@ -1,33 +1,7 @@
 using BenchmarkTools, Parsers, Test, Dates
 
 # Int
-T = Int
-run(@benchmarkable Parsers.defaultparser(io, r) setup=(io = IOBuffer("0"); r = Parsers.Result($T)))
-l = Parsers.defaultparser
-run(@benchmarkable Parsers.parse!($l, io, r) setup=(io = IOBuffer("0"); r = Parsers.Result($T)))
-l = Parsers.Sentinel(["NA"])
-run(@benchmarkable Parsers.parse!($l, io, r) setup=(io = IOBuffer("0"); r = Parsers.Result($T)))
-l = Parsers.Sentinel(["NA"])
-run(@benchmarkable Parsers.parse!($l, io, r) setup=(io = IOBuffer("NA"); r = Parsers.Result($T)))
-l = Parsers.Strip(Parsers.Sentinel(["NA"]))
-run(@benchmarkable Parsers.parse!($l, io, r) setup=(io = IOBuffer("0"); r = Parsers.Result($T)))
-l = Parsers.Quoted(Parsers.Strip(Parsers.Sentinel(["NA"])))
-run(@benchmarkable Parsers.parse!($l, io, r) setup=(io = IOBuffer("0"); r = Parsers.Result($T)))
-l = Parsers.Delimited(Parsers.Quoted(Parsers.Strip(Parsers.Sentinel(["NA"]))))
-run(@benchmarkable Parsers.parse!($l, io, r) setup=(io = IOBuffer("0"); r = Parsers.Result($T)))
-
-run(@benchmarkable Parsers.parse!($l, io, r) setup=(io = IOBuffer("-8670696756038515498"); r = Parsers.Result($T)))
-
-run(@benchmarkable Parsers.parse($l, io, Int64; NamedTuple()...) setup=(io = IOBuffer("-8670696756038515498");))
-
-function bench(l, n)
-    io = IOBuffer("-8670696756038515498")
-    for i = 1:n
-        io.ptr = 1
-        Parsers.parse(l, io, Int64; NamedTuple()...)
-    end
-    return
-end
+run(@benchmarkable Parsers.parse(Int64, io) setup=(io = IOBuffer("\"-86706967560385154\",")))
 
 # Float64
 T = Float64
