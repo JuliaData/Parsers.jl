@@ -150,7 +150,7 @@ end
     max_pos = max_width <= 0 ? len : min(i + max_width - 1, len)
     d::Int64 = 0
     @inbounds while i <= max_pos
-        c, ii = iterate(str, i)::Tuple{UInt8, Int}
+        c, ii = iterate(str, i)
         if UInt8('0') <= c <= UInt8('9')
             d = d * 10 + (c - UInt8('0'))
         else
@@ -169,7 +169,7 @@ end
     word_start, word_end = i, 0
     max_pos = maxchars <= 0 ? len : min(len, nextind(str, i, maxchars-1))
     @inbounds while i <= max_pos
-        c, ii = iterate(str, i)::Tuple{UInt8, Int}
+        c, ii = iterate(str, i)
         if isletter(Char(c))
             word_end = i
         else
