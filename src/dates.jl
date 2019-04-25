@@ -23,7 +23,7 @@
     return x, code, pos
 end
 
-@generated function mytryparsenext_internal(::Type{T}, str, pos::Integer, len::Integer, df::DateFormat) where {T <: Dates.TimeType}
+@generated function mytryparsenext_internal(::Type{T}, str, pos, len, df::DateFormat) where {T <: Dates.TimeType}
     letters = Dates.character_codes(df)
 
     tokens = Type[Dates.CONVERSION_SPECIFIERS[letter] for letter in letters]
@@ -51,7 +51,7 @@ end
     end
 end
 
-@generated function mytryparsenext_core(str, pos::Integer, len::Integer, df::DateFormat)
+@generated function mytryparsenext_core(str, pos, len, df::DateFormat)
     directives = Dates._directives(df)
     letters = Dates.character_codes(directives)
 
@@ -113,7 +113,7 @@ end
     end
 end
 
-@inline function Dates.tryparsenext(d::Dates.Delim{<:AbstractChar, N}, str::AbstractVector{UInt8}, i::Integer, len) where N
+@inline function Dates.tryparsenext(d::Dates.Delim{<:AbstractChar, N}, str::AbstractVector{UInt8}, i, len) where N
     for j = 1:N
         i > len && return nothing
         next = iterate(str, i)
@@ -124,7 +124,7 @@ end
     return true, i
 end
 
-@inline function Dates.tryparsenext(d::Dates.Delim{String, N}, str::AbstractVector{UInt8}, i::Integer, len) where N
+@inline function Dates.tryparsenext(d::Dates.Delim{String, N}, str::AbstractVector{UInt8}, i, len) where N
     i1 = i
     i2 = firstindex(d.d)
     for j = 1:N
@@ -144,7 +144,7 @@ end
     return true, i1
 end
 
-@inline function Dates.tryparsenext_base10(str::AbstractVector{UInt8}, i::Integer, len::Integer, min_width::Int=1, max_width::Int=0)
+@inline function Dates.tryparsenext_base10(str::AbstractVector{UInt8}, i, len, min_width=1, max_width=0)
     i > len && return nothing
     min_pos = min_width <= 0 ? i : i + min_width - 1
     max_pos = max_width <= 0 ? len : min(i + max_width - 1, len)
