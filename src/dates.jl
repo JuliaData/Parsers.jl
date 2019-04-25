@@ -144,7 +144,7 @@ end
     return true, i1
 end
 
-@inline function Dates.tryparsenext_base10(str::AbstractVector{UInt8}, i::Int, len::Int, min_width=1, max_width=0)
+@inline function Dates.tryparsenext_base10(str::AbstractVector{UInt8}, i, len, min_width=1, max_width=0)
     i > len && return nothing
     min_pos = min_width <= 0 ? i : i + min_width - 1
     max_pos = max_width <= 0 ? len : min(i + max_width - 1, len)
