@@ -1,7 +1,7 @@
 wider(::Type{Int64}) = Int128
 wider(::Type{Int128}) = BigInt
 
-function typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, Q, debug, S, D, DF}, ::Type{IntType}=Int64) where {T <: AbstractFloat, ignorerepeated, Q, debug, S, D, DF, IntType}
+@inline function typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, Q, debug, S, D, DF}, ::Type{IntType}=Int64) where {T <: AbstractFloat, ignorerepeated, Q, debug, S, D, DF, IntType}
     startpos = pos
     origb = b
     x = zero(T)

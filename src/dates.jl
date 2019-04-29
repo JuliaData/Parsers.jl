@@ -42,6 +42,7 @@ end
     value_tuple = Expr(:tuple, value_names...)
 
     return quote
+        $(Expr(:meta, :inline))
         val = mytryparsenext_core(str, pos, len, df)
         val === nothing && return nothing
         values, pos, num_parsed = val
@@ -100,6 +101,7 @@ end
     end
 
     return quote
+        $(Expr(:meta, :inline))
         directives = df.tokens
         locale::Dates.DateLocale = df.locale
         num_parsed = 0
