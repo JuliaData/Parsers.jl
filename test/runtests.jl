@@ -282,13 +282,13 @@ x, code, vpos, vlen, tlen = Parsers.xparse(Int64, str; openquotechar=oq, closequ
 @test tlen == 3
 
 @test Parsers.parse(Int, "101") === 101
-@test Parsers.parse(Float64, "101,101"; decimal=',') === 101.101
+@test Parsers.parse(Float64, "101,101", Parsers.Options(decimal=',')) === 101.101
 @test Parsers.parse(Bool, IOBuffer("true")) === true
 @test_throws Parsers.Error Parsers.parse(Int, "abc")
 
 @test Parsers.tryparse(Int, "abc") === nothing
-@test Parsers.tryparse(Float32, IOBuffer("101,101"); decimal=',') === Float32(101.101)
-@test Parsers.parse(Date, "01/20/2018"; dateformat="mm/dd/yyyy") === Date(2018, 1, 20)
+@test Parsers.tryparse(Float32, IOBuffer("101,101"), Parsers.Options(decimal=',')) === Float32(101.101)
+@test Parsers.parse(Date, "01/20/2018", Parsers.Options(dateformat="mm/dd/yyyy")) === Date(2018, 1, 20)
 
 # https://github.com/JuliaData/CSV.jl/issues/345
 x, code, vpos, vlen, tlen = Parsers.xparse(String, "\"DALLAS BLACK DANCE THEATRE\",")
@@ -330,7 +330,7 @@ pos += tlen
 @test pos == 11
 
 @test Parsers.parse(Int, SubString("101")) === 101
-@test Parsers.parse(Float64, SubString("101,101"); decimal=',') === 101.101
+@test Parsers.parse(Float64, SubString("101,101"), Parsers.Options(decimal=',')) === 101.101
 
 end # @testset "misc"
 
