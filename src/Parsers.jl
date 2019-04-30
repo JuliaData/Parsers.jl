@@ -4,6 +4,24 @@ using Dates
 
 include("utils.jl")
 
+"""
+    `Parsers.Options` is a structure for holding various parsing settings when calling `Parsers.parse`, `Parsers.tryparse`, and `Parsers.xparse`. They include:
+
+  * `sentinel=nothing`: valid values include: `nothing` meaning don't check for sentinel values; `missing` meaning an "empty field" should be considered a sentinel value; or a `Vector{String}` of the various string values that should each be checked as a sentinel value. Note that sentinels will always be checked longest to shortest, with the longest valid match taking precedence.
+  * `wh1=' '`: the first ascii character to be considered when ignoring leading/trailing whitespace in value parsing
+  * `wh2='\t'`: the second ascii character to be considered when ignoring leading/trailing whitespace in value parsing
+  * `openquotechar='"'`: the ascii character that signals a "quoted" field while parsing; subsequent characters will be treated as non-significant until a valid `closequotechar` is detected
+  * `closequotechar='"'`: the ascii character that signals the end of a quoted field
+  * `escapechar='"'`: an ascii character used to "escape" a `closequotechar` within a quoted field
+  * `delim=nothing`: if `nothing`, no delimiter will be checked for; if a `Char` or `String`, a delimiter will be checked for directly after parsing a value or `closequotechar`; a newline (`\n`), return (`\r`), or CRLF (`"\r\n"`) are always considered "delimiters", in addition to EOF
+  * `decimal='.'`: an ascii character to be used when parsing float values that separates a decimal value
+  * `trues=nothing`: if `nothing`, `Bool` parsing will only check for the string `true` or an `Integer` value of `1` as valid values for `true`; as a `Vector{String}`, each string value will be checked to indicate a valid `true` value
+  * `falses=nothing`: if `nothing`, `Bool` parsing will only check for the string `false` or an `Integer` value of `0` as valid values for `false`; as a `Vector{String}`, each string value will be checked to indicate a valid `false` value
+  * `dateformat=nothing`: if `nothing`, `Date`, `DateTime`, and `Time` parsing will use a default `Dates.DateFormat` object while parsing; a `String` or `Dates.DateFormat` object can be provided for custom format parsing
+  * `ignorerepeated=false`: if `true`, consecutive delimiter characters or strings will be consumed until a non-delimiter is encountered; if `false`, only a single delimiter character/string will be consumed. Useful for fixed-width delimited files where fields are padded with delimiters
+  * `quoted=false`: whether parsing should check for `openquotechar` and `closequotechar` characters to signal quoted fields
+  * `debug=false`: if `true`, various debug logging statements will be printed while parsing; useful when diagnosing why parsing returns certain `Parsers.ReturnCode` values
+"""
 struct Options{ignorerepeated, Q, debug, S, D, DF}
     sentinel::S # Union{Nothing, Missing, Vector{Tuple{Ptr{UInt8}, Int}}}
     wh1::UInt8
@@ -21,6 +39,8 @@ struct Options{ignorerepeated, Q, debug, S, D, DF}
 end
 
 prepare(x::Vector{String}) = sort!(map(ptrlen, x), by=x->x[2], rev=true)
+asciival(c::Char) = isascii(c)
+asciival(b::UInt8) = b < 0x80
 
 function Options(
             sentinel::Union{Nothing, Missing, Vector{String}}, 
@@ -35,6 +55,25 @@ function Options(
             falses::Union{Nothing, Vector{String}},
             dateformat::Union{Nothing, String, Dates.DateFormat},
             ignorerepeated, quoted, debug, strict=false, silencewarnings=false)
+    asciival(wh1) && asciival(wh2) || throw(ArgumentError("whitespace characters must be ASCII"))
+    asciival(oq) && asciival(cq) && asciival(e) || throw(ArgumentError("openquotechar, closequotechar, and escapechar must be ASCII characters"))
+    (wh1 == delim) || (wh2 == delim) && throw(ArgumentError("whitespace characters must be different than delim argument"))
+    (oq == delim) || (cq == delim) || (e == delim) && throw(ArgumentError("delim argument must be different than openquotechar, closequotechar, and escapechar arguments"))
+    if sentinel isa Vector{String}
+        for sent in sentinel
+            if startswith(sent, string(Char(wh1))) || startswith(sent, string(Char(wh2)))
+                throw(ArgumentError("sentinel value isn't allowed to start with wh1 or wh2 characters"))
+            end
+            if startswith(sent, string(Char(oq))) || startswith(sent, string(Char(cq)))
+                throw(ArgumentError("sentinel value isn't allowed to start with openquotechar, closequotechar, or escapechar characters"))
+            end
+            if (delim isa UInt8 || delim isa Char) && startswith(sent, string(Char(delim)))
+                throw(ArgumentError("sentinel value isn't allowed to start with a delimiter character"))
+            elseif delim isa String && startswith(sent, delim)
+                throw(ArgumentError("sentinel value isn't allowed to start with a delimiter string"))
+            end
+        end
+    end
     sent = sentinel === nothing || sentinel === missing ? sentinel : prepare(sentinel)
     del = delim === nothing ? nothing : delim isa String ? ptrlen(delim) : delim % UInt8
     trues = trues === nothing ? nothing : prepare(trues)
@@ -64,13 +103,13 @@ const OPTIONS = Options(nothing, UInt8(' '), UInt8('\t'), UInt8('"'), UInt8('"')
 const XOPTIONS = Options(missing, UInt8(' '), UInt8('\t'), UInt8('"'), UInt8('"'), UInt8('"'), UInt8(','), UInt8('.'), nothing, nothing, nothing, false, true, false)
 
 # high-level convenience functions like in Base
-"Attempt to parse a value of type `T` from string `str`. Throws `Parsers.Error` on parser failures and invalid values."
+"Attempt to parse a value of type `T` from string `buf`. Throws `Parsers.Error` on parser failures and invalid values."
 function parse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
     x, code, vpos, vlen, tlen = xparse(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
     return ok(code) ? x : throw(Error(buf, T, code, pos, tlen))
 end
 
-"Attempt to parse a value of type `T` from `IO` `io`. Returns `nothing` on parser failures and invalid values."
+"Attempt to parse a value of type `T` from `buf`. Returns `nothing` on parser failures and invalid values."
 function tryparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
     x, code, vpos, vlen, tlen = xparse(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
     return ok(code) ? x : nothing
@@ -81,6 +120,22 @@ default(::Type{T}) where {T <: AbstractFloat} = T(0.0)
 default(::Type{T}) where {T <: Dates.TimeType} = T(0)
 
 # for testing purposes only, it's much too slow to dynamically create Options for every xparse call
+"""
+    Parsers.xparse(T, buf, pos, len, options) => (x, code, startpos, value_len, total_len)
+
+    The core parsing function for any type `T`. Takes a `buf`, which can be a `Vector{UInt8}`, `Base.CodeUnits`,
+    or an `IO`. `pos` is the byte position to begin parsing at. `len` is the total # of bytes in `buf` (signaling eof).
+    `options` is an instance of `Parsers.Options`.
+
+    `Parsers.xparse` returns a tuple of 5 values:
+      * `x` is a value of type `T`, even if parsing does not succeed
+      * `code` is a bitmask of parsing codes, use `Parsers.codes(code)` or `Parsers.text(code)` to see the various bit values set. See `?Parsers.ReturnCode` for additional details on the various parsing codes
+      * `startpos`: the starting byte position of the value being parsed; will always equal the start `pos` passed in, except for quoted field where it will point instead to the first byte after the open quote character
+      * `value_len`: the # of bytes consumed while parsing a value, will be equal to the total number of bytes consumed, except for quoted or delimited fields where the quote and delimiter characters will be subtracted out
+      * `total_len`: the total # of bytes consumed while parsing a value, including any quote or delimiter characters; this can be added to the starting `pos` to allow calling `Parsers.xparse` again for a subsequent field/value
+"""
+function xparse end
+
 function xparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=true, openquotechar::Union{UInt8, Char}=UInt8('"'), closequotechar::Union{UInt8, Char}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, delim::Union{UInt8, Char, Tuple{Ptr{UInt8}, Int}, AbstractString, Nothing}=UInt8(','), decimal::Union{UInt8, Char}=UInt8('.'), trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, debug::Bool=false) where {T}
     options = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, quoted, debug)
     return xparse(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
