@@ -59,4 +59,7 @@ x, code, vpos, vlen, tlen = Parsers.xparse(Date, "1,")
 @test x === Date(1)
 @test code === OK | DELIMITED
 
+@test Parsers.parse(DateTime, "1996/Feb/15", Parsers.Options(dateformat="yy/uuu/dd")) === DateTime(1996, 2, 15)
+@test Parsers.parse(DateTime, "1996, Jan, 15", Parsers.Options(dateformat="yyyy, uuu, dd")) === DateTime(1996, 1, 15)
+
 end

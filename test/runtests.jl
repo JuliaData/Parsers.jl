@@ -332,6 +332,52 @@ pos += tlen
 @test Parsers.parse(Int, SubString("101")) === 101
 @test Parsers.parse(Float64, SubString("101,101"), Parsers.Options(decimal=',')) === 101.101
 
+@test Parsers.asciival(' ')
+
+@test_throws ArgumentError Parsers.Options(sentinel=[" "])
+@test_throws ArgumentError Parsers.Options(sentinel=["\""])
+@test_throws ArgumentError Parsers.Options(sentinel=[","], delim=',')
+@test_throws ArgumentError Parsers.Options(sentinel=[","], delim=",")
+
+@test Parsers.default(Int32) === Int32(0)
+@test Parsers.default(Float32) === Float32(0)
+@test Parsers.xparse(Int64, "10", 1, 2, Parsers.XOPTIONS) == (Int64(10), OK | EOF, 1, 2, 2)
+@test Parsers.xparse(Int64, "a", 1, 1, Parsers.Options(sentinel=missing)) == (Int64(0), SENTINEL, 1, 0, 0)
+
+@test Parsers.checkdelim!(UInt8[], 1, 0, Parsers.OPTIONS) == 1
+@test Parsers.checkdelim!(codeunits(","), 1, 1, Parsers.XOPTIONS) == 2
+@test Parsers.checkdelim!(codeunits("::"), 1, 2, Parsers.Options(delim="::")) == 3
+@test Parsers.checkdelim!(codeunits(",,"), 1, 2, Parsers.Options(ignorerepeated=true, delim=',')) == 3
+@test Parsers.checkdelim!(codeunits("::::"), 1, 4, Parsers.Options(delim="::", ignorerepeated=true)) == 5
+
+e = Parsers.Error(Vector{UInt8}("hey"), Int64, INVALID | EOF, 1, 3)
+io = IOBuffer()
+showerror(io, e)
+@test String(take!(io)) == "Parsers.Error (INVALID: EOF ):\ninitial value parsing failed, reached EOF\nattempted to parse Int64 from: \"hey\"\n"
+e2 = Parsers.Error(IOBuffer("hey"), Int64, INVALID | EOF, 1, 3)
+showerror(io, e2)
+@test String(take!(io)) == "Parsers.Error (INVALID: EOF ):\ninitial value parsing failed, reached EOF\nattempted to parse Int64 from: \"hey\"\n"
+
+@test Parsers.invalid(INVALID_DELIMITER)
+@test Parsers.sentinel(SENTINEL)
+@test !Parsers.sentinel(OK)
+@test Parsers.quoted(QUOTED)
+@test !Parsers.quoted(INVALID_DELIMITER)
+@test Parsers.delimited(DELIMITED)
+@test !Parsers.delimited(OK)
+@test Parsers.newline(NEWLINE)
+@test !Parsers.newline(DELIMITED)
+@test Parsers.escapedstring(ESCAPED_STRING)
+@test !Parsers.escapedstring(OK)
+@test Parsers.invalidquotedfield(INVALID_QUOTED_FIELD)
+@test !Parsers.invalidquotedfield(INVALID_DELIMITER)
+@test Parsers.invaliddelimiter(INVALID_DELIMITER)
+@test !Parsers.invaliddelimiter(INVALID_QUOTED_FIELD)
+@test Parsers.overflow(OVERFLOW)
+@test !Parsers.overflow(OK)
+@test Parsers.quotednotescaped(QUOTED)
+@test !Parsers.quotednotescaped(QUOTED | ESCAPED_STRING)
+
 end # @testset "misc"
 
 include("floats.jl")

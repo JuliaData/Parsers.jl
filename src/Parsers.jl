@@ -61,6 +61,7 @@ function Options(
     (oq == delim) || (cq == delim) || (e == delim) && throw(ArgumentError("delim argument must be different than openquotechar, closequotechar, and escapechar arguments"))
     if sentinel isa Vector{String}
         for sent in sentinel
+            @show string(Char(wh1)), sent
             if startswith(sent, string(Char(wh1))) || startswith(sent, string(Char(wh2)))
                 throw(ArgumentError("sentinel value isn't allowed to start with wh1 or wh2 characters"))
             end
@@ -234,11 +235,8 @@ end
             code |= EOF
         end
     elseif sentinel === missing && pos == startpos
-        code &= ~(OK | INVALID | OVERFLOW)
+        code &= ~(OK | INVALID)
         code |= SENTINEL
-        if eof(source, pos, len)
-            code |= EOF
-        end
     end
     vpos = pos
     if (code & EOF) == EOF

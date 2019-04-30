@@ -182,6 +182,6 @@ end
     if word_end == 0
         return nothing
     else
-        return SubString(str, word_start, word_end), i
+        return unsafe_string(pointer(str, word_start), word_end - word_start + 1), i
     end
 end
