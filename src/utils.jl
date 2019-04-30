@@ -8,7 +8,7 @@ Error(buf::AbstractString, T, code, pos, totallen) = Error(buf, T, code)
 Error(buf::AbstractVector{UInt8}, T, code, pos, totallen) = Error(String(copy(buf)), T, code)
 
 function Error(buf::IO, T, code, pos, totallen)
-    fastseek!(buf, pos)
+    fastseek!(buf, pos - 1)
     bytes = read(buf, totallen)
     return Error(String(bytes), T, code)
 end
@@ -62,7 +62,6 @@ const INVALID_QUOTED_FIELD = 0b1000000001000000 % ReturnCode
 const INVALID_DELIMITER    = 0b1000000010000000 % ReturnCode
 const OVERFLOW             = 0b1000000100000000 % ReturnCode
 
-succeeded(x::ReturnCode) = x > 0
 ok(x::ReturnCode) = (x & (OK | INVALID)) == OK
 invalid(x::ReturnCode) = x < 0
 sentinel(x::ReturnCode) = (x & SENTINEL) == SENTINEL

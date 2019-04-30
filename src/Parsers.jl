@@ -234,11 +234,8 @@ end
             code |= EOF
         end
     elseif sentinel === missing && pos == startpos
-        code &= ~(OK | INVALID | OVERFLOW)
+        code &= ~(OK | INVALID)
         code |= SENTINEL
-        if eof(source, pos, len)
-            code |= EOF
-        end
     end
     vpos = pos
     if (code & EOF) == EOF
