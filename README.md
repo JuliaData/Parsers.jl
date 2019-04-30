@@ -22,7 +22,7 @@ x = Parsers.parse("101", Int)
 y = Parsers.parse("101.101", Float64)
 
 # use comma as decimal
-y2 = Parsers.parse("101,101", Float64; decimal=',')
+y2 = Parsers.parse("101,101", Float64, Parsers.Options(decimal=','))
 
 # Bool parsing
 z = Parsers.parse("true", Bool)
@@ -32,7 +32,7 @@ using Dates
 a = Parsers.parse("2018-01-01", Date)
 
 # custom dateformat
-b = Parsers.parse("01/20/2018", Date; dateformat="mm/dd/yyyy")
+b = Parsers.parse("01/20/2018", Date, Parsers.Options(dateformat="mm/dd/yyyy"))
 
 # will throw on invalid values
 Parsers.parse("abc", Int)
@@ -41,15 +41,8 @@ Parsers.parse("abc", Int)
 y = Parsers.tryparse("abc", Int)
 ```
 
-### Advanced Usage
+### Additional usage
 Read through the docs of the following types/functions for more information on using advanced Parsers machinery:
-  * `?Parsers.parse!`
-  * `?Parsers.Result`
+  * `?Parsers.Options`
+  * `?Parsers.xparse`
   * `?Parsers.ReturnCode`
-  * `?Parsers.Layer`
-  * `?Parsers.Delimited`
-  * `?Parsers.Quoted`
-  * `?Parsers.Strip`
-  * `?Parsers.Sentinel`
-  * `?Parsers.Trie`
-  * `?Parsers.match!`
