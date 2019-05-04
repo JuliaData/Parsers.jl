@@ -168,7 +168,7 @@ wider(::Type{Int128}) = BigInt
             @goto done
         end
         b = peekbyte(source, pos)
-        if b - UInt8('0') > 0x09
+        if b - UInt8('0') > 0x09 && !(b == UInt8('e') || b == UInt8('E') || b == UInt8('f') || b == UInt8('F'))
             x = T(ifelse(neg, -digits, digits))
             code |= OK
             @goto done
