@@ -15,6 +15,7 @@ testcases = [
     (str="1E23", x=1e23, code=(OK | EOF), len=4, tot=4),
     (str="1f23", x=1e23, code=(OK | EOF), len=4, tot=4),
     (str="1F23", x=1e23, code=(OK | EOF), len=4, tot=4),
+    (str="428.E+03", x=428000.0, code=(OK | EOF), len=8, tot=8),
     (str="1.0e", x=0.0, code=(INVALID | EOF), len=4, tot=4),
     (str="1.0ea", x=0.0, code=(INVALID | EOF | INVALID_DELIMITER), len=5, tot=5),
     (str="100000000000000000000000", x=1e23, code=(OK | EOF), len=24, tot=24),
