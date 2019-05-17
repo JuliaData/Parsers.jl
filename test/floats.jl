@@ -169,8 +169,9 @@ testcases = [
 
     # issue #18
     (str=".24409E+03", x=244.09, code=(OK | EOF), len=0, tot=0),
-
     (str=".24409E+03 ", x=244.09, code=(OK | EOF), len=0, tot=0),
+    (str="-.2", x=-0.2, code=(OK | EOF), len=0, tot=0),
+    (str=".2", x=0.2, code=(OK | EOF), len=0, tot=0),
 
     # from https://www.icir.org/vern/papers/testbase-report.pdf
     (str=string(5.0 * exp10(+125)), x=(5.0 * exp10(+125)), code=(OK | EOF), len=0, tot=0),
