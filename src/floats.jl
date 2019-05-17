@@ -18,10 +18,11 @@ wider(::Type{Int128}) = BigInt
         code |= INVALID | EOF
         @goto done
     end
+    b = peekbyte(source, pos)
     if b == options.decimal
         @goto decimalcheck
     end
-    b = peekbyte(source, pos) - UInt8('0')
+    b -= UInt8('0')
     if debug
         println("float 1) $(b + UInt8('0'))")
     end
