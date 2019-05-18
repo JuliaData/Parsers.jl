@@ -3,7 +3,7 @@ wider(::Type{Int128}) = BigInt
 
 # include a non-inlined version in case of widening (otherwise, all widened cases would fully inline)
 @noinline _typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, Q, debug, S, D, DF}, ::Type{IntType}) where {T <: AbstractFloat, ignorerepeated, Q, debug, S, D, DF, IntType} =
-    typeparse(T, source, pos, len, b, code, options, IntType)
+    typeparser(T, source, pos, len, b, code, options, IntType)
 
 @inline function typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, Q, debug, S, D, DF}, ::Type{IntType}=Int64) where {T <: AbstractFloat, ignorerepeated, Q, debug, S, D, DF, IntType}
     startpos = pos
