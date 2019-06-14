@@ -378,6 +378,13 @@ showerror(io, e2)
 @test Parsers.quotednotescaped(QUOTED)
 @test !Parsers.quotednotescaped(QUOTED | ESCAPED_STRING)
 
+# https://github.com/JuliaData/CSV.jl/issues/454
+x, code, vpos, vlen, tlen = Parsers.xparse(Float64, "\"\"", 1, 2)
+@test Parsers.sentinel(code)
+
+x, code, vpos, vlen, tlen = Parsers.xparse(String, "\"\"", 1, 2)
+@test Parsers.sentinel(code)
+
 end # @testset "misc"
 
 include("floats.jl")

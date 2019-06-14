@@ -233,7 +233,7 @@ end
         if eof(source, pos, len)
             code |= EOF
         end
-    elseif sentinel === missing && pos == startpos
+    elseif sentinel === missing && pos == vstartpos
         code &= ~(OK | INVALID)
         code |= SENTINEL
     end

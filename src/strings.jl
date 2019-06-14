@@ -243,7 +243,7 @@
     if sentinel !== nothing && sentinel !== missing && sentstart == vstartpos && sentinelpos == vpos
         # if we matched a sentinel value that was as long or longer than our type value
         code |= SENTINEL
-    elseif sentinel === missing && startpos == vpos
+    elseif sentinel === missing && vstartpos == vpos
         code |= SENTINEL
     else
         code |= OK
