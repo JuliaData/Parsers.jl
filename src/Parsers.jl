@@ -574,6 +574,7 @@ include("floats.jl")
 include("strings.jl")
 include("bools.jl")
 include("dates.jl")
+include("ryu.jl")
 
 function __init__()
     # floats.jl globals
