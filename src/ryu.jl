@@ -566,3 +566,17 @@ neededdigits(::Type{Float16}) = 9 + 5
 
     return pos
 end
+
+function writeshortest(x::T,
+        plus::Bool=false,
+        space::Bool=false,
+        hash::Bool=true,
+        precision::Integer=-1,
+        expchar::UInt8=UInt8('e'),
+        padexp::Bool=false,
+        decchar::UInt8=UInt8('.')) where {T <: Base.IEEEFloat}
+    buf = Base.StringVector(neededdigits(T))
+    pos = writeshortest(buf, 1, x)
+    @assert pos - 1 <= length(buf)
+    return String(resize!(buf, pos - 1))
+end
