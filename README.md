@@ -7,7 +7,7 @@ Parsers.jl
 
 A collection of type parsers and utilities for Julia.
 
-**Installation**: at the Julia REPL, `Pkg.add("Parsers")`
+**Installation**: at the Julia REPL, `import Pkg; Pkg.add("Parsers")`
 
 **Maintenance**: Parsers is maintained collectively by the [JuliaData collaborators](https://github.com/orgs/JuliaData/people).
 Responsiveness to pull requests and issues can vary, depending on the availability of key collaborators.
@@ -18,27 +18,27 @@ Responsiveness to pull requests and issues can vary, depending on the availabili
 using Parsers
 
 # basic int/float parsing
-x = Parsers.parse("101", Int)
-y = Parsers.parse("101.101", Float64)
+x = Parsers.parse(Int, "101")
+y = Parsers.parse(Float64, "101.101")
 
 # use comma as decimal
-y2 = Parsers.parse("101,101", Float64, Parsers.Options(decimal=','))
+y2 = Parsers.parse(Float64, "101,101", Parsers.Options(decimal=','))
 
 # Bool parsing
-z = Parsers.parse("true", Bool)
+z = Parsers.parse(Bool, "true")
 
 # Date/DateTime parsing
 using Dates
-a = Parsers.parse("2018-01-01", Date)
+a = Parsers.parse(Date, "2018-01-01")
 
 # custom dateformat
-b = Parsers.parse("01/20/2018", Date, Parsers.Options(dateformat="mm/dd/yyyy"))
+b = Parsers.parse(Date, "01/20/2018", Parsers.Options(dateformat="mm/dd/yyyy"))
 
 # will throw on invalid values
-Parsers.parse("abc", Int)
+Parsers.parse(Int, "abc")
 
 # tryparse will return `nothing` on invalid values
-y = Parsers.tryparse("abc", Int)
+y = Parsers.tryparse(Int, "abc")
 ```
 
 ### Additional usage
