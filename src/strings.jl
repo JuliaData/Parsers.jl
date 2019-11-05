@@ -189,6 +189,20 @@
                         end
                     end
                     if matched
+                        # if a newline is next, consume it as well
+                        if b == UInt8('\n')
+                            pos += 1
+                            incr!(source)
+                            code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
+                        elseif b == UInt8('\r')
+                            pos += 1
+                            incr!(source)
+                            if !eof(source, pos, len) && peekbyte(source, pos) == UInt8('\n')
+                                pos += 1
+                                incr!(source)
+                            end
+                            code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
+                        end
                         code |= DELIMITED
                         @goto donedone
                     end
@@ -206,6 +220,21 @@
                         pos = checkdelim(source, pos, len, delim)
                     end
                     if matched
+                        # if a newline is next, consume it as well
+                        b = peekbyte(source, pos)
+                        if b == UInt8('\n')
+                            pos += 1
+                            incr!(source)
+                            code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
+                        elseif b == UInt8('\r')
+                            pos += 1
+                            incr!(source)
+                            if !eof(source, pos, len) && peekbyte(source, pos) == UInt8('\n')
+                                pos += 1
+                                incr!(source)
+                            end
+                            code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
+                        end
                         code |= DELIMITED
                         @goto donedone
                     end
