@@ -388,6 +388,9 @@ x, code, vpos, vlen, tlen = Parsers.xparse(String, "\"\"", 1, 2)
 
 @test_throws ArgumentError Parsers.Options(delim=' ')
 
+# #38
+@test Parsers.parse(Date, "25JUL1985", Parsers.Options(dateformat="dduuuyyyy")) == Date(1985, 7, 25)
+
 end # @testset "misc"
 
 include("floats.jl")

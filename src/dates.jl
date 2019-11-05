@@ -169,7 +169,7 @@ end
 
 @inline function Dates.tryparsenext_word(str::AbstractVector{UInt8}, i, len, locale, maxchars=0)
     word_start, word_end = i, 0
-    max_pos = maxchars <= 0 ? len : min(len, nextind(str, i, maxchars-1))
+    max_pos = maxchars <= 0 ? len : min(len, i + (maxchars-1))
     @inbounds while i <= max_pos
         c, ii = iterate(str, i)
         if isletter(Char(c))
