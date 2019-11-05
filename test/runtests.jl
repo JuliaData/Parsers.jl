@@ -386,6 +386,8 @@ x, code, vpos, vlen, tlen = Parsers.xparse(Float64, "\"\"", 1, 2)
 x, code, vpos, vlen, tlen = Parsers.xparse(String, "\"\"", 1, 2)
 @test Parsers.sentinel(code)
 
+@test_throws ArgumentError Parsers.Options(delim=' ')
+
 end # @testset "misc"
 
 include("floats.jl")

@@ -57,7 +57,6 @@ function Options(
             ignorerepeated, quoted, debug, strict=false, silencewarnings=false)
     asciival(wh1) && asciival(wh2) || throw(ArgumentError("whitespace characters must be ASCII"))
     asciival(oq) && asciival(cq) && asciival(e) || throw(ArgumentError("openquotechar, closequotechar, and escapechar must be ASCII characters"))
-    (wh1 == delim) || (wh2 == delim) && throw(ArgumentError("whitespace characters must be different than delim argument"))
     (oq == delim) || (cq == delim) || (e == delim) && throw(ArgumentError("delim argument must be different than openquotechar, closequotechar, and escapechar arguments"))
     if sentinel isa Vector{String}
         for sent in sentinel
@@ -76,6 +75,9 @@ function Options(
     end
     sent = sentinel === nothing || sentinel === missing ? sentinel : prepare(sentinel)
     del = delim === nothing ? nothing : delim isa String ? ptrlen(delim) : delim % UInt8
+    if del isa UInt8
+        ((wh1 % UInt8) == del || (wh2 % UInt8) == del) && throw(ArgumentError("whitespace characters (`wh1=' '` and `wh2='\\t'` default keyword arguments) must be different than delim argument"))
+    end
     trues = trues === nothing ? nothing : prepare(trues)
     falses = falses === nothing ? nothing : prepare(falses)
     df = dateformat === nothing ? nothing : dateformat isa String ? Dates.DateFormat(dateformat) : dateformat
