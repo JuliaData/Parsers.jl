@@ -23,6 +23,7 @@ include("utils.jl")
   * `debug=false`: if `true`, various debug logging statements will be printed while parsing; useful when diagnosing why parsing returns certain `Parsers.ReturnCode` values
 """
 struct Options{ignorerepeated, Q, debug, S, D, DF}
+    sentinels::Vector{String}
     sentinel::S # Union{Nothing, Missing, Vector{Tuple{Ptr{UInt8}, Int}}}
     wh1::UInt8
     wh2::UInt8
@@ -41,6 +42,7 @@ end
 prepare(x::Vector{String}) = sort!(map(ptrlen, x), by=x->x[2], rev=true)
 asciival(c::Char) = isascii(c)
 asciival(b::UInt8) = b < 0x80
+const EMPTY_SENTINELS = [""]
 
 function Options(
             sentinel::Union{Nothing, Missing, Vector{String}}, 
@@ -72,6 +74,9 @@ function Options(
                 throw(ArgumentError("sentinel value isn't allowed to start with a delimiter string"))
             end
         end
+        sentinels = sentinel
+    else
+        sentinels = EMPTY_SENTINELS
     end
     sent = sentinel === nothing || sentinel === missing ? sentinel : prepare(sentinel)
     del = delim === nothing ? nothing : delim isa String ? ptrlen(delim) : delim % UInt8
@@ -81,7 +86,7 @@ function Options(
     trues = trues === nothing ? nothing : prepare(trues)
     falses = falses === nothing ? nothing : prepare(falses)
     df = dateformat === nothing ? nothing : dateformat isa String ? Dates.DateFormat(dateformat) : dateformat
-    return Options{ignorerepeated, quoted, debug, typeof(sent), typeof(del), typeof(df)}(sent, wh1 % UInt8, wh2 % UInt8, oq % UInt8, cq % UInt8, e % UInt8, del, decimal % UInt8, trues, falses, df, strict, silencewarnings)
+    return Options{ignorerepeated, quoted, debug, typeof(sent), typeof(del), typeof(df)}(sentinels, sent, wh1 % UInt8, wh2 % UInt8, oq % UInt8, cq % UInt8, e % UInt8, del, decimal % UInt8, trues, falses, df, strict, silencewarnings)
 end
 
 Options(;
