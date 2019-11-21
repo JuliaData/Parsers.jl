@@ -391,6 +391,9 @@ x, code, vpos, vlen, tlen = Parsers.xparse(String, "\"\"", 1, 2)
 # #38
 @test Parsers.parse(Date, "25JUL1985", Parsers.Options(dateformat="dduuuyyyy")) == Date(1985, 7, 25)
 
+# https://github.com/JuliaIO/JSON.jl/issues/296
+@test Parsers.parse(Float64, "99233885.0302231276962159466369304902338091026") === 9.923388503022313e7
+
 end # @testset "misc"
 
 include("floats.jl")

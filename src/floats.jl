@@ -285,7 +285,7 @@ const bipows5 = [big(5)^x for x = 0:325]
 
 function roundQuotient(num, den)
     @inbounds quo, rem = MPZ.tdiv_qr!(QUOS[Threads.threadid()], REMS[Threads.threadid()], num, den)
-    q = Int64(quo)
+    q = quo % Int64
     cmpflg = cmp(MPZ.mul_2exp!(rem, 1), den)
     return ((q & 1) == 0 ? 1 == cmpflg : -1 < cmpflg) ? q + 1 : q
 end
