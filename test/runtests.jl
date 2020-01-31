@@ -207,6 +207,15 @@ end # @testset "Core Parsers.xparse"
     @test vlen == length(str)
 end
 
+# test some critical ints Issue #44
+for i in [typemin(Int64):typemin(Int64)+20; typemax(Int)-20:typemax(Int)]
+    str = string(i)
+    x, code, vpos, vlen, tlen = Parsers.xparse(Int64, str)
+    @test string(x) == str
+    @test code == OK | EOF
+    @test vlen == length(str)
+end
+
 end # @testset "ints"
 
 @testset "bools" begin

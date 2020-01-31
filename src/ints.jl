@@ -66,13 +66,11 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
         pos += 1
         incr!(source)
         if eof(source, pos, len)
-            x = ifelse(neg, -x, x)
             code |= OK | EOF
             @goto done
         end
         b = peekbyte(source, pos) - UInt8('0')
         if b > 0x09
-            x = ifelse(neg, -x, x)
             code |= OK
             @goto done
         end
