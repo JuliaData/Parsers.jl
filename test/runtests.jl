@@ -403,6 +403,9 @@ x, code, vpos, vlen, tlen = Parsers.xparse(String, "\"\"", 1, 2)
 # https://github.com/JuliaIO/JSON.jl/issues/296
 @test Parsers.parse(Float64, "99233885.0302231276962159466369304902338091026") === 9.923388503022313e7
 
+# Int8 -1 parsed as UInt8 0xff
+@test Parsers.parse(Int8, "-1") === Int8(-1)
+
 end # @testset "misc"
 
 include("floats.jl")
