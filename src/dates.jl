@@ -1,4 +1,4 @@
-@inline function typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, Q, debug, S, D, DF}) where {T <: Dates.TimeType, ignorerepeated, Q, debug, S, D, DF}
+@inline function typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}) where {T <: Dates.TimeType, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
     df = options.dateformat === nothing ? Dates.default_format(T) : options.dateformat
     ret = mytryparsenext_internal(T, source, Int(pos), len, df)
     if debug

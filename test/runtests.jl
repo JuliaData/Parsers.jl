@@ -154,6 +154,32 @@ testcases = [
     (str="1a,,", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED | INVALID_DELIMITER), vpos=1, vlen=2, tlen=4),
     (str="1a,,2", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED | INVALID_DELIMITER), vpos=1, vlen=2, tlen=4),
     (str="1,\n", kwargs=(ignorerepeated=true, delim=UInt8(',')), x=1, code=(OK | DELIMITED | NEWLINE | EOF), vpos=1, vlen=1, tlen=3),
+    (str="1,\n,", kwargs=(ignorerepeated=true, delim=UInt8(',')), x=1, code=(OK | DELIMITED | NEWLINE), vpos=1, vlen=1, tlen=4),
+    (str="1,\n,\n", kwargs=(ignorerepeated=true, delim=UInt8(',')), x=1, code=(OK | DELIMITED | NEWLINE), vpos=1, vlen=1, tlen=4),
+    (str="1::\n::", kwargs=(ignorerepeated=true, delim="::"), x=1, code=(OK | DELIMITED | NEWLINE), vpos=1, vlen=1, tlen=6),
+    (str="1::\n::\n", kwargs=(ignorerepeated=true, delim="::"), x=1, code=(OK | DELIMITED | NEWLINE), vpos=1, vlen=1, tlen=6),
+    (str="1,\r\n,", kwargs=(ignorerepeated=true, delim=UInt8(',')), x=1, code=(OK | DELIMITED | NEWLINE), vpos=1, vlen=1, tlen=5),
+    (str="1,\r\n,\r\n", kwargs=(ignorerepeated=true, delim=UInt8(',')), x=1, code=(OK | DELIMITED | NEWLINE), vpos=1, vlen=1, tlen=5),
+    (str="1::\r\n::", kwargs=(ignorerepeated=true, delim="::"), x=1, code=(OK | DELIMITED | NEWLINE), vpos=1, vlen=1, tlen=7),
+    (str="1::\r\n::\r\n", kwargs=(ignorerepeated=true, delim="::"), x=1, code=(OK | DELIMITED | NEWLINE), vpos=1, vlen=1, tlen=7),
+    # ignoreemptylines
+    (str="1\n\n", kwargs=(ignoreemptylines=true,), x=1, code=(OK | NEWLINE | EOF), vpos=1, vlen=1, tlen=3),
+    (str="1\n\n\n", kwargs=(ignoreemptylines=true,), x=1, code=(OK | NEWLINE | EOF), vpos=1, vlen=1, tlen=4),
+    (str="1,\n\n\n,", kwargs=(ignorerepeated=true, ignoreemptylines=true, delim=UInt8(',')), x=1, code=(OK | NEWLINE | DELIMITED), vpos=1, vlen=1, tlen=6),
+    (str="1::\n\n\n::", kwargs=(ignorerepeated=true, ignoreemptylines=true, delim="::"), x=1, code=(OK | NEWLINE | DELIMITED), vpos=1, vlen=1, tlen=8),
+    (str="1\r\n\r\n", kwargs=(ignoreemptylines=true,), x=1, code=(OK | NEWLINE | EOF), vpos=1, vlen=1, tlen=5),
+    (str="1\r\n\r\n\r\n", kwargs=(ignoreemptylines=true,), x=1, code=(OK | NEWLINE | EOF), vpos=1, vlen=1, tlen=7),
+    (str="1,\r\n\r\n\r\n,", kwargs=(ignorerepeated=true, ignoreemptylines=true, delim=UInt8(',')), x=1, code=(OK | NEWLINE | DELIMITED), vpos=1, vlen=1, tlen=9),
+    (str="1::\r\n\r\n\r\n::", kwargs=(ignorerepeated=true, ignoreemptylines=true, delim="::"), x=1, code=(OK | NEWLINE | DELIMITED), vpos=1, vlen=1, tlen=11),
+    # comments
+    (str="1\n#\n", kwargs=(comment="#",), x=1, code=(OK | NEWLINE | EOF), vpos=1, vlen=1, tlen=4),
+    (str="1\n#   \n", kwargs=(comment="#",), x=1, code=(OK | NEWLINE | EOF), vpos=1, vlen=1, tlen=7),
+    (str="1,\n#  \n\n,", kwargs=(ignorerepeated=true, ignoreemptylines=true, comment="#", delim=UInt8(',')), x=1, code=(OK | NEWLINE | DELIMITED), vpos=1, vlen=1, tlen=9),
+    (str="1::\n#  \n\n::", kwargs=(ignorerepeated=true, ignoreemptylines=true, comment="#", delim="::"), x=1, code=(OK | NEWLINE | DELIMITED), vpos=1, vlen=1, tlen=11),
+    (str="1\r\n#  \r\n", kwargs=(ignoreemptylines=true, comment="#",), x=1, code=(OK | NEWLINE | EOF), vpos=1, vlen=1, tlen=8),
+    (str="1\r\n#  \r\n\r\n", kwargs=(ignoreemptylines=true, comment="#",), x=1, code=(OK | NEWLINE | EOF), vpos=1, vlen=1, tlen=10),
+    (str="1,\r\n#  \r\n\r\n,", kwargs=(ignorerepeated=true, ignoreemptylines=true, comment="#", delim=UInt8(',')), x=1, code=(OK | NEWLINE | DELIMITED), vpos=1, vlen=1, tlen=12),
+    (str="1::\r\n#  \r\n\r\n::", kwargs=(ignorerepeated=true, ignoreemptylines=true, comment="#", delim="::"), x=1, code=(OK | NEWLINE | DELIMITED), vpos=1, vlen=1, tlen=14),
 ];
 
 for useio in (false, true)

@@ -1,4 +1,4 @@
-@inline function typeparser(::Type{Bool}, source, pos, len, b, code, options::Options{ignorerepeated, Q, debug, S, D, DF}) where {ignorerepeated, Q, debug, S, D, DF}
+@inline function typeparser(::Type{Bool}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}) where {ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
     x = false
     if debug
         println("start of Bool parsing")
