@@ -1,4 +1,35 @@
-import Base: significand_bits, significand_mask, exponent_bits, exponent_mask, exponent_bias, exponent_max, uinttype
+import Base: uinttype
+
+const MANTISSA_MASK = 0x000fffffffffffff
+const EXP_MASK = 0x00000000000007ff
+
+sign_mask(::Type{Float64}) =        0x8000_0000_0000_0000
+exponent_mask(::Type{Float64}) =    0x7ff0_0000_0000_0000
+exponent_one(::Type{Float64}) =     0x3ff0_0000_0000_0000
+exponent_half(::Type{Float64}) =    0x3fe0_0000_0000_0000
+significand_mask(::Type{Float64}) = 0x000f_ffff_ffff_ffff
+
+sign_mask(::Type{Float32}) =        0x8000_0000
+exponent_mask(::Type{Float32}) =    0x7f80_0000
+exponent_one(::Type{Float32}) =     0x3f80_0000
+exponent_half(::Type{Float32}) =    0x3f00_0000
+significand_mask(::Type{Float32}) = 0x007f_ffff
+
+sign_mask(::Type{Float16}) =        0x8000
+exponent_mask(::Type{Float16}) =    0x7c00
+exponent_one(::Type{Float16}) =     0x3c00
+exponent_half(::Type{Float16}) =    0x3800
+significand_mask(::Type{Float16}) = 0x03ff
+
+for T in (Float16, Float32, Float64)
+    @eval significand_bits(::Type{$T}) = $(trailing_ones(significand_mask(T)))
+    @eval exponent_bits(::Type{$T}) = $(sizeof(T)*8 - significand_bits(T) - 1)
+    @eval exponent_bias(::Type{$T}) = $(Int(exponent_one(T) >> significand_bits(T)))
+    # maximum float exponent
+    @eval exponent_max(::Type{$T}) = $(Int(exponent_mask(T) >> significand_bits(T)) - exponent_bias(T))
+    # maximum float exponent without bias
+    @eval exponent_raw_max(::Type{$T}) = $(Int(exponent_mask(T) >> significand_bits(T)))
+end
 
 neededdigits(::Type{Float64}) = 309 + 17
 neededdigits(::Type{Float32}) = 39 + 9 + 2
@@ -514,9 +545,6 @@ end
 
     return pos
 end
-
-const MANTISSA_MASK = Base.significand_mask(Float64)
-const EXP_MASK = Base.exponent_mask(Float64) >> Base.significand_bits(Float64)
 
 memcpy(d, doff, s, soff, n) = (ccall(:memcpy, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t), d + doff - 1, s + soff - 1, n); nothing)
 memmove(d, doff, s, soff, n) = (ccall(:memmove, Ptr{Cvoid}, (Ptr{Cvoid}, Ptr{Cvoid}, Csize_t), d + doff - 1, s + soff - 1, n); nothing)
