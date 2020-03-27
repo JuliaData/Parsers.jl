@@ -4,7 +4,7 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
 # if we eventually support non-base 10
 # overflowval(::Type{T}, base) where {T <: Integer} = div(typemax(T) - base + 1, base)
 
-@inline function typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, Q, debug, S, D, DF}) where {T <: Integer, ignorerepeated, Q, debug, S, D, DF}
+@inline function typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}) where {T <: Integer, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
     x = zero(T)
     neg = false
     # start actual int parsing

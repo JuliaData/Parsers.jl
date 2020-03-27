@@ -1,5 +1,5 @@
 # this is mostly copy-pasta from Parsers.jl main xparse function
-@inline function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options{ignorerepeated, Q, debug, S, D, DF}) where {T <: AbstractString, ignorerepeated, Q, debug, S, D, DF}
+@inline function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}) where {T <: AbstractString, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
     startpos = vstartpos = vpos = pos
     sentinelpos = 0
     code = SUCCESS
@@ -175,67 +175,80 @@
             else
                 if delim isa UInt8
                     matched = false
-                    while b == delim
-                        matched = true
-                        pos += 1
-                        incr!(source)
-                        if eof(source, pos, len)
+                    matchednewline = false
+                    while true
+                        if b == delim
+                            matched = true
                             code |= DELIMITED
+                            pos += 1
+                            incr!(source)
+                        elseif !matchednewline && b == UInt8('\n')
+                            matchednewline = matched = true
+                            pos += 1
+                            incr!(source)
+                            pos = checkcmtemptylines(source, pos, len, options)
+                            code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
+                        elseif !matchednewline && b == UInt8('\r')
+                            matchednewline = matched = true
+                            pos += 1
+                            incr!(source)
+                            if !eof(source, pos, len) && peekbyte(source, pos) == UInt8('\n')
+                                pos += 1
+                                incr!(source)
+                            end
+                            pos = checkcmtemptylines(source, pos, len, options)
+                            code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
+                        else
+                            break
+                        end
+                        if eof(source, pos, len)
                             @goto donedone
                         end
                         b = peekbyte(source, pos)
                         if debug
-                            println("string 14) parsed: '$(escape_string(string(Char(b))))'")
+                            println("14) parsed: '$(escape_string(string(Char(b))))'")
                         end
                     end
                     if matched
-                        # if a newline is next, consume it as well
-                        if b == UInt8('\n')
-                            pos += 1
-                            incr!(source)
-                            code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
-                        elseif b == UInt8('\r')
-                            pos += 1
-                            incr!(source)
-                            if !eof(source, pos, len) && peekbyte(source, pos) == UInt8('\n')
-                                pos += 1
-                                incr!(source)
-                            end
-                            code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
-                        end
-                        code |= DELIMITED
                         @goto donedone
                     end
                 else
                     matched = false
-                    predelimpos = pos
-                    pos = checkdelim(source, pos, len, delim)
-                    while pos > predelimpos
-                        matched = true
-                        if eof(source, pos, len)
-                            code |= DELIMITED
-                            @goto donedone
-                        end
+                    matchednewline = false
+                    while true
                         predelimpos = pos
                         pos = checkdelim(source, pos, len, delim)
-                    end
-                    if matched
-                        # if a newline is next, consume it as well
-                        b = peekbyte(source, pos)
-                        if b == UInt8('\n')
+                        if pos > predelimpos
+                            matched = true
+                            code |= DELIMITED
+                        elseif !matchednewline && b == UInt8('\n')
+                            matchednewline = matched = true
                             pos += 1
                             incr!(source)
+                            pos = checkcmtemptylines(source, pos, len, options)
                             code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
-                        elseif b == UInt8('\r')
+                        elseif !matchednewline && b == UInt8('\r')
+                            matchednewline = matched = true
                             pos += 1
                             incr!(source)
                             if !eof(source, pos, len) && peekbyte(source, pos) == UInt8('\n')
                                 pos += 1
                                 incr!(source)
                             end
+                            pos = checkcmtemptylines(source, pos, len, options)
                             code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
+                        else
+                            break
                         end
-                        code |= DELIMITED
+                        if eof(source, pos, len)
+                            @goto donedone
+                        end
+                        b = peekbyte(source, pos)
+                        if debug
+                            println("14) parsed: '$(escape_string(string(Char(b))))'")
+                        end
+                    end
+                    if matched
                         @goto donedone
                     end
                 end
@@ -244,6 +257,7 @@
             if b == UInt8('\n')
                 pos += 1
                 incr!(source)
+                pos = checkcmtemptylines(source, pos, len, options)
                 code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
                 @goto donedone
             elseif b == UInt8('\r')
@@ -253,6 +267,7 @@
                     pos += 1
                     incr!(source)
                 end
+                pos = checkcmtemptylines(source, pos, len, options)
                 code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
                 @goto donedone
             end
