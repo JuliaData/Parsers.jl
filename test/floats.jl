@@ -5,6 +5,7 @@ x, code, vpos, vlen, vlen = Parsers.xparse(Float64, "1x")
 testcases = [
     (str="", x=0.0, code=(INVALID | EOF), len=0, tot=0),
     (str="-", x=0.0, code=(INVALID | EOF), len=1, tot=1),
+    (str=".", x=0.0, code=(INVALID | EOF), len=1, tot=1),
     (str="1", x=1.0, code=(OK | EOF), len=1, tot=1),
     (str="+1", x=1.0, code=(OK | EOF), len=2, tot=2),
     (str="1.1", x=1.1, code=(OK | EOF), len=3, tot=3),

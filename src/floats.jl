@@ -169,7 +169,7 @@ wider(::Type{Int128}) = BigInt
         incr!(source)
         if eof(source, pos, len)
             x = T(ifelse(neg, -digits, digits))
-            code |= OK | EOF
+            code |= ((startpos + 1) == pos ? INVALID : OK) | EOF
             @goto done
         end
         b = peekbyte(source, pos)
