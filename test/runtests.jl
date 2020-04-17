@@ -441,8 +441,10 @@ x, code, vpos, vlen, tlen = Parsers.xparse(String, "\"\"", 1, 2)
 # Int8 -1 parsed as UInt8 0xff
 @test Parsers.parse(Int8, "-1") === Int8(-1)
 
-# parsing am/pm issue
+# parsing am/pm issue for > Julia 1.3
+@static if VERSION >= v"1.3-DEV"
 @test Parsers.parse(DateTime, "7/22/1998 4:37:01.500 PM", Parsers.Options(dateformat="m/d/yyyy I:M:S.s p")) == DateTime(1998, 7, 22, 16, 37, 1, 500)
+end
 
 end # @testset "misc"
 
