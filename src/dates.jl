@@ -146,6 +146,18 @@ end
     return true, i1
 end
 
+ascii_lc(c::UInt8) = c in UInt8('A'):UInt8('Z') ? c + 0x20 : c
+
+function Dates.tryparsenext(d::Dates.DatePart{'p'}, str::AbstractVector{UInt8}, i::Int, len)
+    i+1 > len && return nothing
+    c, ii = iterate(str, i)::Tuple{UInt8, Int}
+    ap = ascii_lc(c)
+    (ap == UInt8('a') || ap == UInt8('p')) || return nothing
+    c, ii = iterate(str, ii)::Tuple{UInt8, Int}
+    ascii_lc(c) == UInt8('m') || return nothing
+    return ap == UInt8('a') ? Dates.AM : Dates.PM, ii
+end
+
 @inline function Dates.tryparsenext_base10(str::AbstractVector{UInt8}, i, len, min_width=1, max_width=0)
     i > len && return nothing
     min_pos = min_width <= 0 ? i : i + min_width - 1
