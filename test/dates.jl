@@ -62,4 +62,9 @@ x, code, vpos, vlen, tlen = Parsers.xparse(Date, "1,")
 @test Parsers.parse(DateTime, "1996/Feb/15", Parsers.Options(dateformat="yy/uuu/dd")) === DateTime(1996, 2, 15)
 @test Parsers.parse(DateTime, "1996, Jan, 15", Parsers.Options(dateformat="yyyy, uuu, dd")) === DateTime(1996, 1, 15)
 
+@test_throws Parsers.Error Parsers.parse(Date, "2020-05-32")
+@test_throws Parsers.Error Parsers.parse(DateTime, "2020-05-32")
+@test_throws Parsers.Error Parsers.parse(Time, "25:00:00")
+@test_throws Parsers.Error Parsers.parse(DateTime, "2020-05-05T00:00:60")
+
 end

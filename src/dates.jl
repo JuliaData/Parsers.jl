@@ -13,10 +13,16 @@
         code |= INVALID
     else
         values, pos = ret
-        x = T(values...)
-        code |= OK
-        if eof(source, pos, len)
-            code |= EOF
+        valid = Dates.validargs(T, values...)
+        if valid !== nothing
+            x = default(T)
+            code |= INVALID
+        else
+            x = T(values...)
+            code |= OK
+            if eof(source, pos, len)
+                code |= EOF
+            end
         end
     end
 
