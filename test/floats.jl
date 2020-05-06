@@ -315,4 +315,8 @@ x, code, vpos, vlen, tlen = Parsers.xparse(Float64, case.str)
 @test code == case.code
 @test vlen == tlen == 39
 
+# https://github.com/quinnj/JSON3.jl/issues/57
+@test_throws Parsers.Error Parsers.parse(Float64,join(rand(1:9, 2000), ""))
+@test Parsers.parse(BigFloat, "3.14") == BigFloat(3.14)
+
 end # @testset
