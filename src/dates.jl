@@ -20,9 +20,9 @@
         else
             x = T(values...)
             code |= OK
-            if eof(source, pos, len)
-                code |= EOF
-            end
+        end
+        if eof(source, pos, len)
+            code |= EOF
         end
     end
 
