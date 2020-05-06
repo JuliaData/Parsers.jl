@@ -87,6 +87,7 @@ end
                         @goto error
                     end
                     $name, pos = val
+                    $name = Int64($name)
                 end
                 num_parsed += 1
                 directive_index += 1
