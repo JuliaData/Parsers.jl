@@ -13,8 +13,14 @@
         code |= INVALID
     else
         values, pos = ret
-        x = T(values...)
-        code |= OK
+        valid = Dates.validargs(T, values...)
+        if valid !== nothing
+            x = default(T)
+            code |= INVALID
+        else
+            x = T(values...)
+            code |= OK
+        end
         if eof(source, pos, len)
             code |= EOF
         end
@@ -81,6 +87,9 @@ end
                         @goto error
                     end
                     $name, pos = val
+                    if $name isa Integer
+                        $name = Int64($name)
+                    end
                 end
                 num_parsed += 1
                 directive_index += 1
