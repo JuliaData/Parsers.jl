@@ -1,6 +1,12 @@
 wider(::Type{Int64}) = Int128
 wider(::Type{Int128}) = BigInt
 
+# Base.exponent_max(T) + Base.significand_bits(T) + 3 # "-0."
+maxdigits(::Type{Float64}) = 1079
+maxdigits(::Type{Float32}) = 154
+maxdigits(::Type{Float16}) = 29
+maxdigits(::Type{BigFloat}) = typemax(Int64)
+
 # include a non-inlined version in case of widening (otherwise, all widened cases would fully inline)
 @noinline _typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, ::Type{IntType}) where {T <: AbstractFloat, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, IntType} =
     typeparser(T, source, pos, len, b, code, options, IntType)
@@ -140,6 +146,7 @@ wider(::Type{Int128}) = BigInt
         code |= INVALID
         @goto done
     end
+    ndigits = 0
     while true
         digits = IntType(10) * digits + b
         pos += 1
@@ -154,9 +161,14 @@ wider(::Type{Int128}) = BigInt
             println("float 2) $(b + UInt8('0'))")
         end
         b > 0x09 && break
+        ndigits += 1
         if overflows(IntType) && digits > overflowval(IntType)
             fastseek!(source, startpos)
             return _typeparser(T, source, startpos, len, origb, code, options, wider(IntType))
+        elseif ndigits > maxdigits(T)
+            fastseek!(source, startpos)
+            code |= INVALID
+            @goto done
         end
     end
     b += UInt8('0')
@@ -386,4 +398,12 @@ end
 @inline function scale(::Type{T}, lmant, exp, neg) where {T <: Union{Float16, Float32, Float64}}
     result = scale(T, lmant, exp)
     return ifelse(neg, -result, result)
+end
+
+function scale(::Type{BigFloat}, v, exp, neg)
+    if exp < 0
+        return (neg ? -v : v) / BigFloat(10)^(-exp)
+    else
+        return (neg ? -v : v) * BigFloat(10)^exp
+    end
 end
