@@ -272,7 +272,7 @@ for (i, case) in enumerate(testcases)
     x, code, vpos, vlen, tlen = Parsers.xparse(Float64, case.str)
     if x != case.x || code != case.code #|| len != case.len || tlen != case.tlen
         println("ERROR on case=$i, $case")
-        x, code, vpos, vlen, tlen = Parsers.xparse(Float64, case.str; debug=Val(true))
+        x, code, vpos, vlen, tlen = Parsers.xparse(Float64, case.str; debug=true)
     end
     @test x == case.x
     @test code == case.code
@@ -319,5 +319,10 @@ x, code, vpos, vlen, tlen = Parsers.xparse(Float64, case.str)
 @test_throws Parsers.Error Parsers.parse(Float64,join(rand(1:9, 2000), ""))
 @test Parsers.parse(BigFloat, "3.14") == BigFloat("3.14")
 @test Parsers.parse(BigFloat, "3.14 ") == BigFloat("3.14")
+
+# https://github.com/JuliaData/Parsers.jl/issues/53
+bytes = codeunits("a,b,c\n.,1,3")
+x, code, vpos, vlen, tlen = Parsers.xparse(Float64, bytes, 7, 11)
+@test code == (INVALID | DELIMITED)
 
 end # @testset
