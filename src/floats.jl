@@ -16,6 +16,7 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
     origb = b
     x = zero(T)
     digits = zero(IntType)
+    ndigits = 0
     if debug
         println("float parsing")
     end
@@ -146,11 +147,11 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
         code |= INVALID
         @goto done
     end
-    ndigits = 0
     while true
         digits = IntType(10) * digits + b
         pos += 1
         incr!(source)
+        ndigits += 1
         if eof(source, pos, len)
             x = T(ifelse(neg, -digits, digits))
             code |= OK | EOF
@@ -161,7 +162,6 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
             println("float 2) $(b + UInt8('0'))")
         end
         b > 0x09 && break
-        ndigits += 1
         if overflows(IntType) && digits > overflowval(IntType)
             fastseek!(source, startpos)
             return _typeparser(T, source, startpos, len, origb, code, options, wider(IntType))
@@ -186,9 +186,14 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
         end
         b = peekbyte(source, pos)
         if b - UInt8('0') > 0x09 && !(b == UInt8('e') || b == UInt8('E') || b == UInt8('f') || b == UInt8('F'))
-            x = T(ifelse(neg, -digits, digits))
-            code |= OK
-            @goto done
+            if ndigits == 0
+                code |= INVALID
+                @goto done
+            else
+                x = T(ifelse(neg, -digits, digits))
+                code |= OK
+                @goto done
+            end
         end
     end
     frac = 0
