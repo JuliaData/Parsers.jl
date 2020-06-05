@@ -129,13 +129,15 @@ const XOPTIONS = Options(missing, UInt8(' '), UInt8('\t'), UInt8('"'), UInt8('"'
 "Attempt to parse a value of type `T` from string `buf`. Throws `Parsers.Error` on parser failures and invalid values."
 function parse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
     x, code, vpos, vlen, tlen = xparse(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
-    return ok(code) ? x : throw(Error(buf, T, code, pos, tlen))
+    fin = buf isa IO || (vlen == (len - pos + 1))
+    return ok(code) && fin ? x : throw(Error(buf, T, code, pos, tlen))
 end
 
 "Attempt to parse a value of type `T` from `buf`. Returns `nothing` on parser failures and invalid values."
 function tryparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
     x, code, vpos, vlen, tlen = xparse(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
-    return ok(code) ? x : nothing
+    fin = buf isa IO || (vlen == (len - pos + 1))
+    return ok(code) && fin ? x : nothing
 end
 
 default(::Type{T}) where {T <: Integer} = zero(T)

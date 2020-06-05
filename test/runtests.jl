@@ -446,6 +446,12 @@ x, code, vpos, vlen, tlen = Parsers.xparse(String, "\"\"", 1, 2)
 @test Parsers.parse(DateTime, "7/22/1998 4:37:01.500 PM", Parsers.Options(dateformat="m/d/yyyy I:M:S.s p")) == DateTime(1998, 7, 22, 16, 37, 1, 500)
 end
 
+# #55
+# Parsers.parse must consume entire string
+@test_throws Parsers.Error Parsers.parse(Int, "10a")
+# but with IO will just consume until non digit
+@test Parsers.parse(Int, IOBuffer("10a")) == 10
+
 end # @testset "misc"
 
 include("floats.jl")
