@@ -8,10 +8,10 @@ maxdigits(::Type{Float16}) = 29
 maxdigits(::Type{BigFloat}) = typemax(Int64)
 
 # include a non-inlined version in case of widening (otherwise, all widened cases would fully inline)
-@noinline _typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, ::Type{IntType}) where {T <: AbstractFloat, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, IntType} =
+@noinline _typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, ::Type{IntType}) where {T <: SupportedFloats, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, IntType} =
     typeparser(T, source, pos, len, b, code, options, IntType)
 
-@inline function typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, ::Type{IntType}=Int64) where {T <: AbstractFloat, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, IntType}
+@inline function typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, ::Type{IntType}=Int64) where {T <: SupportedFloats, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, IntType}
     startpos = pos
     origb = b
     x = zero(T)

@@ -170,7 +170,10 @@ function xparse(::Type{T}, buf::AbstractString, pos, len, options::Options=XOPTI
     return xparse(T, codeunits(buf), pos, len, options)
 end
 
-@inline function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}=XOPTIONS) where {T, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
+const SupportedFloats = Union{Float16, Float32, Float64, BigFloat}
+const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
+
+@inline function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}=XOPTIONS) where {T <: SupportedTypes, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
     startpos = vstartpos = vpos = pos
     sentinel = options.sentinel
     code = SUCCESS
@@ -750,6 +753,17 @@ function __init__()
     Threads.resize_nthreads!(SCLS)
     foreach(x->MPZ.init!(x), SCLS)
     return
+end
+
+# generic fallback calls Base.parse
+@inline function xparse(::Type{T}, source, pos, len, options) where {T}
+    _, code, vpos, vlen, tlen = xparse(String, source, pos, len, options)
+    x = zero(T)
+    if !Parsers.sentinel(code) && code > 0
+        str = unsafe_string(pointer(source, vpos), vlen)
+        x = Base.parse(T, str)
+    end
+    return x, code, vpos, vlen, tlen
 end
 
 end # module
