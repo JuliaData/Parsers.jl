@@ -287,128 +287,30 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
     return x, code, pos
 end
 
-using Base.GMP, Base.GMP.MPZ
+using BitFloats
 
-const ONES = [BigInt(1)]
-const NUMS = [BigInt()]
-const QUOS = [BigInt()]
-const REMS = [BigInt()]
-const SCLS = [BigInt()]
+const POW10s = [exp10(Float128(i)) for i = 0:340]
 
-const BIG_E = UInt8('E')
-const LITTLE_E = UInt8('e')
+pow10(e) = (@inbounds x = POW10s[e+1]; return x)
 
-const bipows5 = [big(5)^x for x = 0:325]
-
-function roundQuotient(num, den)
-    @inbounds quo, rem = MPZ.tdiv_qr!(QUOS[Threads.threadid()], REMS[Threads.threadid()], num, den)
-    q = quo % Int64
-    cmpflg = cmp(MPZ.mul_2exp!(rem, 1), den)
-    return ((q & 1) == 0 ? 1 == cmpflg : -1 < cmpflg) ? q + 1 : q
-end
-
-maxsig(::Type{Float16}) = 2048
-maxsig(::Type{Float32}) = 16777216
-maxsig(::Type{Float64}) = 9007199254740992
-
-ceillog5(::Type{Float16}) = 5
-ceillog5(::Type{Float32}) = 11
-ceillog5(::Type{Float64}) = 23
-
-const F16_SHORT_POWERS = [exp10(Float16(x)) for x = 0:2ceillog5(Float16)-1]
-const F32_SHORT_POWERS = [exp10(Float32(x)) for x = 0:2ceillog5(Float32)-1]
-const F64_SHORT_POWERS = [exp10(Float64(x)) for x = 0:2ceillog5(Float64)-1]
-
-pow10(::Type{Float16}, e) = (@inbounds v = F16_SHORT_POWERS[e+1]; return v)
-pow10(::Type{Float32}, e) = (@inbounds v = F32_SHORT_POWERS[e+1]; return v)
-pow10(::Type{Float64}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
-
-significantbits(::Type{Float16}) = 11
-significantbits(::Type{Float32}) = 24
-significantbits(::Type{Float64}) = 53
-
-bitlength(this) = GMP.MPZ.sizeinbase(this, 2)
-bits(::Type{T}) where {T <: Union{Float16, Float32, Float64}} = 8sizeof(T)
-
-BigInt!(y::BigInt, x::BigInt) = x
-BigInt!(y::BigInt, x::Union{Clong,Int32}) = MPZ.set_si!(y, x)
-# copied from base/gmp.jl:285
-function BigInt!(y::BigInt, x::Integer)
-    x == 0 && return y
-    nd = ndigits(x, base=2)
-    z = GMP.MPZ.realloc2!(y, nd)
-    s = sign(x)
-    s == -1 && (x = -x)
-    x = unsigned(x)
-    size = 0
-    limbnbits = sizeof(GMP.Limb) << 3
-    while nd > 0
-        size += 1
-        unsafe_store!(z.d, x % GMP.Limb, size)
-        x >>>= limbnbits
-        nd -= limbnbits
-    end
-    z.size = s*size
-    z
-end
-
-function scale(::Type{T}, v, exp) where {T <: Union{Float16, Float32, Float64}}
-    ms = maxsig(T)
-    cl = ceillog5(T)
-    if v < ms
-        # fastest path
-        if 0 <= exp < cl
-            return T(v) * pow10(T, exp)
-        elseif -cl < exp < 0
-            return T(v) / pow10(T, -exp)
-        end
-    end
+function scale(::Type{T}, v::Union{Int64, Int128}, exp, neg) where {T <: Union{Float16, Float32, Float64}}
+    # @show typeof(v), v, exp
+    exp = (exp > 309) ? 309 : (exp < -340) ? -340 : exp
     v == 0 && return zero(T)
-    @inbounds mant = BigInt!(NUMS[Threads.threadid()], v)
-    if 0 <= exp < 327
-        num = MPZ.mul!(mant, bipows5[exp+1])
-        bex = bitlength(num) - significantbits(T)
-        bex <= 0 && return ldexp(T(num), exp)
-        @inbounds one = MPZ.mul_2exp!(MPZ.set_si!(ONES[Threads.threadid()], 1), bex)
-        quo = roundQuotient(num, one)
-        return ldexp(T(quo), bex + exp)
-    elseif -327 < exp < 0
-        maxpow = length(bipows5) - 1
-        @inbounds scl = SCLS[Threads.threadid()]
-        if -exp <= maxpow
-            MPZ.set!(scl, bipows5[-exp+1])
-        else
-            # this branch isn't tested
-            MPZ.set!(scl, bipows5[maxpow+1])
-            MPZ.mul!(scl, bipows5[-exp-maxpow+1])
-        end
-        bex = bitlength(mant) - bitlength(scl) - significantbits(T)
-        bex = min(bex, 0)
-        num = MPZ.mul_2exp!(mant, -bex)
-        quo = roundQuotient(num, scl)
-        if (bits(T) - leading_zeros(quo) > significantbits(T)) || exp == -324
-            bex += 1
-            quo = roundQuotient(num, MPZ.mul_2exp!(scl, 1))
-        end
-        if exp <= -324
-            return T(ldexp(BigFloat(quo), bex + exp))
-        else
-            return ldexp(T(quo), bex + exp)
-        end
-    else
-        return exp > 0 ? T(Inf) : T(0)
-    end
-end
-
-@inline function scale(::Type{T}, lmant, exp, neg) where {T <: Union{Float16, Float32, Float64}}
-    result = scale(T, lmant, exp)
-    return ifelse(neg, -result, result)
-end
-
-function scale(::Type{BigFloat}, v, exp, neg)
     if exp < 0
-        return (neg ? -v : v) / BigFloat(10)^(-exp)
+        x = v / pow10(-exp)
     else
-        return (neg ? -v : v) * BigFloat(10)^exp
+        x = v * pow10(exp)
+    end
+    # @show x
+    return T(neg ? -x : x)
+end
+
+# slow fallback
+function scale(::Type{T}, v, exp, neg) where {T}
+    if exp < 0
+        return T((neg ? -v : v) / BigFloat(10)^(-exp))
+    else
+        return T((neg ? -v : v) * BigFloat(10)^exp)
     end
 end
