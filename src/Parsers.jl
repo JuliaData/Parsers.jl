@@ -742,8 +742,6 @@ include("ryu.jl")
 
 function __init__()
     # floats.jl globals
-    Threads.resize_nthreads!(NUMS)
-    foreach(x->MPZ.init!(x), NUMS)
     return
 end
 

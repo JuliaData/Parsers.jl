@@ -292,6 +292,8 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
     return x, code, pos
 end
 
+using Base.MPFR, Base.GMP, Base.GMP.MPZ
+
 maxsig(::Type{Float16}) = 2048
 maxsig(::Type{Float32}) = 16777216
 maxsig(::Type{Float64}) = 9007199254740992
@@ -311,11 +313,29 @@ pow10(::Type{Float32}, e) = (@inbounds v = F32_SHORT_POWERS[e+1]; return v)
 pow10(::Type{Float64}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
 pow10(::Type{BigFloat}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
 
-@inline function scale(::Type{T}, v::Union{UInt128, BigInt}, exp, neg) where {T}
-    if exp < 0
-        x = v / BigFloat(10)^(-exp)
+const BIGEXP10 = [1 / exp10(BigInt(e)) for e = 309:324]
+const BIGFLOAT = [BigFloat()]
+
+@inline function scale(::Type{T}, v::V, exp, neg) where {T, V <: Union{UInt128, BigInt}}
+    if exp > 308
+        return T(neg ? -Inf : Inf)
+    elseif exp < -325
+        return zero(T)
+    elseif exp < -308
+        y = BIGEXP10[-exp - 308]
+        @inbounds x = BIGFLOAT[Threads.threadid()]
+        ccall((:mpfr_set_ui, :libmpfr), Int32,
+            (Ref{BigFloat}, Culong, MPFR.MPFRRoundingMode),
+            x, v, MPFR.ROUNDING_MODE[])
+        ccall((:mpfr_mul, :libmpfr), Int32,
+            (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, MPFR.MPFRRoundingMode),
+            x, x, y, MPFR.ROUNDING_MODE[])
+    elseif exp < 0
+        # this and the next branch are pretty slow for BigInt
+        # but also extremely rare (i.e. floats w/ > 39 digits)
+        x = v / exp10(V(-exp))
     else
-        x = v * BigFloat(10)^exp
+        x = v * exp10(V(exp))
     end
     return T(neg ? -x : x)
 end
@@ -334,17 +354,15 @@ end
         end
     end
     v == 0 && return zero(T)
-    # @show typeof(v), v, exp
-    if exp < -325 || exp > 308
-        # slowest path
-        @inbounds mant = BigInt!(NUMS[Threads.threadid()], v)
-        return scale(T, mant, exp, neg)
+    if exp > 308
+        return T(neg ? -Inf : Inf)
+    elseif exp < -325
+        return zero(T)
     end
     mant, pow = pow10spl(exp + 325)
     lz = leading_zeros(v)
     newv = v << lz
     upper, lower = two_prod(newv, mant)
-    # @show newv, mant, upper, lower
     if upper & 0x1FF == 0x1FF && (lower + newv < lower)
         mant_low = mant128(exp + 325)
         product_middle2, product_low = two_prod(newv, mant_low)
@@ -356,8 +374,7 @@ end
         end
         if (product_middle + 1 == 0) && (product_high & 0x1FF == 0x1FF) &&
             (product_low + v < product_low)
-            @inbounds mant = BigInt!(NUMS[Threads.threadid()], v)
-            return scale(T, mant, exp, neg)
+            return scale(T, UInt128(v), exp, neg)
         end
         upper = product_high
         lower = product_middle
@@ -366,8 +383,7 @@ end
     mantissa = upper >> (upperbit + 9)
     lz += xor(1, upperbit)
     if (lower == 0) && upper & 0x1FF == 0 && mantissa & 3 == 1
-        @inbounds mant = BigInt!(NUMS[Threads.threadid()], v)
-        return scale(T, mant, exp, neg)
+        return scale(T, UInt128(v), exp, neg)
     end
     mantissa += mantissa & 1
     mantissa >>= 1
@@ -378,42 +394,14 @@ end
     mantissa &= ~(UInt64(1) << 52)
     real_exponent = pow - lz
     if real_exponent < 1 || real_exponent > 2046
-        @inbounds mant = BigInt!(NUMS[Threads.threadid()], v)
-        return scale(T, mant, exp, neg)
+        return scale(T, UInt128(v), exp, neg)
     end
     mantissa |= real_exponent << 52
     mantissa |= (UInt64(neg) << 63)
     return T(Core.bitcast(Float64, mantissa))
 end
 
-using Base.GMP, Base.GMP.MPZ
-
-const NUMS = [BigInt()]
-
-const BIG_E = UInt8('E')
-const LITTLE_E = UInt8('e')
-
-# copied from base/gmp.jl:285
-function BigInt!(y::BigInt, x::Integer)
-    nd = ndigits(x, base=2)
-    z = GMP.MPZ.realloc2!(y, nd)
-    x = unsigned(x)
-    size = 0
-    limbnbits = sizeof(GMP.Limb) << 3
-    while nd > 0
-        size += 1
-        unsafe_store!(z.d, x % GMP.Limb, size)
-        x >>>= limbnbits
-        nd -= limbnbits
-    end
-    z.size = size
-    z
-end
-
 @inline function two_prod(a, b)
-    # hi = a * b
-    # lo = fma(a, b, -hi)
-    # hi, lo
     x = UInt128(a) * b
     return UInt64(x >> 64), unsafe_trunc(UInt64, x)
 end
