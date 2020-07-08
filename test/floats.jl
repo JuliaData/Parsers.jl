@@ -266,6 +266,19 @@ testcases = [
     (str=string(8797576579012143.0 * exp2(+588)), x=(8797576579012143.0 * exp2(+588)), code=(OK | EOF), len=0, tot=0),
     (str=string(7363326733505337.0 * exp2(+272)), x=(7363326733505337.0 * exp2(+272)), code=(OK | EOF), len=0, tot=0),
     (str=string(8549497411294502.0 * exp2(-448)), x=(8549497411294502.0 * exp2(-448)), code=(OK | EOF), len=0, tot=0),
+
+    # from lemire's test suite
+    (str="7.3177701707893310e+15", x=7.3177701707893310e+15, code=(OK | EOF), len=0, tot=0),
+    (str="9007199254740995", x=9.007199254740996e15, code=(OK | EOF), len=0, tot=0),
+    (str="7e23", x=7e23, code=(OK | EOF), len=0, tot=0),
+    (str="-65.613616999999977", x=-65.613616999999977, code=(OK | EOF), len=0, tot=0),
+    (str="7.2057594037927933e+16", x=7.2057594037927933e+16, code=(OK | EOF), len=0, tot=0),
+    (str="0.1e-308", x=0.1e-308, code=(OK | EOF), len=0, tot=0),
+    (str="0.01e-307", x=0.01e-307, code=(OK | EOF), len=0, tot=0),
+    (str="1.79769e+308", x=1.79769e+308, code=(OK | EOF), len=0, tot=0),
+    (str="2.22507e-308", x=2.22507e-308, code=(OK | EOF), len=0, tot=0),
+    (str="-1.79769e+308", x=-1.79769e+308, code=(OK | EOF), len=0, tot=0),
+    (str="-2.22507e-308", x=-2.22507e-308, code=(OK | EOF), len=0, tot=0),
 ];
 
 for (i, case) in enumerate(testcases)
