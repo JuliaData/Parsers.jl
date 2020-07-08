@@ -315,7 +315,6 @@ pow10(::Type{BigFloat}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
 
 const BIGEXP10 = [1 / exp10(BigInt(e)) for e = 309:324]
 const BIGFLOAT = [BigFloat()]
-const RM = VERSION < v"1.1" ? RoundingMode : MPFR.MPFRRoundingMode
 
 @inline function scale(::Type{T}, v::V, exp, neg) where {T, V <: Union{UInt128, BigInt}}
     if exp > 308
@@ -325,11 +324,17 @@ const RM = VERSION < v"1.1" ? RoundingMode : MPFR.MPFRRoundingMode
     elseif exp < -308
         y = BIGEXP10[-exp - 308]
         @inbounds x = BIGFLOAT[Threads.threadid()]
-        ccall((:mpfr_set_d, :libmpfr), Int32,
-            (Ref{BigFloat}, Float64, RM),
-            x, Float64(v), MPFR.ROUNDING_MODE[])
+        if v > 9007199254740992
+            ccall((:mpfr_set_z, :libmpfr), Int32,
+                (Ref{BigFloat}, Ref{BigInt}, Int32),
+                x, BigInt(v), MPFR.ROUNDING_MODE[])
+        else
+            ccall((:mpfr_set_d, :libmpfr), Int32,
+                (Ref{BigFloat}, Float64, Int32),
+                x, Float64(v), MPFR.ROUNDING_MODE[])
+        end
         ccall((:mpfr_mul, :libmpfr), Int32,
-            (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, RM),
+            (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
             x, x, y, MPFR.ROUNDING_MODE[])
     elseif exp < 0
         # this and the next branch are pretty slow for BigInt
