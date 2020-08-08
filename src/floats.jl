@@ -39,7 +39,7 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
     end
     b -= UInt8('0')
     if debug
-        println("float 1) $(b + UInt8('0'))")
+        println("float 1) $(Char(b + UInt8('0')))")
     end
     if b > 0x09
         # character isn't a digit, check for special values, otherwise INVALID
@@ -158,13 +158,13 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
         ndigits += 1
         if eof(source, pos, len)
             digits = inttype(IntType)(digits)
-            x = T(ifelse(neg, -digits, digits))
+            x = ifelse(neg, -T(digits), T(digits))
             code |= OK | EOF
             @goto done
         end
         b = peekbyte(source, pos) - UInt8('0')
         if debug
-            println("float 2) $(b + UInt8('0'))")
+            println("float 2) $(Char(b + UInt8('0')))")
         end
         b > 0x09 && break
         if overflows(IntType) && digits > overflowval(IntType)
@@ -185,7 +185,7 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
         pos += 1
         incr!(source)
         if eof(source, pos, len)
-            x = T(ifelse(neg, -digits, digits))
+            x = ifelse(neg, -T(digits), digits)
             code |= ((startpos + 1) == pos ? INVALID : OK) | EOF
             @goto done
         end
@@ -195,7 +195,7 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
                 code |= INVALID
                 @goto done
             else
-                x = T(ifelse(neg, -digits, digits))
+                x = ifelse(neg, -T(digits), digits)
                 code |= OK
                 @goto done
             end
