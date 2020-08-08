@@ -340,4 +340,10 @@ bytes = codeunits("a,b,c\n.,1,3")
 x, code, vpos, vlen, tlen = Parsers.xparse(Float64, bytes, 7, 11)
 @test code == (INVALID | DELIMITED)
 
+# https://github.com/JuliaData/CSV.jl/issues/710
+# problematic really small floats on various threshold boundaries
+@test Parsers.parse(Float64, "9.88e-324") === 1.0e-323
+@test Parsers.parse(Float64, "4.94e-324") === 5.0e-324
+@test Parsers.parse(Float64, "8.40e-323") === 8.4e-323
+
 end # @testset

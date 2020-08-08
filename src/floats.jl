@@ -313,13 +313,13 @@ pow10(::Type{Float32}, e) = (@inbounds v = F32_SHORT_POWERS[e+1]; return v)
 pow10(::Type{Float64}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
 pow10(::Type{BigFloat}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
 
-const BIGEXP10 = [1 / exp10(BigInt(e)) for e = 309:324]
+const BIGEXP10 = [1 / exp10(BigInt(e)) for e = 309:326]
 const BIGFLOAT = [BigFloat()]
 
 @inline function scale(::Type{T}, v::V, exp, neg) where {T, V <: Union{UInt128, BigInt}}
     if exp > 308
         return T(neg ? -Inf : Inf)
-    elseif exp < -325
+    elseif exp < -327
         return zero(T)
     elseif exp < -308
         y = BIGEXP10[-exp - 308]
@@ -362,7 +362,7 @@ end
     v == 0 && return zero(T)
     if exp > 308
         return T(neg ? -Inf : Inf)
-    elseif exp < -325
+    elseif exp < -327
         return zero(T)
     end
     mant, pow = pow10spl(exp + 325)
