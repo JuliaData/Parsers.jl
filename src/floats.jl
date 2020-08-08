@@ -185,7 +185,7 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
         pos += 1
         incr!(source)
         if eof(source, pos, len)
-            x = ifelse(neg, -T(digits), digits)
+            x = ifelse(neg, -T(digits), T(digits))
             code |= ((startpos + 1) == pos ? INVALID : OK) | EOF
             @goto done
         end
@@ -195,7 +195,7 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
                 code |= INVALID
                 @goto done
             else
-                x = ifelse(neg, -T(digits), digits)
+                x = ifelse(neg, -T(digits), T(digits))
                 code |= OK
                 @goto done
             end
