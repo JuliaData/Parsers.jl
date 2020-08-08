@@ -345,5 +345,6 @@ x, code, vpos, vlen, tlen = Parsers.xparse(Float64, bytes, 7, 11)
 @test Parsers.parse(Float64, "9.88e-324") === 1.0e-323
 @test Parsers.parse(Float64, "4.94e-324") === 5.0e-324
 @test Parsers.parse(Float64, "8.40e-323") === 8.4e-323
+@test Parsers.parse(Float64, "3091.") === 3091.0
 
 end # @testset
