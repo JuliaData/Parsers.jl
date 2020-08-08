@@ -742,6 +742,7 @@ include("ryu.jl")
 
 function __init__()
     # floats.jl globals
+    Threads.resize_nthreads!(BIGFLOAT)
     return
 end
 
