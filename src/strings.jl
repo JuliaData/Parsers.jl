@@ -281,6 +281,13 @@
             end
             b = peekbyte(source, pos)
         end
+    else
+        # no delimiter, so read until EOF
+        while !eof(source, pos, len)
+            pos += 1
+            vpos += 1
+            incr!(source)
+        end
     end
 
 @label donedone

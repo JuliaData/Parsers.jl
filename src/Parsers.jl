@@ -757,4 +757,22 @@ end
     return x, code, vpos, vlen, tlen
 end
 
+@inline function xparse(::Type{Char}, source, pos, len, options)
+    _, code, vpos, vlen, tlen = xparse(String, source, pos, len, options)
+    x = '\0'
+    if !Parsers.sentinel(code) && code > 0
+        x = unsafe_string(pointer(source, vpos), vlen)[1]
+    end
+    return x, code, vpos, vlen, tlen
+end
+
+@inline function xparse(::Type{Symbol}, source, pos, len, options)
+    _, code, vpos, vlen, tlen = xparse(String, source, pos, len, options)
+    x = Symbol()
+    if !Parsers.sentinel(code) && code > 0
+        x = ccall(:jl_symbol_n, Ref{Symbol}, (Ptr{UInt8}, Int), pointer(source, vpos), vlen)
+    end
+    return x, code, vpos, vlen, tlen
+end
+
 end # module
