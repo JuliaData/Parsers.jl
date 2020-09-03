@@ -452,6 +452,12 @@ end
 # but with IO will just consume until non digit
 @test Parsers.parse(Int, IOBuffer("10a")) == 10
 
+# #65
+@test Parsers.parse(Char, "a") === 'a'
+@test Parsers.parse(Char, "漢") === '漢'
+@test Parsers.parse(Symbol, "a") === :a
+@test Parsers.parse(Symbol, "漢") === :漢
+
 end # @testset "misc"
 
 include("floats.jl")
