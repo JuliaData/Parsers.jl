@@ -775,4 +775,6 @@ end
     return x, code, vpos, vlen, tlen
 end
 
+include("precompile.jl")
+
 end # module
