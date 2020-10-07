@@ -749,12 +749,12 @@ end
 # generic fallback calls Base.parse
 @inline function xparse(::Type{T}, source, pos, len, options) where {T}
     _, code, vpos, vlen, tlen = xparse(String, source, pos, len, options)
-    x = zero(T)
     if !Parsers.sentinel(code) && code > 0
         str = unsafe_string(pointer(source, vpos), vlen)
         x = Base.parse(T, str)
+        return x, code, vpos, vlen, tlen
     end
-    return x, code, vpos, vlen, tlen
+    return nothing, code, vpos, vlen, tlen
 end
 
 @inline function xparse(::Type{Char}, source, pos, len, options)
