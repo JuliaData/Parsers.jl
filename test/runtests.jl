@@ -2,6 +2,12 @@ using Parsers, Test, Dates
 
 import Parsers: INVALID, OK, SENTINEL, QUOTED, DELIMITED, NEWLINE, EOF, INVALID_QUOTED_FIELD, INVALID_DELIMITER, OVERFLOW, ESCAPED_STRING
 
+struct CustomType
+    x::String
+end
+
+Base.parse(::Type{CustomType}, x::String) = CustomType(x)
+
 @testset "Parsers" begin
 
 @testset "Core Parsers.xparse" begin
@@ -457,6 +463,9 @@ end
 @test Parsers.parse(Char, "漢") === '漢'
 @test Parsers.parse(Symbol, "a") === :a
 @test Parsers.parse(Symbol, "漢") === :漢
+
+# 67
+@test Parsers.parse(CustomType, "hey there", Parsers.XOPTIONS) == CustomType("hey there")
 
 end # @testset "misc"
 
