@@ -347,4 +347,7 @@ x, code, vpos, vlen, tlen = Parsers.xparse(Float64, bytes, 7, 11)
 @test Parsers.parse(Float64, "8.40e-323") === 8.4e-323
 @test Parsers.parse(Float64, "3091.") === 3091.0
 
+# https://github.com/JuliaData/CSV.jl/issues/769
+@test Parsers.parse(Float64, "9223372036854775808") === 9.223372036854776e18
+
 end # @testset
