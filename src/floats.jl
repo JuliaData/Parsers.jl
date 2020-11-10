@@ -157,7 +157,6 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
         incr!(source)
         ndigits += 1
         if eof(source, pos, len)
-            digits = inttype(IntType)(digits)
             x = ifelse(neg, -T(digits), T(digits))
             code |= OK | EOF
             @goto done
@@ -167,7 +166,7 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
             println("float 2) $(Char(b + UInt8('0')))")
         end
         b > 0x09 && break
-        if overflows(inttype(IntType)) && digits > overflowval(inttype(IntType))
+        if overflows(IntType) && digits > overflowval(IntType)
             fastseek!(source, startpos)
             return _typeparser(T, source, startpos, len, origb, code, options, wider(IntType))
         elseif ndigits > maxdigits(T)
@@ -185,7 +184,6 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
         pos += 1
         incr!(source)
         if eof(source, pos, len)
-            digits = inttype(IntType)(digits)
             x = ifelse(neg, -T(digits), T(digits))
             code |= ((startpos + 1) == pos ? INVALID : OK) | EOF
             @goto done
@@ -196,7 +194,6 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
                 code |= INVALID
                 @goto done
             else
-                digits = inttype(IntType)(digits)
                 x = ifelse(neg, -T(digits), T(digits))
                 code |= OK
                 @goto done
@@ -224,7 +221,7 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
                 println("float 5) $b")
             end
             b > 0x09 && break
-            if overflows(inttype(IntType)) && digits > overflowval(inttype(IntType))
+            if overflows(IntType) && digits > overflowval(IntType)
                 fastseek!(source, startpos)
                 return _typeparser(T, source, startpos, len, origb, code, options, wider(IntType))
             end
