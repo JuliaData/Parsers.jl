@@ -157,7 +157,6 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
         incr!(source)
         ndigits += 1
         if eof(source, pos, len)
-            digits = inttype(IntType)(digits)
             x = ifelse(neg, -T(digits), T(digits))
             code |= OK | EOF
             @goto done
