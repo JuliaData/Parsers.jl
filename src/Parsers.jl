@@ -76,7 +76,7 @@ function Options(
                 throw(ArgumentError("sentinel value isn't allowed to start with a delimiter string"))
             end
         end
-        refs = sentinel
+        refs = copy(sentinel)
     else
         refs = [""]
     end
