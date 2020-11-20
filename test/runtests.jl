@@ -467,6 +467,11 @@ end
 # 67
 @test Parsers.parse(CustomType, "hey there", Parsers.XOPTIONS) == CustomType("hey there")
 
+# https://github.com/JuliaData/CSV.jl/issues/780
+missings = ["na"]
+opts = Parsers.Options(sentinel=missings, trues=["true"])
+@test missings == ["na"]
+
 end # @testset "misc"
 
 include("floats.jl")
