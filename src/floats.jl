@@ -339,6 +339,9 @@ const BIGFLOAT = [BigFloat()]
         # this and the next branch are pretty slow for BigInt
         # but also extremely rare (i.e. floats w/ > 39 digits)
         x = v / exp10(V(-exp))
+    elseif exp == 23
+        # special-case due to https://github.com/JuliaLang/julia/issues/38509
+        x = v * V(1e23)
     else
         x = v * exp10(V(exp))
     end
