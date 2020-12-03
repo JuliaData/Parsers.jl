@@ -11,6 +11,18 @@ maxdigits(::Type{Float32}) = 154
 maxdigits(::Type{Float16}) = 29
 maxdigits(::Type{BigFloat}) = typemax(Int64)
 
+ten(::Type{T}) where {T} = T(10)
+const TEN = BigInt(10)
+ten(::Type{BigInt}) = TEN
+
+_muladd(ten, digits, b) = ten * digits + b
+
+function _muladd(ten, digits::BigInt, b)
+    Base.GMP.MPZ.mul!(digits, ten)
+    Base.GMP.MPZ.add_ui!(digits, b)
+    return digits
+end
+
 # include a non-inlined version in case of widening (otherwise, all widened cases would fully inline)
 @noinline _typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, ::Type{IntType}) where {T <: SupportedFloats, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, IntType} =
     typeparser(T, source, pos, len, b, code, options, IntType)
@@ -151,8 +163,9 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
         code |= INVALID
         @goto done
     end
+
     while true
-        digits = IntType(10) * digits + b
+        digits = _muladd(ten(IntType), digits, b)
         pos += 1
         incr!(source)
         ndigits += 1
@@ -200,17 +213,17 @@ maxdigits(::Type{BigFloat}) = typemax(Int64)
             end
         end
     end
-    frac = inttype(IntType)(0)
+    frac = Int64(0)
     if debug
         println("float 4) $(Char(b))")
     end
     b -= UInt8('0')
     if b < 0x0a
         while true
-            digits = IntType(10) * digits + b
+            digits = _muladd(ten(IntType), digits, b)
             pos += 1
             incr!(source)
-            frac += inttype(IntType)(1)
+            frac += Int64(1)
             if eof(source, pos, len)
                 x = scale(T, digits, -frac, neg)
                 code |= OK | EOF
@@ -336,14 +349,32 @@ const BIGFLOAT = [BigFloat()]
             (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
             x, x, y, MPFR.ROUNDING_MODE[])
     elseif exp < 0
-        # this and the next branch are pretty slow for BigInt
-        # but also extremely rare (i.e. floats w/ > 39 digits)
-        x = v / exp10(V(-exp))
+        if v isa BigInt
+            @inbounds x = BIGFLOAT[Threads.threadid()]
+            ccall((:mpfr_set_z, :libmpfr), Int32,
+                (Ref{BigFloat}, Ref{BigInt}, Int32),
+                x, v, MPFR.ROUNDING_MODE[])
+            ccall((:mpfr_div_d, :libmpfr), Int32,
+                (Ref{BigFloat}, Ref{BigFloat}, Float64, Int32),
+                x, x, exp10(-exp), MPFR.ROUNDING_MODE[])
+        else
+            x = v / exp10(V(-exp))
+        end
     elseif exp == 23
         # special-case due to https://github.com/JuliaLang/julia/issues/38509
         x = v * V(1e23)
     else
-        x = v * exp10(V(exp))
+        if v isa BigInt
+            @inbounds x = BIGFLOAT[Threads.threadid()]
+            ccall((:mpfr_set_z, :libmpfr), Int32,
+                (Ref{BigFloat}, Ref{BigInt}, Int32),
+                x, v, MPFR.ROUNDING_MODE[])
+            ccall((:mpfr_mul_d, :libmpfr), Int32,
+                (Ref{BigFloat}, Ref{BigFloat}, Float64, Int32),
+                x, x, exp10(-exp), MPFR.ROUNDING_MODE[])
+        else
+            x = v * exp10(V(exp))
+        end
     end
     return T(neg ? -x : x)
 end
