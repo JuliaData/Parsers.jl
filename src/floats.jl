@@ -1,9 +1,7 @@
 wider(::Type{UInt64}) = UInt128
+wider(::Type{Int64}) = Int128
 wider(::Type{UInt128}) = BigInt
-
-inttype(::Type{UInt64}) = Int64
-inttype(::Type{UInt128}) = Int128
-inttype(::Type{T}) where {T} = BigInt
+wider(::Type{Int128}) = BigInt
 
 # Base.exponent_max(T) + Base.significand_bits(T) + 3 # "-0."
 maxdigits(::Type{Float64}) = 1079
@@ -29,10 +27,8 @@ end
 
 @inline function typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, ::Type{IntType}=UInt64) where {T <: SupportedFloats, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, IntType}
     startpos = pos
-    origb = b
     x = zero(T)
     digits = zero(IntType)
-    ndigits = 0
     if debug
         println("float parsing")
     end
@@ -46,16 +42,8 @@ end
         @goto done
     end
     b = peekbyte(source, pos)
-    if b == options.decimal
-        @goto decimalcheck
-    end
-    b -= UInt8('0')
-    if debug
-        println("float 1) $(Char(b + UInt8('0')))")
-    end
-    if b > 0x09
+    if b != options.decimal && (b - UInt8('0')) > 0x09
         # character isn't a digit, check for special values, otherwise INVALID
-        b += UInt8('0')
         if b == UInt8('n') || b == UInt8('N')
             pos += 1
             incr!(source)
@@ -164,35 +152,51 @@ end
         @goto done
     end
 
-    while true
-        digits = _muladd(ten(IntType), digits, b)
-        pos += 1
-        incr!(source)
-        ndigits += 1
-        if eof(source, pos, len)
-            x = ifelse(neg, -T(digits), T(digits))
-            code |= OK | EOF
-            @goto done
-        end
-        b = peekbyte(source, pos) - UInt8('0')
+    x, code, pos = parsedigits(T, source, pos, len, b, code, options, digits, neg, startpos)
+
+@label done
+    return x, code, pos
+end
+
+@noinline _parsedigits(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, digits::IntType, neg::Bool, startpos) where {T <: SupportedFloats, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, IntType} =
+    parsedigits(T, source, pos, len, b, code, options, digits, neg, startpos)
+
+@inline function parsedigits(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, digits::IntType, neg::Bool, startpos) where {T <: SupportedFloats, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, IntType}
+    x = zero(T)
+    ndigits = 0
+    if b != options.decimal
+        b -= UInt8('0')
         if debug
-            println("float 2) $(Char(b + UInt8('0')))")
+            println("float 1) $(Char(b + UInt8('0')))")
         end
-        b > 0x09 && break
-        if overflows(IntType) && digits > overflowval(IntType)
-            fastseek!(source, startpos)
-            return _typeparser(T, source, startpos, len, origb, code, options, wider(IntType))
-        elseif ndigits > maxdigits(T)
-            fastseek!(source, startpos)
-            code |= INVALID
-            @goto done
+        while true
+            digits = _muladd(ten(IntType), digits, b)
+            pos += 1
+            incr!(source)
+            ndigits += 1
+            if eof(source, pos, len)
+                x = ifelse(neg, -T(digits), T(digits))
+                code |= OK | EOF
+                @goto done
+            end
+            b = peekbyte(source, pos) - UInt8('0')
+            if debug
+                println("float 2) $(Char(b + UInt8('0')))")
+            end
+            b > 0x09 && break
+            if overflows(IntType) && digits > overflowval(IntType)
+                return _parsedigits(T, source, pos, len, b + UInt8('0'), code, options, wider(IntType)(digits), neg, startpos)
+            elseif ndigits > maxdigits(T)
+                fastseek!(source, startpos)
+                code |= INVALID
+                @goto done
+            end
+        end
+        b += UInt8('0')
+        if debug
+            println("float 3) $(Char(b))")
         end
     end
-    b += UInt8('0')
-    if debug
-        println("float 3) $(Char(b))")
-    end
-@label decimalcheck
     if b == options.decimal
         pos += 1
         incr!(source)
@@ -213,12 +217,23 @@ end
             end
         end
     end
-    frac = Int64(0)
+
+    x, code, pos = parsefrac(T, source, pos, len, b, code, options, digits, neg, startpos, Int64(0))
+
+@label done
+    return x, code, pos
+end
+
+@noinline _parsefrac(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, digits::IntType, neg::Bool, startpos, frac) where {T <: SupportedFloats, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, IntType} =
+    parsefrac(T, source, pos, len, b, code, options, digits, neg, startpos, frac)
+
+@inline function parsefrac(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, digits::IntType, neg::Bool, startpos, frac) where {T <: SupportedFloats, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, IntType}
+    x = zero(T)
     if debug
-        println("float 4) $(Char(b))")
+        println("float 4) $(Char(b + UInt8('0')))")
     end
-    b -= UInt8('0')
-    if b < 0x0a
+    if b - UInt8('0') < 0x0a
+        b -= UInt8('0')
         while true
             digits = _muladd(ten(IntType), digits, b)
             pos += 1
@@ -235,12 +250,11 @@ end
             end
             b > 0x09 && break
             if overflows(IntType) && digits > overflowval(IntType)
-                fastseek!(source, startpos)
-                return _typeparser(T, source, startpos, len, origb, code, options, wider(IntType))
+                return _parsefrac(T, source, pos, len, b + UInt8('0'), code, options, wider(IntType)(digits), neg, startpos, frac)
             end
         end
+        b += UInt('0')
     end
-    b += UInt8('0')
     if debug
         println("float 6) $(Char(b))")
     end
@@ -257,7 +271,6 @@ end
         if debug
             println("float 7) $(Char(b))")
         end
-        exp = inttype(IntType)(0)
         negexp = b == UInt8('-')
         if negexp || b == UInt8('+')
             pos += 1
@@ -272,34 +285,44 @@ end
             code |= INVALID
             @goto done
         end
-        while true
-            exp = inttype(IntType)(10) * exp + b
-            pos += 1
-            incr!(source)
-            if eof(source, pos, len)
-                x = scale(T, digits, ifelse(negexp, -exp, exp) - frac, neg)
-                code |= OK | EOF
-                @goto done
-            end
-            b = peekbyte(source, pos) - UInt8('0')
-            if debug
-                println("float 9) $b")
-            end
-            if b > 0x09
-                x = scale(T, digits, ifelse(negexp, -exp, exp) - frac, neg)
-                code |= OK
-                @goto done
-            end
-            if overflows(IntType) && exp > overflowval(IntType)
-                fastseek!(source, startpos)
-                return _typeparser(T, source, startpos, len, origb, code, options, wider(IntType))
-            end
-        end
+
+        return parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, Int64(0), negexp)
     else
         x = scale(T, digits, -frac, neg)
         code |= OK
     end
 
+@label done
+    return x, code, pos
+end
+
+@noinline _parseexp(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, digits, neg::Bool, startpos, frac, exp::ExpType, negexp) where {T <: SupportedFloats, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, ExpType} =
+    parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, exp, negexp)
+
+@inline function parseexp(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, digits, neg::Bool, startpos, frac, exp::ExpType, negexp) where {T <: SupportedFloats, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, ExpType}
+    x = zero(T)
+    while true
+        exp = ExpType(10) * exp + b
+        pos += 1
+        incr!(source)
+        if eof(source, pos, len)
+            x = scale(T, digits, ifelse(negexp, -exp, exp) - frac, neg)
+            code |= OK | EOF
+            @goto done
+        end
+        b = peekbyte(source, pos) - UInt8('0')
+        if debug
+            println("float 9) $b")
+        end
+        if b > 0x09
+            x = scale(T, digits, ifelse(negexp, -exp, exp) - frac, neg)
+            code |= OK
+            @goto done
+        end
+        if overflows(ExpType) && exp > overflowval(ExpType)
+            return _parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, wider(ExpType)(exp), negexp)
+        end
+    end
 @label done
     return x, code, pos
 end
@@ -327,6 +350,7 @@ pow10(::Type{BigFloat}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
 
 const BIGEXP10 = [1 / exp10(BigInt(e)) for e = 309:326]
 const BIGFLOAT = [BigFloat()]
+const BIGFLOAT2 = [BigFloat()]
 
 @inline function scale(::Type{T}, v::V, exp, neg) where {T, V <: Union{UInt128, BigInt}}
     if exp > 308
@@ -351,12 +375,19 @@ const BIGFLOAT = [BigFloat()]
     elseif exp < 0
         if v isa BigInt
             @inbounds x = BIGFLOAT[Threads.threadid()]
+            @inbounds y = BIGFLOAT2[Threads.threadid()]
             ccall((:mpfr_set_z, :libmpfr), Int32,
                 (Ref{BigFloat}, Ref{BigInt}, Int32),
                 x, v, MPFR.ROUNDING_MODE[])
-            ccall((:mpfr_div_d, :libmpfr), Int32,
-                (Ref{BigFloat}, Ref{BigFloat}, Float64, Int32),
-                x, x, exp10(-exp), MPFR.ROUNDING_MODE[])
+            ccall((:mpfr_set_d, :libmpfr), Int32,
+                (Ref{BigFloat}, Float64, Int32),
+                y, -exp, MPFR.ROUNDING_MODE[])
+            ccall((:mpfr_exp10, :libmpfr), Int32,
+                (Ref{BigFloat}, Ref{BigFloat}, Int32),
+                y, y, MPFR.ROUNDING_MODE[])
+            ccall((:mpfr_div, :libmpfr), Int32,
+                (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
+                x, x, y, MPFR.ROUNDING_MODE[])
         else
             x = v / exp10(V(-exp))
         end
