@@ -468,7 +468,7 @@ end
 
 const BIGEXP10 = [1 / exp10(BigInt(e)) for e = 309:326]
 const BIGFLOAT = [BigFloat()]
-if version > v"1.5"
+if VERSION > v"1.5"
 const BIGFLOATEXP10 = [exp10(BigFloat(i; precision=64)) for i = 1:308]
 else
 const BIGFLOATEXP10 = [exp10(BigFloat(i)) for i = 1:308]
