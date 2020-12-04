@@ -2,7 +2,11 @@ using Base.MPFR, Base.GMP, Base.GMP.MPZ
 
 _widen(x::UInt64) = UInt128(x)
 
+if VERSION > v"1.5"
 const BIGINT = [BigInt(; nbits=256)]
+else
+const BIGINT = [BigInt()]
+end
 
 function _widen(v::UInt128)
     @inbounds x = BIGINT[Threads.threadid()]
