@@ -3,14 +3,12 @@ using Base.MPFR, Base.GMP, Base.GMP.MPZ
 _widen(x::UInt64) = UInt128(x)
 
 const BIGINT = [BigInt(; nbits=256)]
-const UINT128 = [UInt128(0)]
 
 function _widen(v::UInt128)
     @inbounds x = BIGINT[Threads.threadid()]
-    @inbounds UINT128[Threads.threadid()] = v
     ccall((:__gmpz_import, :libgmp), Int32,
-        (Ref{BigInt}, Csize_t, Cint, Csize_t, Cint, Csize_t, Ptr{Cvoid}),
-        x, 1, 1, 16, 0, 0, pointer(UINT128))
+        (Ref{BigInt}, Csize_t, Cint, Csize_t, Cint, Csize_t, Ref{UInt128}),
+        x, 1, 1, 16, 0, 0, v)
     return x
 end
 

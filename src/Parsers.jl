@@ -744,7 +744,6 @@ function __init__()
     # floats.jl globals
     Threads.resize_nthreads!(BIGFLOAT)
     Threads.resize_nthreads!(BIGINT)
-    Threads.resize_nthreads!(UINT128)
     return
 end
 
