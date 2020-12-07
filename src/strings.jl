@@ -1,7 +1,7 @@
 # this is mostly copy-pasta from Parsers.jl main xparse function
 @inline function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}) where {T <: AbstractString, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
     startpos = vstartpos = vpos = pos
-    sentinelpos = 0
+    sentstart = sentinelpos = 0
     code = SUCCESS
     sentinel = options.sentinel
     quoted = false
