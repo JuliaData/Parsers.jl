@@ -472,6 +472,9 @@ missings = ["na"]
 opts = Parsers.Options(sentinel=missings, trues=["true"])
 @test missings == ["na"]
 
+# reported from Slack via CSV.jl
+@test Parsers.xparse(String, ""; sentinel=["NULL"]) == (33, 33, 1, 0, 0)
+
 end # @testset "misc"
 
 include("floats.jl")
