@@ -34,6 +34,11 @@ function _muladd(ten, digits::BigInt, b)
     return digits
 end
 
+@inline function typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}) where {T <: Real, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
+    x, code, pos = typeparser(Float64, source, pos, len, b, code, options)
+    return T(x), code, pos
+end
+
 @inline function typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}) where {T <: SupportedFloats, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
     # keep track of starting pos in case of invalid, we can rewind to start of parsing
     startpos = pos
