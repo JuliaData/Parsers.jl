@@ -1,8 +1,11 @@
 Parsers.jl
 =============
 
+[![CI](https://github.com/JuliaData/Parsers.jl/workflows/CI/badge.svg)](https://github.com/JuliaData/Parsers.jl/actions?query=workflow%3ACI)
 [![codecov](https://codecov.io/gh/JuliaData/Parsers.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/JuliaData/Parsers.jl)
-[![Travis Build Status](https://travis-ci.org/JuliaData/Parsers.jl.svg?branch=master)](https://travis-ci.org/JuliaData/Parsers.jl)
+[![deps](https://juliahub.com/docs/Parsers/deps.svg)](https://juliahub.com/ui/Packages/Parsers/yjnue?t=2)
+[![version](https://juliahub.com/docs/Parsers/version.svg)](https://juliahub.com/ui/Packages/Parsers/yjnue)
+[![version](https://juliahub.com/docs/Parsers/version.svg)](https://juliahub.com/ui/Packages/Parsers/yjnue)
 
 A collection of type parsers and utilities for Julia.
 
