@@ -1,3 +1,11 @@
+@inline function xparse(::Type{T}, source::IO, pos, len, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}) where {T <: Dates.TimeType, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
+    _, _code, vpos, vlen, tlen = xparse(String, source, pos, len, options)
+    fastseek!(source, pos - 1)
+    bytes = Vector{UInt8}(undef, tlen)
+    tlen > 0 && readbytes!(source, bytes)
+    return xparse(T, bytes, 1, tlen, options)
+end
+
 @inline function typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}) where {T <: Dates.TimeType, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
     df = options.dateformat === nothing ? Dates.default_format(T) : options.dateformat
     ret = mytryparsenext_internal(T, source, Int(pos), len, df)
