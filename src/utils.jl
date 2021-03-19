@@ -280,3 +280,34 @@ codes(r) = chop(chop(string(
 defaultdateformat(T) = Dates.dateformat""
 defaultdateformat(::Type{T}) where {T <: Dates.TimeType} = Dates.default_format(T)
 ptrlen(s::String) = (pointer(s), sizeof(s))
+
+"""
+    Parsers.getstring(buf_or_io, vpos, vlen) => String
+
+When calling `Parsers.xparse` directly, you get 5 return values:
+  * `x`: the value parsed
+  * `code`: a parsing return code indicating success/failure
+  * `vpos`: the byte position in the source of the value parsed
+  * `vlen`: the length in bytes of the value parsed
+  * `tlen`: the total number of bytes parsed, which may differ from `vlen` if delimiters or open/close quotes were parsed
+
+When parsing `String`s, however, `x` isn't a `String` and no `String` is made
+of the value parsed. This is for efficiency to allow the caller to avoid
+materializing costly strings if not needed.
+
+If the actual parsed `String` _is_ needed, however, you can pass your source,
+the `vpos`, and `vlen` return values from `Parsers.xparse` to `Parsers.getstring`
+to get the actual parsed `String` value.
+"""
+function getstring end
+
+getstring(str::AbstractString, vpos, vlen) = getstring(codeunits(str), vpos, vlen)
+getstring(buf::AbstractVector{UInt8}, vpos, vlen) =
+    unsafe_string(pointer(buf, vpos), vlen)
+
+function getstring(io::IO, vpos, vlen)
+    fastseek!(io, vpos - 1)
+    str = Base.StringVector(vlen)
+    readbytes!(io, str, vlen)
+    return String(str)
+end

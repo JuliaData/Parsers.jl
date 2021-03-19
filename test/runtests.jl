@@ -475,6 +475,11 @@ opts = Parsers.Options(sentinel=missings, trues=["true"])
 # reported from Slack via CSV.jl
 @test Parsers.xparse(String, ""; sentinel=["NULL"]) == (33, 33, 1, 0, 0)
 
+# Parsers.getstring
+@test Parsers.getstring(b"hey there", 5, 5) == "there"
+@test Parsers.getstring(IOBuffer("hey there"), 5, 5) == "there"
+@test Parsers.getstring("hey there", 5, 5) == "there" 
+
 end # @testset "misc"
 
 include("floats.jl")

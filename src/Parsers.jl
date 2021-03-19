@@ -153,7 +153,7 @@ default(::Type{T}) where {T <: Dates.TimeType} = T(0)
     `options` is an instance of `Parsers.Options`.
 
     `Parsers.xparse` returns a tuple of 5 values:
-      * `x` is a value of type `T`, even if parsing does not succeed
+      * `x` is a value of type `T`, even if parsing does not succeed; for parsed `String`s, no string is returned to avoid excess allocating; if you'd like the actual parsed string value, you can call `Parsers.getstring(source, startpos, value_len)`
       * `code` is a bitmask of parsing codes, use `Parsers.codes(code)` or `Parsers.text(code)` to see the various bit values set. See `?Parsers.ReturnCode` for additional details on the various parsing codes
       * `startpos`: the starting byte position of the value being parsed; will always equal the start `pos` passed in, except for quoted field where it will point instead to the first byte after the open quote character
       * `value_len`: the # of bytes consumed while parsing a value, will be equal to the total number of bytes consumed, except for quoted or delimited fields where the quote and delimiter characters will be subtracted out
