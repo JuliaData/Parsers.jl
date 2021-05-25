@@ -2,7 +2,7 @@ struct Delim{T} <: Dates.AbstractDateToken
     d::T
 end
 
-charactercode(d::Dates.DatePart{c}) where {c} = c
+charactercode(::Dates.DatePart{c}) where {c} = c
 
 function Format(f::AbstractString, locale::Dates.DateLocale=Dates.ENGLISH)
     tokens = Dates.AbstractDateToken[]

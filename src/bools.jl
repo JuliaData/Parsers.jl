@@ -1,15 +1,15 @@
-@inline function typeparser(::Type{Bool}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}) where {ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
+@inline function typeparser(::Type{Bool}, source, pos, len, b, code, options::Options)
     x = false
-    if debug
-        println("start of Bool parsing")
-    end
+    # if debug
+    #     println("start of Bool parsing")
+    # end
     trues = options.trues
     falses = options.falses
     if trues === nothing
         if b == UInt8('t')
-            if debug
-                println("matched 't'")
-            end
+            # if debug
+            #     println("matched 't'")
+            # end
             pos += 1
             incr!(source)
             if eof(source, pos, len)
@@ -18,9 +18,9 @@
             end
             b = peekbyte(source, pos)
             if b == UInt8('r')
-                if debug
-                    println("matched 'r'")
-                end
+                # if debug
+                #     println("matched 'r'")
+                # end
                 pos += 1
                 incr!(source)
                 if eof(source, pos, len)
@@ -29,9 +29,9 @@
                 end
                 b = peekbyte(source, pos)
                 if b == UInt8('u')
-                    if debug
-                        println("matched 'u'")
-                    end
+                    # if debug
+                    #     println("matched 'u'")
+                    # end
                     pos += 1
                     incr!(source)
                     if eof(source, pos, len)
@@ -40,9 +40,9 @@
                     end
                     b = peekbyte(source, pos)
                     if b == UInt8('e')
-                        if debug
-                            println("matched 'e'")
-                        end
+                        # if debug
+                        #     println("matched 'e'")
+                        # end
                         pos += 1
                         incr!(source)
                         x = true
