@@ -4,6 +4,8 @@ using Dates
 
 include("utils.jl")
 
+const PtrLen = Tuple{Ptr{UInt8}, Int}
+
 """
     `Parsers.Options` is a structure for holding various parsing settings when calling `Parsers.parse`, `Parsers.tryparse`, and `Parsers.xparse`. They include:
 
@@ -24,20 +26,23 @@ include("utils.jl")
   * `ignoreemptylines=false`: after parsing a value, if a newline is detected, another immediately proceeding newline will be checked for and consumed
   * `debug=false`: if `true`, various debug logging statements will be printed while parsing; useful when diagnosing why parsing returns certain `Parsers.ReturnCode` values
 """
-struct Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
+struct Options
     refs::Vector{String} # for holding references to sentinel, trues, falses, cmt strings
-    sentinel::S # Union{Nothing, Missing, Vector{Tuple{Ptr{UInt8}, Int}}}
+    sentinel::Union{Nothing, Missing, Vector{PtrLen}}
+    ignorerepeated::Bool
+    ignoreemptylines::Bool
     wh1::UInt8
     wh2::UInt8
+    quoted::Bool
     oq::UInt8
     cq::UInt8
     e::UInt8
-    delim::D # Union{Nothing, UInt8, Tuple{Ptr{UInt8}, Int}}
+    delim::Union{Nothing, UInt8, PtrLen}
     decimal::UInt8
-    trues::Union{Nothing, Vector{Tuple{Ptr{UInt8}, Int}}}
-    falses::Union{Nothing, Vector{Tuple{Ptr{UInt8}, Int}}}
-    dateformat::DF # Union{Nothing, Dates.DateFormat}
-    cmt::Union{Nothing, Tuple{Ptr{UInt8}, Int}}
+    trues::Union{Nothing, Vector{PtrLen}}
+    falses::Union{Nothing, Vector{PtrLen}}
+    dateformat::Union{Nothing, Dates.DateFormat}
+    cmt::Union{Nothing, PtrLen}
     strict::Bool
     silencewarnings::Bool
 end
@@ -100,7 +105,7 @@ function Options(
         cmt = ptrlen(comment)
     end
     df = dateformat === nothing ? nothing : dateformat isa String ? Dates.DateFormat(dateformat) : dateformat
-    return Options{ignorerepeated, ignoreemptylines, quoted, debug, typeof(sent), typeof(del), typeof(df)}(refs, sent, wh1 % UInt8, wh2 % UInt8, oq % UInt8, cq % UInt8, e % UInt8, del, decimal % UInt8, trues, falses, df, cmt, strict, silencewarnings)
+    return Options(refs, sent, ignorerepeated, ignoreemptylines, wh1 % UInt8, wh2 % UInt8, quoted, oq % UInt8, cq % UInt8, e % UInt8, del, decimal % UInt8, trues, falses, df, cmt, strict, silencewarnings)
 end
 
 Options(;
@@ -161,7 +166,7 @@ default(::Type{T}) where {T <: Dates.TimeType} = T(0)
 """
 function xparse end
 
-function xparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=true, openquotechar::Union{UInt8, Char}=UInt8('"'), closequotechar::Union{UInt8, Char}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, ignoreemptylines::Bool=false, delim::Union{UInt8, Char, Tuple{Ptr{UInt8}, Int}, AbstractString, Nothing}=UInt8(','), decimal::Union{UInt8, Char}=UInt8('.'), comment=nothing, trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, debug::Bool=false) where {T}
+function xparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=true, openquotechar::Union{UInt8, Char}=UInt8('"'), closequotechar::Union{UInt8, Char}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, ignoreemptylines::Bool=false, delim::Union{UInt8, Char, PtrLen, AbstractString, Nothing}=UInt8(','), decimal::Union{UInt8, Char}=UInt8('.'), comment=nothing, trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, debug::Bool=false) where {T}
     options = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, debug)
     return xparse(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
 end
@@ -173,29 +178,29 @@ end
 const SupportedFloats = Union{Float16, Float32, Float64, BigFloat}
 const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
 
-@inline function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}=XOPTIONS) where {T <: SupportedTypes, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
+@inline function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS) where {T <: SupportedTypes}
     startpos = vstartpos = vpos = pos
     sentinel = options.sentinel
     code = SUCCESS
     x = default(T)
     quoted = false
     sentinelpos = 0
-    if debug
-        println("parsing $T, pos=$pos, len=$len")
-    end
+    # if debug
+    #     println("parsing $T, pos=$pos, len=$len")
+    # end
     if eof(source, pos, len)
         code = (sentinel === missing ? SENTINEL : INVALID) | EOF
         @goto donedone
     end
     b = peekbyte(source, pos)
-    if debug
-        println("1) parsed: '$(escape_string(string(Char(b))))'")
-    end
+    # if debug
+    #     println("1) parsed: '$(escape_string(string(Char(b))))'")
+    # end
     # strip leading whitespace
     while b == options.wh1 || b == options.wh2
-        if debug
-            println("stripping leading whitespace")
-        end
+        # if debug
+        #     println("stripping leading whitespace")
+        # end
         pos += 1
         incr!(source)
         if eof(source, pos, len)
@@ -203,17 +208,17 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
             @goto donedone
         end
         b = peekbyte(source, pos)
-        if debug
-            println("2) parsed: '$(escape_string(string(Char(b))))'")
-        end
+        # if debug
+        #     println("2) parsed: '$(escape_string(string(Char(b))))'")
+        # end
     end
     # check for start of quoted field
-    if Q
+    if options.quoted
         quoted = b == options.oq
         if quoted
-            if debug
-                println("detected open quote character")
-            end
+            # if debug
+            #     println("detected open quote character")
+            # end
             code = QUOTED
             pos += 1
             vstartpos = pos
@@ -223,14 +228,14 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                 @goto donedone
             end
             b = peekbyte(source, pos)
-            if debug
-                println("3) parsed: '$(escape_string(string(Char(b))))'")
-            end
+            # if debug
+            #     println("3) parsed: '$(escape_string(string(Char(b))))'")
+            # end
             # ignore whitespace within quoted field
             while b == options.wh1 || b == options.wh2
-                if debug
-                    println("stripping whitespace within quoted field")
-                end
+                # if debug
+                #     println("stripping whitespace within quoted field")
+                # end
                 pos += 1
                 incr!(source)
                 if eof(source, pos, len)
@@ -238,18 +243,18 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                     @goto donedone
                 end
                 b = peekbyte(source, pos)
-                if debug
-                    println("4) parsed: '$(escape_string(string(Char(b))))'")
-                end
+                # if debug
+                #     println("4) parsed: '$(escape_string(string(Char(b))))'")
+                # end
             end
         end
     end
     # check for sentinel values if applicable
     if sentinel !== nothing && sentinel !== missing
-        if debug
-            println("checking for sentinel value")
-        end
-        sentinelpos = checksentinel(source, pos, len, sentinel, debug)
+        # if debug
+        #     println("checking for sentinel value")
+        # end
+        sentinelpos = checksentinel(source, pos, len, sentinel)
     end
     x, code, pos = typeparser(T, source, pos, len, b, code, options)
     if sentinel !== nothing && sentinel !== missing && sentinelpos >= pos
@@ -276,15 +281,15 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
 
 @label donevalue
     b = peekbyte(source, pos)
-    if debug
-        println("finished $T value parsing: pos=$pos, current character: '$(escape_string(string(Char(b))))'")
-    end
+    # if debug
+    #     println("finished $T value parsing: pos=$pos, current character: '$(escape_string(string(Char(b))))'")
+    # end
     # donevalue means we finished parsing a value or sentinel, but didn't reach len, b is still the current byte
     # strip trailing whitespace
     while b == options.wh1 || b == options.wh2
-        if debug
-            println("stripping trailing whitespace")
-        end
+        # if debug
+        #     println("stripping trailing whitespace")
+        # end
         pos += 1
         vpos += 1
         incr!(source)
@@ -296,18 +301,18 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
             @goto donedone
         end
         b = peekbyte(source, pos)
-        if debug
-            println("8) parsed: '$(escape_string(string(Char(b))))'")
-        end
+        # if debug
+        #     println("8) parsed: '$(escape_string(string(Char(b))))'")
+        # end
     end
-    if Q
+    if options.quoted
         # for quoted fields, find the closing quote character
         # we should be positioned at the correct place to find the closing quote character if everything is as it should be
         # if we don't find the quote character immediately, something's wrong, so mark INVALID
         if quoted
-            if debug
-                println("looking for close quote character")
-            end
+            # if debug
+            #     println("looking for close quote character")
+            # end
             same = options.cq == options.e
             first = true
             while true
@@ -354,19 +359,19 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                 end
                 first = false
                 b = peekbyte(source, pos)
-                if debug
-                    println("9) parsed: '$(escape_string(string(Char(b))))'")
-                end
+                # if debug
+                #     println("9) parsed: '$(escape_string(string(Char(b))))'")
+                # end
             end
             b = peekbyte(source, pos)
-            if debug
-                println("10) parsed: '$(escape_string(string(Char(b))))'")
-            end
+            # if debug
+            #     println("10) parsed: '$(escape_string(string(Char(b))))'")
+            # end
             # ignore whitespace after quoted field
             while b == options.wh1 || b == options.wh2
-                if debug
-                    println("stripping trailing whitespace after close quote character")
-                end
+                # if debug
+                #     println("stripping trailing whitespace after close quote character")
+                # end
                 pos += 1
                 incr!(source)
                 if eof(source, pos, len)
@@ -374,9 +379,9 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                     @goto donedone
                 end
                 b = peekbyte(source, pos)
-                if debug
-                    println("11) parsed: '$(escape_string(string(Char(b))))'")
-                end
+                # if debug
+                #     println("11) parsed: '$(escape_string(string(Char(b))))'")
+                # end
             end
         end
     end
@@ -384,10 +389,10 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
     if options.delim !== nothing
         delim = options.delim
         # now we check for a delimiter; if we don't find it, keep parsing until we do
-        if debug
-            println("checking for delimiter: pos=$pos")
-        end
-        if !ignorerepeated
+        # if debug
+        #     println("checking for delimiter: pos=$pos")
+        # end
+        if !options.ignorerepeated
             # we're checking for a single appearance of a delimiter
             if delim isa UInt8
                 if b == delim
@@ -396,7 +401,7 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                     code |= DELIMITED
                     @goto donedone
                 end
-            else
+            elseif delim isa PtrLen
                 predelimpos = pos
                 pos = checkdelim(source, pos, len, delim)
                 if pos > predelimpos
@@ -404,6 +409,8 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                     code |= DELIMITED
                     @goto donedone
                 end
+            else
+                error()
             end
         else
             # keep parsing as long as we keep matching delims/newlines
@@ -439,14 +446,14 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                         @goto donedone
                     end
                     b = peekbyte(source, pos)
-                    if debug
-                        println("12) parsed: '$(escape_string(string(Char(b))))'")
-                    end
+                    # if debug
+                    #     println("12) parsed: '$(escape_string(string(Char(b))))'")
+                    # end
                 end
                 if matched
                     @goto donedone
                 end
-            else
+            elseif delim isa PtrLen
                 matched = false
                 matchednewline = false
                 while true
@@ -478,13 +485,15 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                         @goto donedone
                     end
                     b = peekbyte(source, pos)
-                    if debug
-                        println("12) parsed: '$(escape_string(string(Char(b))))'")
-                    end
+                    # if debug
+                    #     println("12) parsed: '$(escape_string(string(Char(b))))'")
+                    # end
                 end
                 if matched
                     @goto donedone
                 end
+            else
+                error()
             end
         end
         # didn't find delimiter, but let's check for a newline character
@@ -517,10 +526,10 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                 @goto donedone
             end
             b = peekbyte(source, pos)
-            if debug
-                println("13) parsed: '$(escape_string(string(Char(b))))'")
-            end
-            if !ignorerepeated
+            # if debug
+            #     println("13) parsed: '$(escape_string(string(Char(b))))'")
+            # end
+            if !options.ignorerepeated
                 if delim isa UInt8
                     if b == delim
                         pos += 1
@@ -528,7 +537,7 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                         code |= DELIMITED
                         @goto donedone
                     end
-                else
+                elseif delim isa PtrLen
                     predelimpos = pos
                     pos = checkdelim(source, pos, len, delim)
                     if pos > predelimpos
@@ -536,6 +545,8 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                         code |= DELIMITED
                         @goto donedone
                     end
+                else
+                    error()
                 end
             else
                 if delim isa UInt8
@@ -570,14 +581,14 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                             @goto donedone
                         end
                         b = peekbyte(source, pos)
-                        if debug
-                            println("14) parsed: '$(escape_string(string(Char(b))))'")
-                        end
+                        # if debug
+                        #     println("14) parsed: '$(escape_string(string(Char(b))))'")
+                        # end
                     end
                     if matched
                         @goto donedone
                     end
-                else
+                elseif delim isa PtrLen
                     matched = false
                     matchednewline = false
                     while true
@@ -609,13 +620,15 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                             @goto donedone
                         end
                         b = peekbyte(source, pos)
-                        if debug
-                            println("14) parsed: '$(escape_string(string(Char(b))))'")
-                        end
+                        # if debug
+                        #     println("14) parsed: '$(escape_string(string(Char(b))))'")
+                        # end
                     end
                     if matched
                         @goto donedone
                     end
+                else
+                    error()
                 end
             end
             # didn't find delimiter, but let's check for a newline character
@@ -640,18 +653,18 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
     end
 
 @label donedone
-    if debug
-        println("finished parsing: $(codes(code))")
-    end
+    # if debug
+    #     println("finished parsing: $(codes(code))")
+    # end
     return x, code, Int64(vstartpos), Int64(vpos - vstartpos), Int64(pos - startpos)
 end
 
-function checkdelim!(buf, pos, len, options::Options{ignorerepeated}) where {ignorerepeated}
+function checkdelim!(buf, pos, len, options::Options)
     pos > len && return pos
     delim = options.delim
     @inbounds b = buf[pos]
     valuepos = pos
-    if !ignorerepeated
+    if !options.ignorerepeated
         # we're checking for a single appearance of a delimiter
         if delim isa UInt8
             b == delim && return pos + 1
@@ -670,7 +683,7 @@ function checkdelim!(buf, pos, len, options::Options{ignorerepeated}) where {ign
                 @inbounds b = buf[pos]
             end
             matched && return pos
-        else
+        elseif delim isa PtrLen
             matched = false
             predelimpos = pos
             pos = checkdelim(buf, pos, len, delim)
@@ -681,16 +694,18 @@ function checkdelim!(buf, pos, len, options::Options{ignorerepeated}) where {ign
                 pos = checkdelim(buf, pos, len, delim)
             end
             matched && return pos
+        else
+            error()
         end
     end
     return pos
 end
 
-function checkcmtemptylines(source, pos, len, options::Options{ignorerepeated, ignoreemptylines}) where {ignorerepeated, ignoreemptylines}
+function checkcmtemptylines(source, pos, len, options::Options)
     cmt = options.cmt
     while !eof(source, pos, len)
         skipped = false
-        if ignoreemptylines
+        if options.ignoreemptylines
             b = peekbyte(source, pos)
             if b == UInt8('\n')
                 pos += 1

@@ -1,4 +1,4 @@
-@inline function xparse(::Type{T}, source::IO, pos, len, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}) where {T <: Dates.TimeType, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
+@inline function xparse(::Type{T}, source::IO, pos, len, options::Options) where {T <: Dates.TimeType}
     _, _code, vpos, vlen, tlen = xparse(String, source, pos, len, options)
     fastseek!(source, pos - 1)
     bytes = Vector{UInt8}(undef, tlen)
@@ -6,16 +6,16 @@
     return xparse(T, bytes, 1, tlen, options)
 end
 
-@inline function typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}) where {T <: Dates.TimeType, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
+@inline function typeparser(::Type{T}, source, pos, len, b, code, options::Options) where {T <: Dates.TimeType}
     df = options.dateformat === nothing ? Dates.default_format(T) : options.dateformat
     ret = mytryparsenext_internal(T, source, Int(pos), len, df)
-    if debug
-        if ret === nothing
-            println("failed to parse $T")
-        else
-            println("parsed: $ret")
-        end
-    end
+    # if debug
+    #     if ret === nothing
+    #         println("failed to parse $T")
+    #     else
+    #         println("parsed: $ret")
+    #     end
+    # end
     if ret === nothing
         x = default(T)
         code |= INVALID
