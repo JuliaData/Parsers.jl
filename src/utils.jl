@@ -76,7 +76,7 @@ quotednotescaped(x::ReturnCode) = (x & (QUOTED | ESCAPED_STRING)) == QUOTED
 
 memcmp(a::Ptr{UInt8}, b::Ptr{UInt8}, len::Int) = ccall(:memcmp, Cint, (Ptr{UInt8}, Ptr{UInt8}, Csize_t), a, b, len) == 0
 
-@inline function checksentinel(source::AbstractVector{UInt8}, pos, len, sentinel, debug)
+@inline function checksentinel(source::AbstractVector{UInt8}, pos, len, sentinel)
     sentinelpos = 0
     startptr = pointer(source, pos)
     # sentinel is an iterable of Tuple{Ptr{UInt8}, Int}, sorted from longest sentinel string to shortest
@@ -84,9 +84,9 @@ memcmp(a::Ptr{UInt8}, b::Ptr{UInt8}, len::Int) = ccall(:memcmp, Cint, (Ptr{UInt8
         if pos + ptrlen - 1 <= len
             match = memcmp(startptr, ptr, ptrlen)
             if match
-                if debug
-                    println("matched sentinel value: \"$(escape_string(unsafe_string(ptr, ptrlen)))\"")
-                end
+                # if debug
+                #     println("matched sentinel value: \"$(escape_string(unsafe_string(ptr, ptrlen)))\"")
+                # end
                 sentinelpos = pos + ptrlen
                 break
             end
@@ -95,15 +95,15 @@ memcmp(a::Ptr{UInt8}, b::Ptr{UInt8}, len::Int) = ccall(:memcmp, Cint, (Ptr{UInt8
     return sentinelpos
 end
 
-@inline function checksentinel(source::IO, pos, len, sentinel, debug)
+@inline function checksentinel(source::IO, pos, len, sentinel)
     sentinelpos = 0
     origpos = position(source)
     for (ptr, ptrlen) in sentinel
         matched = match!(source, ptr, ptrlen)
         if matched
-            if debug
-                println("matched sentinel value: \"$(escape_string(unsafe_string(ptr, ptrlen)))\"")
-            end
+            # if debug
+            #     println("matched sentinel value: \"$(escape_string(unsafe_string(ptr, ptrlen)))\"")
+            # end
             sentinelpos = pos + ptrlen
             break
         end

@@ -1,26 +1,26 @@
 # this is mostly copy-pasta from Parsers.jl main xparse function
-@inline function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}) where {T <: AbstractString, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
+@inline function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options) where {T <: AbstractString}
     startpos = vstartpos = vpos = pos
     sentstart = sentinelpos = 0
     code = SUCCESS
     sentinel = options.sentinel
     quoted = false
-    if debug
-        println("parsing $T, pos=$pos, len=$len")
-    end
+    # if debug
+    #     println("parsing $T, pos=$pos, len=$len")
+    # end
     if eof(source, pos, len)
         code = (sentinel === missing ? SENTINEL : OK) | EOF
         @goto donedone
     end
     b = peekbyte(source, pos)
-    if debug
-        println("string 1) parsed: '$(escape_string(string(Char(b))))'")
-    end
+    # if debug
+    #     println("string 1) parsed: '$(escape_string(string(Char(b))))'")
+    # end
     # strip leading whitespace
     while b == options.wh1 || b == options.wh2
-        if debug
-            println("stripping leading whitespace")
-        end
+        # if debug
+        #     println("stripping leading whitespace")
+        # end
         pos += 1
         incr!(source)
         if eof(source, pos, len)
@@ -28,17 +28,17 @@
             @goto donedone
         end
         b = peekbyte(source, pos)
-        if debug
-            println("string 2) parsed: '$(escape_string(string(Char(b))))'")
-        end
+        # if debug
+        #     println("string 2) parsed: '$(escape_string(string(Char(b))))'")
+        # end
     end
     # check for start of quoted field
-    if Q
+    if options.quoted
         quoted = b == options.oq
         if quoted
-            if debug
-                println("detected open quote character")
-            end
+            # if debug
+            #     println("detected open quote character")
+            # end
             code = QUOTED
             pos += 1
             vstartpos = pos
@@ -48,14 +48,14 @@
                 @goto donedone
             end
             b = peekbyte(source, pos)
-            if debug
-                println("string 3) parsed: '$(escape_string(string(Char(b))))'")
-            end
+            # if debug
+            #     println("string 3) parsed: '$(escape_string(string(Char(b))))'")
+            # end
             # ignore whitespace within quoted field
             while b == options.wh1 || b == options.wh2
-                if debug
-                    println("stripping whitespace within quoted field")
-                end
+                # if debug
+                #     println("stripping whitespace within quoted field")
+                # end
                 pos += 1
                 incr!(source)
                 if eof(source, pos, len)
@@ -63,29 +63,29 @@
                     @goto donedone
                 end
                 b = peekbyte(source, pos)
-                if debug
-                    println("string 4) parsed: '$(escape_string(string(Char(b))))'")
-                end
+                # if debug
+                #     println("string 4) parsed: '$(escape_string(string(Char(b))))'")
+                # end
             end
         end
     end
     # check for sentinel values if applicable
     if sentinel !== nothing && sentinel !== missing
-        if debug
-            println("checking for sentinel value")
-        end
+        # if debug
+        #     println("checking for sentinel value")
+        # end
         sentstart = pos
-        sentinelpos = checksentinel(source, pos, len, sentinel, debug)
+        sentinelpos = checksentinel(source, pos, len, sentinel)
     end
     vpos = pos
-    if Q
+    if options.quoted
         # for quoted fields, find the closing quote character
         # we should be positioned at the correct place to find the closing quote character if everything is as it should be
         # if we don't find the quote character immediately, something's wrong, so mark INVALID
         if quoted
-            if debug
-                println("looking for close quote character")
-            end
+            # if debug
+            #     println("looking for close quote character")
+            # end
             same = options.cq == options.e
             while true
                 vpos = pos
@@ -121,19 +121,19 @@
                     @goto donedone
                 end
                 b = peekbyte(source, pos)
-                if debug
-                    println("string 9) parsed: '$(escape_string(string(Char(b))))'")
-                end
+                # if debug
+                #     println("string 9) parsed: '$(escape_string(string(Char(b))))'")
+                # end
             end
             b = peekbyte(source, pos)
-            if debug
-                println("string 10) parsed: '$(escape_string(string(Char(b))))'")
-            end
+            # if debug
+            #     println("string 10) parsed: '$(escape_string(string(Char(b))))'")
+            # end
             # ignore whitespace after quoted field
             while b == options.wh1 || b == options.wh2
-                if debug
-                    println("stripping trailing whitespace after close quote character")
-                end
+                # if debug
+                #     println("stripping trailing whitespace after close quote character")
+                # end
                 pos += 1
                 incr!(source)
                 if eof(source, pos, len)
@@ -141,9 +141,9 @@
                     @goto donedone
                 end
                 b = peekbyte(source, pos)
-                if debug
-                    println("string 11) parsed: '$(escape_string(string(Char(b))))'")
-                end
+                # if debug
+                #     println("string 11) parsed: '$(escape_string(string(Char(b))))'")
+                # end
             end
         end
     end
@@ -151,11 +151,11 @@
         delim = options.delim
         quo = Int(!quoted)
         # now we check for a delimiter; if we don't find it, keep parsing until we do
-        if debug
-            println("checking for delimiter: pos=$pos")
-        end
+        # if debug
+        #     println("checking for delimiter: pos=$pos")
+        # end
         while true
-            if !ignorerepeated
+            if !options.ignorerepeated
                 if delim isa UInt8
                     if b == delim
                         pos += 1
@@ -163,7 +163,7 @@
                         code |= DELIMITED
                         @goto donedone
                     end
-                else
+                elseif delim isa PtrLen
                     predelimpos = pos
                     pos = checkdelim(source, pos, len, delim)
                     if pos > predelimpos
@@ -171,6 +171,8 @@
                         code |= DELIMITED
                         @goto donedone
                     end
+                else
+                    error()
                 end
             else
                 if delim isa UInt8
@@ -205,14 +207,14 @@
                             @goto donedone
                         end
                         b = peekbyte(source, pos)
-                        if debug
-                            println("14) parsed: '$(escape_string(string(Char(b))))'")
-                        end
+                        # if debug
+                        #     println("14) parsed: '$(escape_string(string(Char(b))))'")
+                        # end
                     end
                     if matched
                         @goto donedone
                     end
-                else
+                elseif delim isa PtrLen
                     matched = false
                     matchednewline = false
                     while true
@@ -244,13 +246,15 @@
                             @goto donedone
                         end
                         b = peekbyte(source, pos)
-                        if debug
-                            println("14) parsed: '$(escape_string(string(Char(b))))'")
-                        end
+                        # if debug
+                        #     println("14) parsed: '$(escape_string(string(Char(b))))'")
+                        # end
                     end
                     if matched
                         @goto donedone
                     end
+                else
+                    error()
                 end
             end
             # didn't find delimiter, but let's check for a newline character
@@ -299,8 +303,8 @@
     else
         code |= OK
     end
-    if debug
-        println("finished parsing: $(codes(code))")
-    end
+    # if debug
+    #     println("finished parsing: $(codes(code))")
+    # end
     return code, code, Int64(vstartpos), Int64(vpos - vstartpos), Int64(pos - startpos)
 end
