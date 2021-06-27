@@ -61,6 +61,7 @@ const ESCAPED_STRING       = 0b0000001000000000 % ReturnCode
 const INVALID_QUOTED_FIELD = 0b1000000001000000 % ReturnCode
 const INVALID_DELIMITER    = 0b1000000010000000 % ReturnCode
 const OVERFLOW             = 0b1000000100000000 % ReturnCode
+const INVALID_TOKEN        = 0b1000010000000000 % ReturnCode
 
 ok(x::ReturnCode) = (x & (OK | INVALID)) == OK
 invalid(x::ReturnCode) = x < 0
@@ -73,6 +74,8 @@ invalidquotedfield(x::ReturnCode) = (x & INVALID_QUOTED_FIELD) == INVALID_QUOTED
 invaliddelimiter(x::ReturnCode) = (x & INVALID_DELIMITER) == INVALID_DELIMITER
 overflow(x::ReturnCode) = (x & OVERFLOW) == OVERFLOW
 quotednotescaped(x::ReturnCode) = (x & (QUOTED | ESCAPED_STRING)) == QUOTED
+invalidtoken(x::ReturnCode) = (x & INVALID_TOKEN) == INVALID_TOKEN
+eof(x::ReturnCode) = (x & EOF) == EOF
 
 memcmp(a::Ptr{UInt8}, b::Ptr{UInt8}, len::Int) = ccall(:memcmp, Cint, (Ptr{UInt8}, Ptr{UInt8}, Csize_t), a, b, len) == 0
 

@@ -130,3 +130,87 @@ end
     @test_throws Parsers.Error Parsers.parse(DateTime, IOBuffer("2020-05-05T00:00:60"))
 
 end
+
+@test_throws Parsers.Error Parsers.parse(DateTime, "a02/15/1996 25:00", Parsers.Options(dateformat=Parsers.DateFormat("mm/dd/yyyy HH:MM")))
+@test_throws Parsers.Error Parsers.parse(DateTime, "02/15/1996 25:00", Parsers.Options(dateformat=Parsers.DateFormat("mm/dd/yyyy HH:MM")))
+@test_throws Parsers.Error Parsers.parse(DateTime, "1996-Jan-15", Parsers.Options(dateformat="yy-mm-dd"))
+@test_throws Parsers.Error Parsers.parse(DateTime, "96/2/15", Parsers.Options(dateformat="yy/uuu/dd"))
+@test_throws Parsers.Error Parsers.parse(DateTime, "2017-Mar-17 00:00:00.1234", Parsers.Options(dateformat="y-u-d H:M:S.s"))
+
+@test_throws Parsers.Error Parsers.parse(Time, "24:00")  # invalid hours
+@test_throws Parsers.Error Parsers.parse(Time, "00:60")  # invalid minutes
+@test_throws Parsers.Error Parsers.parse(Time, "00:00:60")  # invalid seconds
+@test_throws Parsers.Error Parsers.parse(Time, "20:03:20", Parsers.Options(dateformat="HH:MM"))  # too much precision
+@test_throws Parsers.Error Parsers.parse(Time, "10:33:51", Parsers.Options(dateformat="yyyy-mm-dd HH:MM:SS"))  # Time can't hold year/month/day
+@test_throws Parsers.Error Parsers.parse(Time, "2021-06-26 10:33:51", Parsers.Options(dateformat="yyyy-mm-dd HH:MM:SS"))  # Time can't hold year/month/day
+
+Dates.LOCALES["french"] = Dates.DateLocale(
+    ["janvier", "février", "mars", "avril", "mai", "juin",
+        "juillet", "août", "septembre", "octobre", "novembre", "décembre"],
+    ["janv", "févr", "mars", "avril", "mai", "juin",
+        "juil", "août", "sept", "oct", "nov", "déc"],
+    ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"],
+    [""],
+)
+
+testcases = [
+    ("yy-mm-dd", "96-01-15", Dates.DateTime(96, 1, 15)),
+    ("yy-mm-dd", "96-1-15", Dates.DateTime(96, 1, 15)),
+    ("yy-mm-dd", "96-1-1", Dates.DateTime(96, 1, 1)),
+    ("yy-mm-dd", "1996-1-15", Dates.DateTime(1996, 1, 15)),
+    ("yy/uuu/dd", "96/Feb/15", Dates.DateTime(96, 2, 15)),
+    ("yy/uuu/dd", "1996/Feb/15", Dates.DateTime(1996, 2, 15)),
+    ("yy/uuu/dd", "96/Feb/1", Dates.DateTime(96, 2, 1)),
+    
+    ("yyyy, uuu, dd", "1996, Jan, 15", Dates.DateTime(1996, 1, 15)),
+    ("yyyy.U.dd", "1996.February.15", Dates.DateTime(1996, 2, 15)),
+    ("yyyymmdd", "19960315", Dates.DateTime(1996, 3, 15)),
+    ("yyyy-mm-dd HH:MM:SS", "1996-12-15 10:00:00", Dates.DateTime(1996, 12, 15, 10)),
+    ("ymd", "999", Dates.DateTime(9, 9, 9)),
+    ("/yyyy/m/d", "/1996/5/15", Dates.DateTime(1996, 5, 15)),
+    ("yyyy年mm月dd日", "2009年12月01日", Dates.DateTime(2009, 12, 1)),
+    
+    (Parsers.DateFormat("dd uuuuu yyyy", "french"), "28 mai 2014", Dates.DateTime(2014, 5, 28)),
+    (Parsers.DateFormat("dd uuuuu yyyy", "french"), "28 févr 2014", Dates.DateTime(2014, 2, 28)),
+    (Parsers.DateFormat("dd uuuuu yyyy", "french"), "28 août 2014", Dates.DateTime(2014, 8, 28)),
+    (Parsers.DateFormat("dd u yyyy", "french"), "28 avril 2014", Dates.DateTime(2014, 4, 28)),
+    (Parsers.DateFormat("dduuuuyyyy", "french"), "28mai2014", Dates.DateTime(2014, 5, 28)),
+    (Parsers.DateFormat("dduuuuyyyy", "french"), "28août2014", Dates.DateTime(2014, 8, 28)),
+
+    ("[HH:MM:SS.sss]", "[14:51:00.118]", Dates.DateTime(1, 1, 1, 14, 51, 0, 118)),
+    ("HH:MM:SS.sss", "14:51:00.118", Dates.DateTime(1, 1, 1, 14, 51, 0, 118)),
+    ("[HH:MM:SS.sss?", "[14:51:00.118?", Dates.DateTime(1, 1, 1, 14, 51, 0, 118)),
+    ("?HH:MM:SS.sss?", "?14:51:00.118?", Dates.DateTime(1, 1, 1, 14, 51, 0, 118)),
+    ("xHH:MM:SS.sss]", "x14:51:00.118]", Dates.DateTime(1, 1, 1, 14, 51, 0, 118)),
+    ("HH:MM:SS.sss]", "14:51:00.118]", Dates.DateTime(1, 1, 1, 14, 51, 0, 118)),
+
+    (Dates.RFC1123Format, "Sat, 23 Aug 2014 17:22:15", Dates.DateTime(2014, 8, 23, 17, 22, 15)),
+    # milliseconds
+    ("y-u-d H:M:S.s", "2017-Mar-17 00:00:00.0000", Dates.DateTime(2017, 3, 17, 0, 0, 0, 0)),
+    ("y-u-d H:M:S.s", "2017-Mar-17 00:00:00.1", Dates.DateTime(2017, 3, 17, 0, 0, 0, 100)),
+    ("y-u-d H:M:S.s", "2017-Mar-17 00:00:00.12", Dates.DateTime(2017, 3, 17, 0, 0, 0, 120)),
+    ("y-u-d H:M:S.s", "2017-Mar-17 00:00:00.123", Dates.DateTime(2017, 3, 17, 0, 0, 0, 123)),
+    ("y-u-d H:M:S.s", "2017-Mar-17 00:00:00.1230", Dates.DateTime(2017, 3, 17, 0, 0, 0, 123)),
+]
+
+for case in testcases
+    fmt, str, dt = case
+    @test Parsers.parse(typeof(dt), str, Parsers.Options(dateformat=fmt)) == dt
+end
+
+@testset "AM/PM" begin
+    for (t12,t24) in (("12:00am","00:00"), ("12:07am","00:07"), ("01:24AM","01:24"),
+                    ("12:00pm","12:00"), ("12:15pm","12:15"), ("11:59PM","23:59"))
+        d = DateTime("2018-01-01T$t24:00")
+        t = Time("$t24:00")
+        for HH in ("HH","II")
+            @test Parsers.parse(DateTime, "2018-01-01 $t12", Parsers.Options(dateformat="yyyy-mm-dd $HH:MMp")) == d
+            @test Parsers.parse(Time, "$t12", Parsers.Options(dateformat="$HH:MMp")) == t
+        end
+    end
+    for bad in ("00:24am", "00:24pm", "13:24pm", "2pm", "12:24p.m.", "12:24 pm", "12:24pµ")
+        @test_throws Parsers.Error Parsers.parse(Time, bad, Parsers.Options(dateformat="II:MMp"))
+    end
+    # if am/pm is missing, defaults to 24-hour clock
+    @test Parsers.parse(Time, "13:24", Parsers.Options(dateformat="II:MMp")) == Parsers.parse(Time, "13:24", Parsers.Options(dateformat="HH:MM"))
+end

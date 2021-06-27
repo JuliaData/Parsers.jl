@@ -4,6 +4,11 @@ using Dates
 
 include("utils.jl")
 
+struct Format
+    tokens::Vector{Dates.AbstractDateToken}
+    locale::Dates.DateLocale
+end
+
 """
     `Parsers.Options` is a structure for holding various parsing settings when calling `Parsers.parse`, `Parsers.tryparse`, and `Parsers.xparse`. They include:
 
@@ -36,7 +41,7 @@ struct Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
     decimal::UInt8
     trues::Union{Nothing, Vector{Tuple{Ptr{UInt8}, Int}}}
     falses::Union{Nothing, Vector{Tuple{Ptr{UInt8}, Int}}}
-    dateformat::DF # Union{Nothing, Dates.DateFormat}
+    dateformat::DF # Union{Nothing, Format}
     cmt::Union{Nothing, Tuple{Ptr{UInt8}, Int}}
     strict::Bool
     silencewarnings::Bool
@@ -57,7 +62,7 @@ function Options(
             decimal::Union{UInt8, Char},
             trues::Union{Nothing, Vector{String}},
             falses::Union{Nothing, Vector{String}},
-            dateformat::Union{Nothing, String, Dates.DateFormat},
+            dateformat::Union{Nothing, String, Dates.DateFormat, Format},
             ignorerepeated, ignoreemptylines, comment, quoted, debug, strict=false, silencewarnings=false)
     asciival(wh1) && asciival(wh2) || throw(ArgumentError("whitespace characters must be ASCII"))
     asciival(oq) && asciival(cq) && asciival(e) || throw(ArgumentError("openquotechar, closequotechar, and escapechar must be ASCII characters"))
@@ -99,7 +104,7 @@ function Options(
         push!(refs, comment)
         cmt = ptrlen(comment)
     end
-    df = dateformat === nothing ? nothing : dateformat isa String ? Dates.DateFormat(dateformat) : dateformat
+    df = dateformat === nothing ? nothing : dateformat isa String ? Format(dateformat) : dateformat isa Dates.DateFormat ? Format(dateformat) : dateformat
     return Options{ignorerepeated, ignoreemptylines, quoted, debug, typeof(sent), typeof(del), typeof(df)}(refs, sent, wh1 % UInt8, wh2 % UInt8, oq % UInt8, cq % UInt8, e % UInt8, del, decimal % UInt8, trues, falses, df, cmt, strict, silencewarnings)
 end
 
@@ -114,7 +119,7 @@ Options(;
     decimal::Union{UInt8, Char}=UInt8('.'),
     trues::Union{Nothing, Vector{String}}=nothing,
     falses::Union{Nothing, Vector{String}}=nothing,
-    dateformat::Union{Nothing, String, Dates.DateFormat}=nothing,
+    dateformat::Union{Nothing, String, Dates.DateFormat, Format}=nothing,
     ignorerepeated::Bool=false,
     ignoreemptylines::Bool=false,
     comment::Union{Nothing, String}=nothing,
