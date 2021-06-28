@@ -154,6 +154,13 @@ Dates.LOCALES["french"] = Dates.DateLocale(
     [""],
 )
 
+Dates.LOCALES["gobblygook"] = Dates.DateLocale(
+    ["𒀱"],
+    ["𒀱"],
+    [""],
+    [""],
+)
+
 testcases = [
     ("yy-mm-dd", "96-01-15", Dates.DateTime(96, 1, 15)),
     ("yy-mm-dd", "96-1-15", Dates.DateTime(96, 1, 15)),
@@ -172,12 +179,13 @@ testcases = [
     ("yyyy年mm月dd日", "2009年12月01日", Dates.DateTime(2009, 12, 1)),
     ("yyyy𒀱mm𒀱dd", "2021𒀱6𒀱28", Dates.Date(2021, 6, 28)),
     
-    (Parsers.Format("dd uuuuu yyyy", "french"), "28 mai 2014", Dates.DateTime(2014, 5, 28)),
+    (Parsers.Format("dd uuuuu YYYY", "french"), "28 mai 2014", Dates.DateTime(2014, 5, 28)),
     (Parsers.Format("dd uuuuu yyyy", "french"), "28 févr 2014", Dates.DateTime(2014, 2, 28)),
     (Parsers.Format("dd uuuuu yyyy", "french"), "28 août 2014", Dates.DateTime(2014, 8, 28)),
     (Parsers.Format("dd u yyyy", "french"), "28 avril 2014", Dates.DateTime(2014, 4, 28)),
     (Parsers.Format("dduuuuyyyy", "french"), "28mai2014", Dates.DateTime(2014, 5, 28)),
     (Parsers.Format("dduuuuyyyy", "french"), "28août2014", Dates.DateTime(2014, 8, 28)),
+    (Parsers.Format("dd uuuuu YYYY", "gobblygook"), "28 𒀱 2014", Dates.DateTime(2014, 1, 28)),
 
     ("[HH:MM:SS.sss]", "[14:51:00.118]", Dates.DateTime(1, 1, 1, 14, 51, 0, 118)),
     ("HH:MM:SS.sss", "14:51:00.118", Dates.DateTime(1, 1, 1, 14, 51, 0, 118)),
@@ -187,6 +195,7 @@ testcases = [
     ("HH:MM:SS.sss]", "14:51:00.118]", Dates.DateTime(1, 1, 1, 14, 51, 0, 118)),
 
     (Dates.RFC1123Format, "Sat, 23 Aug 2014 17:22:15", Dates.DateTime(2014, 8, 23, 17, 22, 15)),
+    ("E, dd u yyyy HH:MM:SS", "Sat, 23 Aug 2014 17:22:15", Dates.DateTime(2014, 8, 23, 17, 22, 15)),
     # milliseconds
     ("y-u-d H:M:S.s", "2017-Mar-17 00:00:00.0000", Dates.DateTime(2017, 3, 17, 0, 0, 0, 0)),
     ("y-u-d H:M:S.s", "2017-Mar-17 00:00:00.1", Dates.DateTime(2017, 3, 17, 0, 0, 0, 100)),
