@@ -250,7 +250,7 @@ for (tok, fn) in zip("uUeE", Any[Dates.monthabbr_to_value, Dates.monthname_to_va
                 code |= INVALID_TOKEN
             end
         end
-        return val, pos, b, code
+        return Int64(val), pos, b, code
     end
 end
 
@@ -318,7 +318,11 @@ end
     locale::Dates.DateLocale = df.locale
     year = month = day = Int64(1)
     hour = minute = second = millisecond = Int64(0)
-    ampm = Dates.TWENTYFOURHOUR
+    @static if VERSION >= v"1.3-DEV"
+        ampm = Dates.TWENTYFOURHOUR
+    else
+        ampm = 0
+    end
     for tok in tokens
         # @show pos, Char(b), code, typeof(tok)
         eof(code) && break
@@ -365,7 +369,11 @@ end
     end
 
     if T === Time
-        valid = Dates.validargs(T, hour, minute, second, millisecond, Int64(0), Int64(0), ampm)
+        @static if VERSION >= v"1.3-DEV"
+            valid = Dates.validargs(T, hour, minute, second, millisecond, Int64(0), Int64(0), ampm)
+        else
+            valid = Dates.validargs(T, hour, minute, second, millisecond, Int64(0), Int64(0))
+        end
     elseif T === Date
         valid = Dates.validargs(T, year, month, day)
     elseif T === DateTime
@@ -380,7 +388,11 @@ end
         elseif T === Date
             x = Date(Dates.UTD(Dates.totaldays(year, month, day)))
         elseif T === DateTime
-            x = DateTime(Dates.UTM(millisecond + 1000 * (second + 60 * minute + 3600 * (Dates.adjusthour(hour, ampm)) + 86400 * Dates.totaldays(year, month, day))))
+            @static if VERSION >= v"1.3-DEV"
+                x = DateTime(Dates.UTM(millisecond + 1000 * (second + 60 * minute + 3600 * (Dates.adjusthour(hour, ampm)) + 86400 * Dates.totaldays(year, month, day))))
+            else
+                x = DateTime(Dates.UTM(millisecond + 1000 * (second + 60 * minute + 3600 * hour + 86400 * Dates.totaldays(year, month, day))))
+            end
         end
         code |= OK
     end
