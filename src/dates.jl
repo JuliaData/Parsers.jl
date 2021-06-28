@@ -59,6 +59,12 @@ function Format(df::Dates.DateFormat{S, T}) where {S, T}
             @inbounds tokens[i] = tok isa Dates.Delim ? Delim(tok.d) : dftokens[i]
         end
     end
+    if N > 15
+        for i = 16:N
+            @inbounds tok = dftokens[i]
+            @inbounds tokens[i] = tok isa Dates.Delim ? Delim(tok.d) : dftokens[i]
+        end
+    end
     return Format(tokens, df.locale)
 end
 
@@ -230,7 +236,7 @@ for (tok, fn) in zip("uUeE", Any[Dates.monthabbr_to_value, Dates.monthname_to_va
             b = peekbyte(source, pos)
         end
         val = 0
-        if startpos == pos + 1
+        if startpos == pos
             code |= INVALID_TOKEN
         else
             if source isa AbstractVector{UInt8}
@@ -310,8 +316,8 @@ end
     df = options.dateformat === nothing ? default_format(T) : options.dateformat
     tokens = df.tokens
     locale::Dates.DateLocale = df.locale
-    year = month = day = 1
-    hour = minute = second = millisecond = 0
+    year = month = day = Int64(1)
+    hour = minute = second = millisecond = Int64(0)
     ampm = Dates.TWENTYFOURHOUR
     for tok in tokens
         # @show pos, Char(b), code, typeof(tok)
@@ -359,13 +365,13 @@ end
     end
 
     if T === Time
-        valid = Dates.validargs(T, hour, minute, second, millisecond, 0, 0, ampm)
+        valid = Dates.validargs(T, hour, minute, second, millisecond, Int64(0), Int64(0), ampm)
     elseif T === Date
         valid = Dates.validargs(T, year, month, day)
     elseif T === DateTime
         valid = Dates.validargs(T, year, month, day, hour, minute, second, millisecond)
     end
-    if code < 0 || valid !== nothing
+    if invalid(code) || valid !== nothing
         x = default(T)
         code |= INVALID
     else
