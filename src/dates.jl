@@ -384,7 +384,11 @@ end
         code |= INVALID
     else
         if T === Time
-            x = Time(Nanosecond(1000000 * millisecond + 1000000000 * second + 60000000000 * minute + 3600000000000 * (Dates.adjusthour(hour, ampm))))
+            @static if VERSION >= v"1.3-DEV"
+                x = Time(Nanosecond(1000000 * millisecond + 1000000000 * second + 60000000000 * minute + 3600000000000 * (Dates.adjusthour(hour, ampm))))
+            else
+                x = Time(Nanosecond(1000000 * millisecond + 1000000000 * second + 60000000000 * minute + 3600000000000 * hour))
+            end
         elseif T === Date
             x = Date(Dates.UTD(Dates.totaldays(year, month, day)))
         elseif T === DateTime
