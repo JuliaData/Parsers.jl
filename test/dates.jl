@@ -195,7 +195,7 @@ testcases = [
     ("HH:MM:SS.sss]", "14:51:00.118]", Dates.DateTime(1, 1, 1, 14, 51, 0, 118)),
 
     (Dates.RFC1123Format, "Sat, 23 Aug 2014 17:22:15", Dates.DateTime(2014, 8, 23, 17, 22, 15)),
-    ("E, dd u yyyy HH:MM:SS", "Sat, 23 Aug 2014 17:22:15", Dates.DateTime(2014, 8, 23, 17, 22, 15)),
+    ("E, dd u yyyy HH:MM:SS", "Saturday, 23 Aug 2014 17:22:15", Dates.DateTime(2014, 8, 23, 17, 22, 15)),
     # milliseconds
     ("y-u-d H:M:S.s", "2017-Mar-17 00:00:00.0000", Dates.DateTime(2017, 3, 17, 0, 0, 0, 0)),
     ("y-u-d H:M:S.s", "2017-Mar-17 00:00:00.1", Dates.DateTime(2017, 3, 17, 0, 0, 0, 100)),
