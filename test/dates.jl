@@ -143,7 +143,7 @@ end
 @test_throws Parsers.Error Parsers.parse(Time, "00:00:60")  # invalid seconds
 @test_throws Parsers.Error Parsers.parse(Time, "20:03:20", Parsers.Options(dateformat="HH:MM"))  # too much precision
 @test_throws Parsers.Error Parsers.parse(Time, "10:33:51", Parsers.Options(dateformat="yyyy-mm-dd HH:MM:SS"))  # Time can't hold year/month/day
-@test_throws Parsers.Error Parsers.parse(Time, "2021-06-26 10:33:51", Parsers.Options(dateformat="yyyy-mm-dd HH:MM:SS"))  # Time can't hold year/month/day
+@test Parsers.parse(Time, "2021-06-26 10:33:51", Parsers.Options(dateformat="yyyy-mm-dd HH:MM:SS")) == Time(10, 33, 51)
 
 Dates.LOCALES["french"] = Dates.DateLocale(
     ["janvier", "février", "mars", "avril", "mai", "juin",
