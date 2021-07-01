@@ -2,6 +2,8 @@ struct Delim{T} <: Dates.AbstractDateToken
     d::T
 end
 
+charactercode(d::Dates.DatePart{c}) where {c} = c
+
 function Format(f::AbstractString, locale::Dates.DateLocale=Dates.ENGLISH)
     tokens = Dates.AbstractDateToken[]
     prev = ()
@@ -310,7 +312,34 @@ function tryparsenext(d::Delim{String}, source, pos, len, b, code)
 end
 
 # fallback that would call custom DatePart overloads that are expecting a string
-# tryparsenext(tok, source, pos, len, b, code)
+function tryparsenext(tok, source, pos, len, b, code)
+    strlen = min(len - pos + 1, 64)
+    if source isa AbstractVector{UInt8}
+        str = unsafe_string(pointer(source, pos), strlen)
+    else # source isa IO
+        str = String(read(source, strlen))
+    end
+    res = Dates.tryparsenext(tok, str, 1, strlen)
+    if res === nothing
+        val = nothing
+        code |= INVALID_TOKEN
+        if !(source isa AbstractVector{UInt8})
+            fastseek!(source, pos)
+        end
+    else
+        val, i = res
+        pos += i - 1
+        if !(source isa AbstractVector{UInt8})
+            fastseek!(source, pos)
+        end
+        if eof(source, pos, len)
+            code |= EOF
+        else
+            b = peekbyte(source, pos)
+        end
+    end
+    return val, pos, b, code
+end
 
 @inline function typeparser(::Type{T}, source, pos, len, b, code, @nospecialize(options)) where {T <: Dates.TimeType}
     df = options.dateformat === nothing ? default_format(T) : options.dateformat
@@ -318,11 +347,13 @@ end
     locale::Dates.DateLocale = df.locale
     year = month = day = Int64(1)
     hour = minute = second = millisecond = Int64(0)
+    tz = ""
     @static if VERSION >= v"1.3-DEV"
         ampm = Dates.TWENTYFOURHOUR
     else
         ampm = 0
     end
+    extras = nothing
     for tok in tokens
         # @show pos, Char(b), code, typeof(tok)
         eof(code) && break
@@ -358,6 +389,18 @@ end
             ampm, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
         elseif T !== Date && tok isa Dates.DatePart{'s'}
             millisecond, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
+        elseif tok isa Dates.DatePart{'z'}
+            tz, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
+        elseif tok isa Dates.DatePart{'Z'}
+            tz, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
+        else
+            # non-Dates defined character code
+            # allocate extras if not already and parse
+            if extras === nothing
+                extras = Dict{Type, Any}()
+            end
+            val, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
+            extras[Dates.CONVERSION_SPECIFIERS[charactercode(tok)]] = val
         end
         if invalid(code)
             if invalidtoken(code)
@@ -377,7 +420,28 @@ end
     elseif T === Date
         valid = Dates.validargs(T, year, month, day)
     elseif T === DateTime
-        valid = Dates.validargs(T, year, month, day, hour, minute, second, millisecond)
+        @static if VERSION >= v"1.3-DEV"
+            valid = Dates.validargs(T, year, month, day, hour, minute, second, millisecond, ampm)
+        else
+            valid = Dates.validargs(T, year, month, day, hour, minute, second, millisecond)
+        end
+    elseif T.name.name === :ZonedDateTime
+        valid = Dates.validargs(T, year, month, day, hour, minute, second, millisecond, tz)
+    else
+        # custom TimeType
+        if extras === nothing
+            extras = Dict{Type, Any}()
+        end
+        extras[Year] = year; extras[Month] = month; extras[Day] = day;
+        extras[Hour] = hour; extras[Minute] = minute; extras[Second] = second; extras[Millisecond] = millisecond;
+        types = Dates.CONVERSION_TRANSLATIONS[T]
+        vals = Vector{Any}(undef, length(types))
+        for (i, type) in enumerate(types)
+            vals[i] = get(extras, type) do
+                Dates.CONVERSION_DEFAULTS[type]
+            end
+        end
+        valid = Dates.validargs(T, vals...)
     end
     if invalid(code) || valid !== nothing
         x = default(T)
@@ -397,6 +461,11 @@ end
             else
                 x = DateTime(Dates.UTM(millisecond + 1000 * (second + 60 * minute + 3600 * hour + 86400 * Dates.totaldays(year, month, day))))
             end
+        elseif T.name.name === :ZonedDateTime
+            x = T(year, month, day, hour, minute, second, millisecond, tz)
+        else
+            # custom TimeType
+            x = T(vals...)
         end
         code |= OK
     end

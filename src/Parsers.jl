@@ -147,7 +147,13 @@ end
 
 default(::Type{T}) where {T <: Integer} = zero(T)
 default(::Type{T}) where {T <: AbstractFloat} = T(0.0)
-default(::Type{T}) where {T <: Dates.TimeType} = T(0)
+function default(::Type{T}) where {T <: Dates.TimeType}
+    if applicable(T, 0)
+        T(0)
+    else
+        T(0, TimeZone("UTC"))
+    end
+end
 
 # for testing purposes only, it's much too slow to dynamically create Options for every xparse call
 """
