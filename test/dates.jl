@@ -2,60 +2,66 @@ using Dates
 
 @testset "Date.TimeTypes" begin
 
-x, code, vpos, vlen, tlen = Parsers.xparse(Date, "")
-@test x === Date(0)
+res = Parsers.xparse(Date, "")
+x, code = res.val, res.code
 @test code == INVALID | EOF
-x, code, vpos, vlen, tlen = Parsers.xparse(Date, "2018-01-01")
+res = Parsers.xparse(Date, "2018-01-01")
+x, code = res.val, res.code
 @test x === Date(2018, 1, 01)
 @test code == OK | EOF
-x, code, vpos, vlen, tlen = Parsers.xparse(DateTime, "2018-01-01")
+res = Parsers.xparse(DateTime, "2018-01-01")
+x, code = res.val, res.code
 @test x === DateTime(2018, 1, 01)
 @test code == OK | EOF
-x, code, vpos, vlen, tlen = Parsers.xparse(Time, "01:02:03")
+res = Parsers.xparse(Time, "01:02:03")
+x, code = res.val, res.code
 @test x === Time(1, 2, 3)
 @test code == OK | EOF
 
-x, code, vpos, vlen, tlen = Parsers.xparse(Date, "")
-@test x === Date(0)
+res = Parsers.xparse(Date, "")
+x, code = res.val, res.code
 @test code == INVALID | EOF
-x, code, vpos, vlen, tlen = Parsers.xparse(Date, "\"\"")
-@test x === Date(0)
+res = Parsers.xparse(Date, "\"\"")
+x, code = res.val, res.code
 @test code == QUOTED | INVALID | EOF
-x, code, vpos, vlen, tlen = Parsers.xparse(Date, "2018-01-01")
+res = Parsers.xparse(Date, "2018-01-01")
+x, code = res.val, res.code
 @test x === Date(2018, 1, 01)
 @test code == OK | EOF
-x, code, vpos, vlen, tlen = Parsers.xparse(Date, "\"2018-01-01\"")
+res = Parsers.xparse(Date, "\"2018-01-01\"")
+x, code = res.val, res.code
 @test x === Date(2018, 1, 01)
 @test code == QUOTED | OK | EOF
-x, code, vpos, vlen, tlen = Parsers.xparse(DateTime, "\"2018-01-01")
-@test x === DateTime(2018, 1, 1)
+res = Parsers.xparse(DateTime, "\"2018-01-01")
+x, code = res.val, res.code
 @test code == OK | QUOTED | EOF | INVALID_QUOTED_FIELD
-x, code, vpos, vlen, tlen = Parsers.xparse(Date, "\"abcd\"")
-@test x === Date(0)
+res = Parsers.xparse(Date, "\"abcd\"")
+x, code = res.val, res.code
 @test code == QUOTED | INVALID | EOF
 
-x, code, vpos, vlen, tlen = Parsers.xparse(Date, "NA", sentinel=["NA"])
-@test x === Date(0)
+res = Parsers.xparse(Date, "NA", sentinel=["NA"])
+x, code = res.val, res.code
 @test code === SENTINEL | EOF
-x, code, vpos, vlen, tlen = Parsers.xparse(Date, "\\N", sentinel=["\\N"])
-@test x === Date(0)
+res = Parsers.xparse(Date, "\\N", sentinel=["\\N"])
+x, code = res.val, res.code
 @test code === SENTINEL | EOF
-x, code, vpos, vlen, tlen = Parsers.xparse(Date, "NA2", sentinel=["NA"])
-@test x === Date(0)
+res = Parsers.xparse(Date, "NA2", sentinel=["NA"])
+x, code = res.val, res.code
 @test code === SENTINEL | INVALID_DELIMITER | EOF
-x, code, vpos, vlen, tlen = Parsers.xparse(Date, "-", sentinel=["-"])
-@test x === Date(0)
+res = Parsers.xparse(Date, "-", sentinel=["-"])
+x, code = res.val, res.code
 @test code === SENTINEL | EOF
-x, code, vpos, vlen, tlen = Parsers.xparse(Date, "£", sentinel=["£"])
-@test x === Date(0)
+res = Parsers.xparse(Date, "£", sentinel=["£"])
+x, code = res.val, res.code
 @test code === SENTINEL | EOF
-x, code, vpos, vlen, tlen = Parsers.xparse(Date, "null")
-@test x === Date(0)
+res = Parsers.xparse(Date, "null")
+x, code = res.val, res.code
 @test code === INVALID_DELIMITER | EOF
-x, code, vpos, vlen, tlen = Parsers.xparse(Date, ",")
-@test x === Date(0)
+res = Parsers.xparse(Date, ",")
+x, code = res.val, res.code
 @test code === INVALID | DELIMITED
-x, code, vpos, vlen, tlen = Parsers.xparse(Date, "1,")
+res = Parsers.xparse(Date, "1,")
+x, code = res.val, res.code
 @test x === Date(1)
 @test code === OK | DELIMITED
 
@@ -71,53 +77,69 @@ end
 
 @testset "Date.TimeTypes IO" begin
 
-    x, code, vpos, vlen, tlen = Parsers.xparse(Date, IOBuffer(""))
-    @test x === Date(0)
+    res = Parsers.xparse(Date, IOBuffer(""))
+    x, code = res.val, res.code
+
     @test code == INVALID | EOF
-    x, code, vpos, vlen, tlen = Parsers.xparse(Date, IOBuffer("2018-01-01"))
+    res = Parsers.xparse(Date, IOBuffer("2018-01-01"))
+    x, code = res.val, res.code
     @test x === Date(2018, 1, 01)
     @test code == OK | EOF
-    x, code, vpos, vlen, tlen = Parsers.xparse(DateTime, IOBuffer("2018-01-01"))
+    res = Parsers.xparse(DateTime, IOBuffer("2018-01-01"))
+    x, code = res.val, res.code
     @test x === DateTime(2018, 1, 01)
     @test code == OK | EOF
-    x, code, vpos, vlen, tlen = Parsers.xparse(Time, IOBuffer("01:02:03"))
+    res = Parsers.xparse(Time, IOBuffer("01:02:03"))
+    x, code = res.val, res.code
     @test x === Time(1, 2, 3)
     @test code == OK | EOF
     
-    x, code, vpos, vlen, tlen = Parsers.xparse(Date, IOBuffer("\"\""))
-    @test x === Date(0)
+    res = Parsers.xparse(Date, IOBuffer("\"\""))
+    x, code = res.val, res.code
+
     @test code == QUOTED | INVALID | EOF
-    x, code, vpos, vlen, tlen = Parsers.xparse(Date, IOBuffer("\"2018-01-01\""))
+    res = Parsers.xparse(Date, IOBuffer("\"2018-01-01\""))
+    x, code = res.val, res.code
     @test x === Date(2018, 1, 01)
     @test code == QUOTED | OK | EOF
-    x, code, vpos, vlen, tlen = Parsers.xparse(DateTime, IOBuffer("\"2018-01-01"))
+    res = Parsers.xparse(DateTime, IOBuffer("\"2018-01-01"))
+    x, code = res.val, res.code
     @test code == OK | QUOTED | EOF | INVALID_QUOTED_FIELD
-    x, code, vpos, vlen, tlen = Parsers.xparse(Date, IOBuffer("\"abcd\""))
-    @test x === Date(0)
+    res = Parsers.xparse(Date, IOBuffer("\"abcd\""))
+    x, code = res.val, res.code
+
     @test code == QUOTED | INVALID | EOF
     
-    x, code, vpos, vlen, tlen = Parsers.xparse(Date, IOBuffer("NA"), sentinel=["NA"])
-    @test x === Date(0)
+    res = Parsers.xparse(Date, IOBuffer("NA"), sentinel=["NA"])
+    x, code = res.val, res.code
+
     @test code === SENTINEL | EOF
-    x, code, vpos, vlen, tlen = Parsers.xparse(Date, IOBuffer("\\N"), sentinel=["\\N"])
-    @test x === Date(0)
+    res = Parsers.xparse(Date, IOBuffer("\\N"), sentinel=["\\N"])
+    x, code = res.val, res.code
+
     @test code === SENTINEL | EOF
-    x, code, vpos, vlen, tlen = Parsers.xparse(Date, IOBuffer("NA2"), sentinel=["NA"])
-    @test x === Date(0)
+    res = Parsers.xparse(Date, IOBuffer("NA2"), sentinel=["NA"])
+    x, code = res.val, res.code
+
     @test code === SENTINEL | INVALID_DELIMITER | EOF
-    x, code, vpos, vlen, tlen = Parsers.xparse(Date, IOBuffer("-"), sentinel=["-"])
-    @test x === Date(0)
+    res = Parsers.xparse(Date, IOBuffer("-"), sentinel=["-"])
+    x, code = res.val, res.code
+
     @test code === SENTINEL | EOF
-    x, code, vpos, vlen, tlen = Parsers.xparse(Date, IOBuffer("£"), sentinel=["£"])
-    @test x === Date(0)
+    res = Parsers.xparse(Date, IOBuffer("£"), sentinel=["£"])
+    x, code = res.val, res.code
+
     @test code === SENTINEL | EOF
-    x, code, vpos, vlen, tlen = Parsers.xparse(Date, IOBuffer("null"))
-    @test x === Date(0)
+    res = Parsers.xparse(Date, IOBuffer("null"))
+    x, code = res.val, res.code
+
     @test code === INVALID_DELIMITER | EOF
-    x, code, vpos, vlen, tlen = Parsers.xparse(Date, IOBuffer(","))
-    @test x === Date(0)
+    res = Parsers.xparse(Date, IOBuffer(","))
+    x, code = res.val, res.code
+
     @test code === INVALID | DELIMITED
-    x, code, vpos, vlen, tlen = Parsers.xparse(Date, IOBuffer("1,"))
+    res = Parsers.xparse(Date, IOBuffer("1,"))
+    x, code = res.val, res.code
     @test x === Date(1)
     @test code === OK | DELIMITED
     

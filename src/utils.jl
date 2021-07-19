@@ -64,7 +64,7 @@ const OVERFLOW             = 0b1000000100000000 % ReturnCode
 const INVALID_TOKEN        = 0b1000010000000000 % ReturnCode
 
 ok(x::ReturnCode) = (x & (OK | INVALID)) == OK
-invalid(x::ReturnCode) = x < 0
+invalid(x::ReturnCode) = x < SUCCESS
 sentinel(x::ReturnCode) = (x & SENTINEL) == SENTINEL
 quoted(x::ReturnCode) = (x & QUOTED) == QUOTED
 delimited(x::ReturnCode) = (x & DELIMITED) == DELIMITED
@@ -79,7 +79,7 @@ eof(x::ReturnCode) = (x & EOF) == EOF
 
 memcmp(a::Ptr{UInt8}, b::Ptr{UInt8}, len::Int) = ccall(:memcmp, Cint, (Ptr{UInt8}, Ptr{UInt8}, Csize_t), a, b, len) == 0
 
-@inline function checksentinel(source::AbstractVector{UInt8}, pos, len, sentinel)
+function checksentinel(source::AbstractVector{UInt8}, pos, len, sentinel)
     sentinelpos = 0
     startptr = pointer(source, pos)
     # sentinel is an iterable of Tuple{Ptr{UInt8}, Int}, sorted from longest sentinel string to shortest
@@ -98,7 +98,7 @@ memcmp(a::Ptr{UInt8}, b::Ptr{UInt8}, len::Int) = ccall(:memcmp, Cint, (Ptr{UInt8
     return sentinelpos
 end
 
-@inline function checksentinel(source::IO, pos, len, sentinel)
+function checksentinel(source::IO, pos, len, sentinel)
     sentinelpos = 0
     origpos = position(source)
     for (ptr, ptrlen) in sentinel
@@ -115,7 +115,7 @@ end
     return sentinelpos
 end
 
-@inline function checkdelim(source::AbstractVector{UInt8}, pos, len, (ptr, ptrlen))
+function checkdelim(source::AbstractVector{UInt8}, pos, len, (ptr, ptrlen))
     startptr = pointer(source, pos)
     delimpos = pos
     if pos + ptrlen - 1 <= len
@@ -127,7 +127,7 @@ end
     return delimpos
 end
 
-@inline function checkdelim(source::IO, pos, len, (ptr, ptrlen))
+function checkdelim(source::IO, pos, len, (ptr, ptrlen))
     delimpos = pos
     matched = match!(source, ptr, ptrlen)
     if matched
@@ -283,6 +283,70 @@ codes(r) = chop(chop(string(
 defaultdateformat(T) = Dates.dateformat""
 defaultdateformat(::Type{T}) where {T <: Dates.TimeType} = Dates.default_format(T)
 ptrlen(s::String) = (pointer(s), sizeof(s))
+
+primitive type PosLen 64 end
+PosLen(x::UInt64) = Base.bitcast(PosLen, x)
+UInt64(x::PosLen) = Base.bitcast(UInt64, x)
+
+Base.convert(::Type{PosLen}, x::UInt64) = PosLen(x)
+Base.convert(::Type{UInt64}, x::PosLen) = UInt64(x)
+
+const MISSING_BIT = 0x8000000000000000
+missingvalue(x) = (UInt64(x) & MISSING_BIT) == MISSING_BIT
+
+const ESCAPE_BIT = 0x4000000000000000
+escapedvalue(x) = (UInt64(x) & ESCAPE_BIT) == ESCAPE_BIT
+
+pos(x) = (Base.bitcast(Int64, x) & Base.bitcast(Int64, 0x3ffffffffff00000)) >> 20
+len(x) = Base.bitcast(Int64, x) & Base.bitcast(Int64, 0x00000000000fffff)
+
+@noinline invalidproperty() = throw(ArgumentError("invalid property $nm for PosLen"))
+function Base.getproperty(x::PosLen, nm::Symbol)
+    nm === :pos && return pos(x)
+    nm === :len && return len(x)
+    invalidproperty()
+end
+
+@noinline lentoolong(len) = throw(ArgumentError("len = $len too long"))
+
+@inline function PosLen(pos::Integer, len::Integer, ismissing=false, escaped=false)
+    len > 1048575 && lentoolong(len)
+    pos = Int64(pos) << 20
+    pos |= ifelse(ismissing, MISSING_BIT, UInt64(0))
+    pos |= ifelse(escaped, ESCAPE_BIT, UInt64(0))
+    return Base.bitcast(PosLen, pos | Int64(len))
+end
+
+# convenience to allow converting PosLen directly to String
+_unsafe_string(p, len) = ccall(:jl_pchar_to_string, Ref{String}, (Ptr{UInt8}, Int), p, len)
+
+@inline function Base.String(buf::AbstractVector{UInt8}, x::PosLen, e::UInt8)
+    escapedvalue(x) && return unescape(buf, x, e)
+    return _unsafe_string(pointer(buf, pos(x)), len(x))
+end
+
+# if a cell value of a csv file has escape characters, we need to unescape it
+@noinline function unescape(origbuf, x::PosLen, e)
+    buf = view(origbuf, x.pos:(x.pos + x.len - 1))
+    n = length(buf)
+    out = Base.StringVector(n)
+    len = 1
+    i = 1
+    @inbounds begin
+        while i <= n
+            b = buf[i]
+            if b == e
+                i += 1
+                b = buf[i]
+            end
+            out[len] = b
+            len += 1
+            i += 1
+        end
+    end
+    resize!(out, len - 1)
+    return String(out)
+end
 
 """
     Parsers.getstring(buf_or_io, vpos, vlen) => String

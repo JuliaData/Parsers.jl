@@ -1,5 +1,5 @@
 # this is mostly copy-pasta from Parsers.jl main xparse function
-@inline function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options) where {T <: AbstractString}
+function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options, ::Type{S}=PosLen) where {T <: AbstractString, S}
     startpos = vstartpos = vpos = pos
     sentstart = sentinelpos = 0
     code = SUCCESS
@@ -295,16 +295,21 @@
     end
 
 @label donedone
+    ismissing = false
     if sentinel !== nothing && sentinel !== missing && sentstart == vstartpos && sentinelpos == vpos
         # if we matched a sentinel value that was as long or longer than our type value
         code |= SENTINEL
+        ismissing = true
     elseif sentinel === missing && vstartpos == vpos
         code |= SENTINEL
+        ismissing = true
     else
         code |= OK
     end
     # if debug
     #     println("finished parsing: $(codes(code))")
     # end
-    return code, code, Int64(vstartpos), Int64(vpos - vstartpos), Int64(pos - startpos)
+    poslen = PosLen(vstartpos, vpos - vstartpos, ismissing, escapedstring(code))
+    tlen = pos - startpos
+    return Result{S}(code, tlen, poslen)
 end

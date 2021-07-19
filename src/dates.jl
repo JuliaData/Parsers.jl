@@ -312,7 +312,7 @@ function tryparsenext(d::Delim{String}, source, pos, len, b, code)
 end
 
 # fallback that would call custom DatePart overloads that are expecting a string
-function tryparsenext(tok, source, pos, len, b, code)
+function tryparsenext(tok, source, pos, len, b, code)::Tuple{Any, Int, UInt8, ReturnCode}
     strlen = min(len - pos + 1, 64)
     if source isa AbstractVector{UInt8}
         str = unsafe_string(pointer(source, pos), strlen)
@@ -341,8 +341,9 @@ function tryparsenext(tok, source, pos, len, b, code)
     return val, pos, b, code
 end
 
-@inline function typeparser(::Type{T}, source, pos, len, b, code, @nospecialize(options)) where {T <: Dates.TimeType}
-    df = options.dateformat === nothing ? default_format(T) : options.dateformat
+@inline function typeparser(::Type{T}, source, pos, len, b, code, options) where {T <: Dates.TimeType}
+    fmt = options.dateformat
+    df = fmt === nothing ? default_format(T) : fmt
     tokens = df.tokens
     locale::Dates.DateLocale = df.locale
     year = month = day = Int64(1)
@@ -399,8 +400,8 @@ end
             if extras === nothing
                 extras = Dict{Type, Any}()
             end
-            val, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
-            extras[Dates.CONVERSION_SPECIFIERS[charactercode(tok)]] = val
+            extraval, pos, b, code = tryparsenext(tok, source, pos, len, b, code)::Tuple{Any, Int, UInt8, ReturnCode}
+            extras[Dates.CONVERSION_SPECIFIERS[charactercode(tok)]] = extraval
         end
         if invalid(code)
             if invalidtoken(code)
@@ -444,7 +445,11 @@ end
         valid = Dates.validargs(T, vals...)
     end
     if invalid(code) || valid !== nothing
-        x = default(T)
+        if T.name.name === :ZonedDateTime
+            x = T(0, TimeZone("UTC"))
+        else
+            x = T(0)
+        end
         code |= INVALID
     else
         if T === Time
