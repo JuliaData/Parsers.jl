@@ -16,6 +16,15 @@ const PtrLen = Tuple{Ptr{UInt8}, Int}
 const SupportedFloats = Union{Float16, Float32, Float64, BigFloat}
 const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
 
+"""
+    Parsers.Result{T}(code::Parsers.ReturnCode, tlen[, val])
+
+Struct for holding the results of a parsing operations, returned from `Parsers.xparse`.
+Contains 3 fields:
+  * `code`: parsing bitmask with various flags set based on parsing (see [ReturnCode](@ref))
+  * `tlen`: the total number of bytes consumed while parsing
+  * `val`: the parsed value; note that `val` is optional when constructing; users *MUST* check `!Parsers.invalid(result.code)` before accessing `result.val`; if parsing fails, `result.val` is undefined
+"""
 struct Result{T}
     code::ReturnCode
     tlen::Int64
@@ -149,7 +158,14 @@ const OPTIONS = Options(nothing, UInt8(' '), UInt8('\t'), UInt8('"'), UInt8('"')
 const XOPTIONS = Options(missing, UInt8(' '), UInt8('\t'), UInt8('"'), UInt8('"'), UInt8('"'), UInt8(','), UInt8('.'), nothing, nothing, nothing, false, false, nothing, true, false)
 
 # high-level convenience functions like in Base
-"Attempt to parse a value of type `T` from string `buf`. Throws `Parsers.Error` on parser failures and invalid values."
+"""
+    Parsers.parse(T, source[, options, pos, len]) => T
+
+Parse a value of type `T` from `source`, which may be a byte buffer (`AbstractVector{UInt8}`), string, or `IO`. Optional arguments include `options`, a [`Parsers.Options`](@ref)
+struct, `pos` which indicates the byte position where parsing should begin in a byte buffer `source`, and `len` which is the byte position where parsing should stop in a byte
+buffer `source`. If parsing fails for any reason, either invalid value or non-value characters encountered before/after a value, an error will be thrown. To return `nothing`
+instead of throwing an error, use [`Parsers.tryparse`](@ref).
+"""
 function parse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS, pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
     res = xparse2(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
     code = res.code
@@ -158,7 +174,14 @@ function parse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO},
     return ok(code) && fin ? (res.val::T) : throw(Error(buf, T, code, pos, tlen))
 end
 
-"Attempt to parse a value of type `T` from `buf`. Returns `nothing` on parser failures and invalid values."
+"""
+    Parsers.tryparse(T, source[, options, pos, len]) => Union{T, Nothing}
+
+Parse a value of type `T` from `source`, which may be a byte buffer (`AbstractVector{UInt8}`), string, or `IO`. Optional arguments include `options`, a [`Parsers.Options`](@ref)
+struct, `pos` which indicates the byte position where parsing should begin in a byte buffer `source`, and `len` which is the byte position where parsing should stop in a byte
+buffer `source`. If parsing fails for any reason, either invalid value or non-value characters encountered before/after a value, `nothing` will be returned. To instead throw
+an error, use [`Parsers.parse`](@ref).
+"""
 function tryparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
     res = xparse2(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
     fin = buf isa IO || (res.tlen == (len - pos + 1))
@@ -166,18 +189,18 @@ function tryparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, I
 end
 
 """
-    Parsers.xparse!(res, T, buf, pos, len, options)
+    Parsers.xparse(T, buf, pos, len, options) => Parsers.Result{T}
 
-    The core parsing function for any type `T`. Takes a `buf`, which can be a `Vector{UInt8}`, `Base.CodeUnits`,
-    or an `IO`. `pos` is the byte position to begin parsing at. `len` is the total # of bytes in `buf` (signaling eof).
-    `options` is an instance of `Parsers.Options`.
+The core parsing function for any type `T`. Takes a `buf`, which can be an `AbstractVector{UInt8}`, `AbstractString`,
+or an `IO`. `pos` is the byte position to begin parsing at. `len` is the total # of bytes in `buf` (signaling eof).
+`options` is an instance of `Parsers.Options`.
 
-    `Parsers.xparse!` populates the `Parsers.Result` 1st argument with the following:
-      * `res.val` is a value of type `T`, but only if parsing succeeded; for parsed `String`s, no string is returned to avoid excess allocating; if you'd like the actual parsed string value, you can call `Parsers.getstring(source, startpos, value_len)`
-      * `res.code` is a bitmask of parsing codes, use `Parsers.codes(code)` or `Parsers.text(code)` to see the various bit values set. See `?Parsers.ReturnCode` for additional details on the various parsing codes
-      * `res.tlen`: the total # of bytes consumed while parsing a value, including any quote or delimiter characters; this can be added to the starting `pos` to allow calling `Parsers.xparse!` again for a subsequent field/value
+A [`Parsers.Result`](@ref) struct is returned, with the following fields:
+      * `res.val` is a value of type `T`, but only if parsing succeeded; for parsed `String`s, no string is returned to avoid excess allocating; if you'd like the actual parsed string value, you can call [`Parsers.getstring`](@ref)
+      * `res.code` is a bitmask of parsing codes, use `Parsers.codes(code)` or `Parsers.text(code)` to see the various bit values set. See [`Parsers.ReturnCode`](@ref) for additional details on the various parsing codes
+      * `res.tlen`: the total # of bytes consumed while parsing a value, including any quote or delimiter characters; this can be added to the starting `pos` to allow calling `Parsers.xparse` again for a subsequent field/value
 """
-function xparse! end
+function xparse end
 
 # for testing purposes only, it's much too slow to dynamically create Options for every xparse call
 function xparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=true, openquotechar::Union{UInt8, Char}=UInt8('"'), closequotechar::Union{UInt8, Char}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, ignoreemptylines::Bool=false, delim::Union{UInt8, Char, PtrLen, AbstractString, Nothing}=UInt8(','), decimal::Union{UInt8, Char}=UInt8('.'), comment=nothing, trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, debug::Bool=false) where {T}
@@ -194,7 +217,7 @@ function xparse(::Type{T}, source, pos, len, options, ::Type{S}=T) where {T, S}
     code = res.code
     poslen = res.val
     if !Parsers.invalid(code) && !Parsers.sentinel(code)
-        str = getstring(source, poslen.pos, poslen.len)
+        str = getstring(source, poslen, options.e)
         return Result{S}(code, res.tlen, Base.parse(T, str))
     else
         return Result{S}(code, res.tlen)
@@ -206,7 +229,7 @@ function xparse(::Type{Char}, source, pos, len, options, ::Type{S}=Char) where {
     code = res.code
     poslen = res.val
     if !Parsers.invalid(code) && !Parsers.sentinel(code)
-        return Result{S}(code, res.tlen, first(getstring(source, poslen.pos, poslen.len)))
+        return Result{S}(code, res.tlen, first(getstring(source, poslen, options.e)))
     else
         return Result{S}(code, res.tlen)
     end
@@ -220,7 +243,7 @@ function xparse(::Type{Symbol}, source, pos, len, options, ::Type{S}=Symbol) whe
         if source isa AbstractVector{UInt8}
             sym = ccall(:jl_symbol_n, Ref{Symbol}, (Ptr{UInt8}, Int), pointer(source, poslen.pos), poslen.len)
         else
-            sym = Symbol(getstring(source, poslen.pos, poslen.len))
+            sym = Symbol(getstring(source, poslen, options.e))
         end
         return Result{S}(code, res.tlen, sym)
     else
@@ -235,22 +258,13 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
     code = SUCCESS
     quoted = false
     sentinelpos = 0
-    # if debug
-    #     println("parsing $T, pos=$pos, len=$len")
-    # end
     if eof(source, pos, len)
         code = (sentinel === missing ? SENTINEL : INVALID) | EOF
         @goto donedone
     end
     b = peekbyte(source, pos)
-    # if debug
-    #     println("1) parsed: '$(escape_string(string(Char(b))))'")
-    # end
     # strip leading whitespace
     while b == wh1 || b == wh2
-        # if debug
-        #     println("stripping leading whitespace")
-        # end
         pos += 1
         incr!(source)
         if eof(source, pos, len)
@@ -258,17 +272,11 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
             @goto donedone
         end
         b = peekbyte(source, pos)
-        # if debug
-        #     println("2) parsed: '$(escape_string(string(Char(b))))'")
-        # end
     end
     # check for start of quoted field
     if options.quoted
         quoted = b == options.oq
         if quoted
-            # if debug
-            #     println("detected open quote character")
-            # end
             code = QUOTED
             pos += 1
             vstartpos = pos
@@ -278,14 +286,8 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                 @goto donedone
             end
             b = peekbyte(source, pos)
-            # if debug
-            #     println("3) parsed: '$(escape_string(string(Char(b))))'")
-            # end
             # ignore whitespace within quoted field
             while b == wh1 || b == wh2
-                # if debug
-                #     println("stripping whitespace within quoted field")
-                # end
                 pos += 1
                 incr!(source)
                 if eof(source, pos, len)
@@ -293,17 +295,11 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                     @goto donedone
                 end
                 b = peekbyte(source, pos)
-                # if debug
-                #     println("4) parsed: '$(escape_string(string(Char(b))))'")
-                # end
             end
         end
     end
     # check for sentinel values if applicable
     if sentinel !== nothing && sentinel !== missing
-        # if debug
-        #     println("checking for sentinel value")
-        # end
         sentinelpos = checksentinel(source, pos, len, sentinel)
     end
     x, code, pos = typeparser(T, source, pos, len, b, code, options)
@@ -330,15 +326,9 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
 
 @label donevalue
     b = peekbyte(source, pos)
-    # if debug
-    #     println("finished $T value parsing: pos=$pos, current character: '$(escape_string(string(Char(b))))'")
-    # end
     # donevalue means we finished parsing a value or sentinel, but didn't reach len, b is still the current byte
     # strip trailing whitespace
     while b == wh1 || b == wh2
-        # if debug
-        #     println("stripping trailing whitespace")
-        # end
         pos += 1
         incr!(source)
         if eof(source, pos, len)
@@ -349,18 +339,12 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
             @goto donedone
         end
         b = peekbyte(source, pos)
-        # if debug
-        #     println("8) parsed: '$(escape_string(string(Char(b))))'")
-        # end
     end
     if options.quoted
         # for quoted fields, find the closing quote character
         # we should be positioned at the correct place to find the closing quote character if everything is as it should be
         # if we don't find the quote character immediately, something's wrong, so mark INVALID
         if quoted
-            # if debug
-            #     println("looking for close quote character")
-            # end
             same = options.cq == options.e
             first = true
             while true
@@ -406,19 +390,10 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                 end
                 first = false
                 b = peekbyte(source, pos)
-                # if debug
-                #     println("9) parsed: '$(escape_string(string(Char(b))))'")
-                # end
             end
             b = peekbyte(source, pos)
-            # if debug
-            #     println("10) parsed: '$(escape_string(string(Char(b))))'")
-            # end
             # ignore whitespace after quoted field
             while b == wh1 || b == wh2
-                # if debug
-                #     println("stripping trailing whitespace after close quote character")
-                # end
                 pos += 1
                 incr!(source)
                 if eof(source, pos, len)
@@ -426,9 +401,6 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                     @goto donedone
                 end
                 b = peekbyte(source, pos)
-                # if debug
-                #     println("11) parsed: '$(escape_string(string(Char(b))))'")
-                # end
             end
         end
     end
@@ -436,9 +408,6 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
     if options.delim !== nothing
         delim = options.delim
         # now we check for a delimiter; if we don't find it, keep parsing until we do
-        # if debug
-        #     println("checking for delimiter: pos=$pos")
-        # end
         if !options.ignorerepeated
             # we're checking for a single appearance of a delimiter
             if delim isa UInt8
@@ -493,9 +462,6 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                         @goto donedone
                     end
                     b = peekbyte(source, pos)
-                    # if debug
-                    #     println("12) parsed: '$(escape_string(string(Char(b))))'")
-                    # end
                 end
                 if matched
                     @goto donedone
@@ -532,9 +498,6 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                         @goto donedone
                     end
                     b = peekbyte(source, pos)
-                    # if debug
-                    #     println("12) parsed: '$(escape_string(string(Char(b))))'")
-                    # end
                 end
                 if matched
                     @goto donedone
@@ -571,9 +534,6 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                 @goto donedone
             end
             b = peekbyte(source, pos)
-            # if debug
-            #     println("13) parsed: '$(escape_string(string(Char(b))))'")
-            # end
             if !options.ignorerepeated
                 if delim isa UInt8
                     if b == delim
@@ -626,9 +586,6 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                             @goto donedone
                         end
                         b = peekbyte(source, pos)
-                        # if debug
-                        #     println("14) parsed: '$(escape_string(string(Char(b))))'")
-                        # end
                     end
                     if matched
                         @goto donedone
@@ -665,9 +622,6 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                             @goto donedone
                         end
                         b = peekbyte(source, pos)
-                        # if debug
-                        #     println("14) parsed: '$(escape_string(string(Char(b))))'")
-                        # end
                     end
                     if matched
                         @goto donedone
@@ -698,9 +652,6 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
     end
 
 @label donedone
-    # if debug
-    #     println("finished parsing: $(codes(code))")
-    # end
     tlen = pos - startpos
     if ok(code)
         y::T = x
@@ -710,28 +661,20 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
     end
 end
 
+# condensed version of xparse that doesn't worry about quoting or delimiters; called from Parsers.parse/Parsers.tryparse
 @inline function xparse2(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=T) where {T <: SupportedTypes, S}
     startpos = pos
     sentinel = options.sentinel
     wh1 = options.wh1; wh2 = options.wh2
     code = SUCCESS
     quoted = false
-    # if debug
-    #     println("parsing $T, pos=$pos, len=$len")
-    # end
     if eof(source, pos, len)
         code = (sentinel === missing ? SENTINEL : INVALID) | EOF
         @goto donedone
     end
     b = peekbyte(source, pos)
-    # if debug
-    #     println("1) parsed: '$(escape_string(string(Char(b))))'")
-    # end
     # strip leading whitespace
     while b == wh1 || b == wh2
-        # if debug
-        #     println("stripping leading whitespace")
-        # end
         pos += 1
         incr!(source)
         if eof(source, pos, len)
@@ -739,9 +682,6 @@ end
             @goto donedone
         end
         b = peekbyte(source, pos)
-        # if debug
-        #     println("2) parsed: '$(escape_string(string(Char(b))))'")
-        # end
     end
     x, code, pos = typeparser(T, source, pos, len, b, code, options)
     if (code & EOF) == EOF
@@ -750,15 +690,9 @@ end
 
 @label donevalue
     b = peekbyte(source, pos)
-    # if debug
-    #     println("finished $T value parsing: pos=$pos, current character: '$(escape_string(string(Char(b))))'")
-    # end
     # donevalue means we finished parsing a value or sentinel, but didn't reach len, b is still the current byte
     # strip trailing whitespace
     while b == wh1 || b == wh2
-        # if debug
-        #     println("stripping trailing whitespace")
-        # end
         pos += 1
         incr!(source)
         if eof(source, pos, len)
@@ -769,15 +703,9 @@ end
             @goto donedone
         end
         b = peekbyte(source, pos)
-        # if debug
-        #     println("8) parsed: '$(escape_string(string(Char(b))))'")
-        # end
     end
 
 @label donedone
-    # if debug
-    #     println("finished parsing: $(codes(code))")
-    # end
     tlen = pos - startpos
     return ok(code) ? Result{S}(code, tlen, x) : Result{S}(code, tlen)
 end
@@ -787,7 +715,7 @@ end
     code = res.code
     poslen = res.val
     if !Parsers.invalid(code) && !Parsers.sentinel(code)
-        str = getstring(source, poslen.pos, poslen.len)
+        str = getstring(source, poslen, options.e)
         return Result{S}(code, res.tlen, Base.parse(T, str))
     else
         return Result{S}(code, res.tlen)
@@ -799,7 +727,7 @@ end
     code = res.code
     poslen = res.val
     if !Parsers.invalid(code) && !Parsers.sentinel(code)
-        return Result{S}(code, res.tlen, first(getstring(source, poslen.pos, poslen.len)))
+        return Result{S}(code, res.tlen, first(getstring(source, poslen, options.e)))
     else
         return Result{S}(code, res.tlen)
     end
@@ -813,7 +741,7 @@ end
         if source isa AbstractVector{UInt8}
             sym = ccall(:jl_symbol_n, Ref{Symbol}, (Ptr{UInt8}, Int), pointer(source, poslen.pos), poslen.len)
         else
-            sym = Symbol(getstring(source, poslen.pos, poslen.len))
+            sym = Symbol(getstring(source, poslen, options.e))
         end
         return Result{S}(code, res.tlen, sym)
     else

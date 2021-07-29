@@ -1,25 +1,18 @@
 # this is mostly copy-pasta from Parsers.jl main xparse function
-function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options, ::Type{S}=PosLen) where {T <: AbstractString, S}
+function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options, ::Type{S}=PosLen) where {T <: AbstractString, S}
     startpos = vstartpos = vpos = pos
     sentstart = sentinelpos = 0
     code = SUCCESS
     sentinel = options.sentinel
     quoted = false
-    # if debug
-    #     println("parsing $T, pos=$pos, len=$len")
-    # end
     if eof(source, pos, len)
         code = (sentinel === missing ? SENTINEL : OK) | EOF
         @goto donedone
     end
     b = peekbyte(source, pos)
-    # if debug
-    #     println("string 1) parsed: '$(escape_string(string(Char(b))))'")
-    # end
     # strip leading whitespace
     while b == options.wh1 || b == options.wh2
-        # if debug
-        # end
+        vpos = pos
         pos += 1
         incr!(source)
         if eof(source, pos, len)
@@ -27,34 +20,24 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
             @goto donedone
         end
         b = peekbyte(source, pos)
-        # if debug
-        #     println("string 2) parsed: '$(escape_string(string(Char(b))))'")
-        # end
     end
     # check for start of quoted field
     if options.quoted
         quoted = b == options.oq
         if quoted
-            # if debug
-            #     println("detected open quote character")
-            # end
             code = QUOTED
             pos += 1
-            vstartpos = pos
             incr!(source)
+            # since we're in quoted mode, reset vstartpos & vpos
+            vstartpos = vpos = pos
             if eof(source, pos, len)
                 code |= INVALID_QUOTED_FIELD
                 @goto donedone
             end
             b = peekbyte(source, pos)
-            # if debug
-            #     println("string 3) parsed: '$(escape_string(string(Char(b))))'")
-            # end
             # ignore whitespace within quoted field
             while b == options.wh1 || b == options.wh2
-                # if debug
-                #     println("stripping whitespace within quoted field")
-                # end
+                vpos = pos
                 pos += 1
                 incr!(source)
                 if eof(source, pos, len)
@@ -62,29 +45,18 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                     @goto donedone
                 end
                 b = peekbyte(source, pos)
-                # if debug
-                #     println("string 4) parsed: '$(escape_string(string(Char(b))))'")
-                # end
             end
         end
     end
     # check for sentinel values if applicable
     if sentinel !== nothing && sentinel !== missing
-        # if debug
-        #     println("checking for sentinel value")
-        # end
         sentstart = pos
         sentinelpos = checksentinel(source, pos, len, sentinel)
     end
     vpos = pos
     if options.quoted
         # for quoted fields, find the closing quote character
-        # we should be positioned at the correct place to find the closing quote character if everything is as it should be
-        # if we don't find the quote character immediately, something's wrong, so mark INVALID
         if quoted
-            # if debug
-            #     println("looking for close quote character")
-            # end
             same = options.cq == options.e
             while true
                 vpos = pos
@@ -120,19 +92,10 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                     @goto donedone
                 end
                 b = peekbyte(source, pos)
-                # if debug
-                #     println("string 9) parsed: '$(escape_string(string(Char(b))))'")
-                # end
             end
             b = peekbyte(source, pos)
-            # if debug
-            #     println("string 10) parsed: '$(escape_string(string(Char(b))))'")
-            # end
             # ignore whitespace after quoted field
             while b == options.wh1 || b == options.wh2
-                # if debug
-                #     println("stripping trailing whitespace after close quote character")
-                # end
                 pos += 1
                 incr!(source)
                 if eof(source, pos, len)
@@ -140,9 +103,6 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                     @goto donedone
                 end
                 b = peekbyte(source, pos)
-                # if debug
-                #     println("string 11) parsed: '$(escape_string(string(Char(b))))'")
-                # end
             end
         end
     end
@@ -150,9 +110,6 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
         delim = options.delim
         quo = Int(!quoted)
         # now we check for a delimiter; if we don't find it, keep parsing until we do
-        # if debug
-        #     println("checking for delimiter: pos=$pos")
-        # end
         while true
             if !options.ignorerepeated
                 if delim isa UInt8
@@ -206,9 +163,6 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                             @goto donedone
                         end
                         b = peekbyte(source, pos)
-                        # if debug
-                        #     println("14) parsed: '$(escape_string(string(Char(b))))'")
-                        # end
                     end
                     if matched
                         @goto donedone
@@ -245,9 +199,6 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                             @goto donedone
                         end
                         b = peekbyte(source, pos)
-                        # if debug
-                        #     println("14) parsed: '$(escape_string(string(Char(b))))'")
-                        # end
                     end
                     if matched
                         @goto donedone
@@ -308,9 +259,6 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
     if eof(source, pos, len)
         code |= EOF
     end
-    # if debug
-    #     println("finished parsing: $(codes(code))")
-    # end
     poslen = PosLen(vstartpos, vpos - vstartpos, ismissing, escapedstring(code))
     tlen = pos - startpos
     return Result{S}(code, tlen, poslen)

@@ -463,12 +463,12 @@ opts = Parsers.Options(sentinel=missings, trues=["true"])
 @test missings == ["na"]
 
 # reported from Slack via CSV.jl
-@test Parsers.xparse(String, ""; sentinel=["NULL"]) == Parsers.Result{PosLen}(Int16(33), 0, PosLen(0x0000000000100000))
+@test Parsers.xparse(String, ""; sentinel=["NULL"]) == Parsers.Result{PosLen}(Int16(33), 0, Base.bitcast(PosLen, 0x0000000000100000))
 
 # Parsers.getstring
-@test Parsers.getstring(b"hey there", 5, 5) == "there"
-@test Parsers.getstring(IOBuffer("hey there"), 5, 5) == "there"
-@test Parsers.getstring("hey there", 5, 5) == "there" 
+@test Parsers.getstring(b"hey there", Parsers.PosLen(5, 5), 0x00) == "there"
+@test Parsers.getstring(IOBuffer("hey there"), Parsers.PosLen(5, 5), 0x00) == "there"
+@test Parsers.getstring("hey there", Parsers.PosLen(5, 5), 0x00) == "there" 
 
 end # @testset "misc"
 

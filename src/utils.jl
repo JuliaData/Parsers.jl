@@ -4,12 +4,12 @@ struct Error <: Exception
     code
 end
 
-Error(buf::AbstractString, T, code, pos, totallen) = Error(buf, T, code)
-Error(buf::AbstractVector{UInt8}, T, code, pos, totallen) = Error(String(copy(buf)), T, code)
+Error(buf::AbstractString, T, code, pos, tlen) = Error(buf, T, code)
+Error(buf::AbstractVector{UInt8}, T, code, pos, tlen) = Error(String(buf[pos:(pos + tlen - 1)]), T, code)
 
-function Error(buf::IO, T, code, pos, totallen)
+function Error(buf::IO, T, code, pos, tlen)
     fastseek!(buf, pos - 1)
-    bytes = read(buf, totallen)
+    bytes = read(buf, tlen)
     return Error(String(bytes), T, code)
 end
 
@@ -36,7 +36,7 @@ encountered while parsing a value.
     * `ESCAPED_STRING`: an `escapechar` from `Parsers.Options` was encountered while parsing (check via `Parsers.escapedstring(code)`)
     * `INVALID_QUOTED_FIELD`: a `openquotechar` were detected when parsing began, but no corresponding `closequotechar` were found to correctly close a quoted field, this is usually a fatal parsing error because parsing will continue until EOF to look for the close quote character (check via `Parsers.invalidquotedfield(code)`)
     * `INVALID_DELIMITER`: a `delim` character or string were eventually detected, but not at the expected position (directly after parsing a valid value), indicating there are extra, invalid characters between a valid value and the expected delimiter (check via `Parsers.invaliddelimiter(code)`)
-    * `OVERFLOW`: overflow occurred while parsing an `Integer` value type (check via `Parsers.overflow(code)`)
+    * `OVERFLOW`: overflow occurred while parsing a type, like `Integer`, that have limits on valid values (check via `Parsers.overflow(code)`)
 
 One additional convenience function is provided, `Parsers.quotednotescaped(code)`, which checks if a value was quoted,
 but didn't contain any escape characters, useful to indicate if a string may be used "as-is", instead of needing to be unescaped.
@@ -87,9 +87,6 @@ function checksentinel(source::AbstractVector{UInt8}, pos, len, sentinel)
         if pos + ptrlen - 1 <= len
             match = memcmp(startptr, ptr, ptrlen)
             if match
-                # if debug
-                #     println("matched sentinel value: \"$(escape_string(unsafe_string(ptr, ptrlen)))\"")
-                # end
                 sentinelpos = pos + ptrlen
                 break
             end
@@ -104,9 +101,6 @@ function checksentinel(source::IO, pos, len, sentinel)
     for (ptr, ptrlen) in sentinel
         matched = match!(source, ptr, ptrlen)
         if matched
-            # if debug
-            #     println("matched sentinel value: \"$(escape_string(unsafe_string(ptr, ptrlen)))\"")
-            # end
             sentinelpos = pos + ptrlen
             break
         end
@@ -217,14 +211,14 @@ function incr!(from::IOBuffer)
     return
 end
 
-incr!(from::AbstractVector{UInt8}) = nothing
+incr!(::AbstractVector{UInt8}) = nothing
 peekbyte(from::IO, pos) = peekbyte(from)
 function peekbyte(from::AbstractVector{UInt8}, pos)
     @inbounds b = from[pos]
     return b
 end
 
-eof(source::AbstractVector{UInt8}, pos::Integer, len::Integer) = pos > len
+eof(::AbstractVector{UInt8}, pos::Integer, len::Integer) = pos > len
 eof(source::IO, pos::Integer, len::Integer) = Base.eof(source)
 
 function text(r)
@@ -284,99 +278,115 @@ defaultdateformat(T) = Dates.dateformat""
 defaultdateformat(::Type{T}) where {T <: Dates.TimeType} = Dates.default_format(T)
 ptrlen(s::String) = (pointer(s), sizeof(s))
 
+"""
+    PosLen(pos, len, ismissing, escaped)
+
+A custom 64-bit primitive that allows efficiently storing the byte position
+and length of a value within a byte array, along with whether a sentinel
+value was parsed, and whether the parsed value includes escaped characters.
+Specifically, the use of 64-bits is:
+  * 1 bit to indicate whether a sentinel value was encountered while parsing
+  * 1 bit to indicate whether the escape character was encountered while parsing
+  * 42 bits to note the byte position as an integer where a value is located in a byte array (max array size ~4.4TB)
+  * 20 bits to note the length of a parsed value (max length of ~1MB)
+
+These individual "fields" can be retrieved via dot access, like `poslen.missingvalue`, `poslen.escapedvalue`,
+`poslen.pos`, `poslen.len`.
+
+`Parsers.xparse(String, buf, pos, len, opts)` returns `Parsers.Result{PosLen}`, where the `x.val` is a `PosLen`.
+"""
 primitive type PosLen 64 end
-PosLen(x::UInt64) = Base.bitcast(PosLen, x)
-UInt64(x::PosLen) = Base.bitcast(UInt64, x)
 
-Base.convert(::Type{PosLen}, x::UInt64) = PosLen(x)
-Base.convert(::Type{UInt64}, x::PosLen) = UInt64(x)
-
-const MISSING_BIT = 0x8000000000000000
-missingvalue(x) = (UInt64(x) & MISSING_BIT) == MISSING_BIT
-
-const ESCAPE_BIT = 0x4000000000000000
-escapedvalue(x) = (UInt64(x) & ESCAPE_BIT) == ESCAPE_BIT
-
-pos(x) = (Base.bitcast(Int64, x) & Base.bitcast(Int64, 0x3ffffffffff00000)) >> 20
-len(x) = Base.bitcast(Int64, x) & Base.bitcast(Int64, 0x00000000000fffff)
+const MISSING_BIT = Base.bitcast(Int64, 0x8000000000000000)
+const ESCAPE_BIT = Base.bitcast(Int64, 0x4000000000000000)
+const POS_BITS = Base.bitcast(Int64, 0x3ffffffffff00000)
+const LEN_BITS = Base.bitcast(Int64, 0x00000000000fffff)
 
 @noinline invalidproperty() = throw(ArgumentError("invalid property $nm for PosLen"))
+
 function Base.getproperty(x::PosLen, nm::Symbol)
-    nm === :pos && return pos(x)
-    nm === :len && return len(x)
-    nm === :missingvalue && return missingvalue(x)
-    nm === :escapedvalue && return escapedvalue(x)
+    y = Base.bitcast(Int64, x)
+    nm === :pos && return (y & POS_BITS) >> 20
+    nm === :len && return y & LEN_BITS
+    nm === :missingvalue && return (y & MISSING_BIT) > 0
+    nm === :escapedvalue && return (y & ESCAPE_BIT) > 0
     invalidproperty()
 end
 
-@noinline lentoolong(len) = throw(ArgumentError("len = $len too long"))
+const MAX_POS = 4398046511104
+const MAX_LEN = 1048575
+@noinline postoolarge(pos) = throw(ArgumentError("position argument to Parsers.PosLen ($pos) is too large; max position allowed is $MAX_POS"))
+@noinline lentoolarge(len) = throw(ArgumentError("length argument to Parsers.PosLen ($len) is too large; max length allowed is $MAX_LEN"))
 
 @inline function PosLen(pos::Integer, len::Integer, ismissing=false, escaped=false)
-    len > 1048575 && lentoolong(len)
+    pos > MAX_POS && postoolarge(pos)
+    len > MAX_LEN && lentoolarge(len)
     pos = Int64(pos) << 20
-    pos |= ifelse(ismissing, MISSING_BIT, UInt64(0))
-    pos |= ifelse(escaped, ESCAPE_BIT, UInt64(0))
+    pos |= ifelse(ismissing, MISSING_BIT, 0)
+    pos |= ifelse(escaped, ESCAPE_BIT, 0)
     return Base.bitcast(PosLen, pos | Int64(len))
 end
 
-# convenience to allow converting PosLen directly to String
+"""
+    Parsers.getstring(buf_or_io, poslen::PosLen, e::UInt8) => String
+
+When calling `Parsers.xparse` with a `String` type argument, a `Parsers.Result{PosLen}` is returned, which has 3 fields:
+  * `val`: a [`PosLen`](@ref) value which stores the starting byte position and length of the parsed string value
+  * `code`: a parsing return code indicating success/failure
+  * `tlen`: the total number of bytes parsed, which may differ from `val.len` if delimiters or open/close quotes were parsed
+
+If the actual parsed `String` _is_ needed, however, you can pass your source and the `res.val::PosLen` to `Parsers.getstring`
+to get the actual parsed `String` value.
+"""
+function getstring end
+
 _unsafe_string(p, len) = ccall(:jl_pchar_to_string, Ref{String}, (Ptr{UInt8}, Int), p, len)
 
-@inline function Base.String(buf::AbstractVector{UInt8}, x::PosLen, e::UInt8)
-    escapedvalue(x) && return unescape(buf, x, e)
-    return _unsafe_string(pointer(buf, x.pos), x.len)
+@inline function getstring(source::Union{IO, AbstractVector{UInt8}}, x::PosLen, e::UInt8)
+    x.escapedvalue && return unescape(source, x, e)
+    if source isa AbstractVector{UInt8}
+        return _unsafe_string(pointer(source, x.pos), x.len)
+    else
+        vpos, vlen = x.pos, x.len
+        fastseek!(source, vpos - 1)
+        str = Base.StringVector(vlen)
+        readbytes!(source, str, vlen)
+        return String(str)
+    end
 end
+
+getstring(str::AbstractString, poslen::PosLen, e::UInt8) = getstring(codeunits(str), poslen, e)
 
 # if a cell value of a csv file has escape characters, we need to unescape it
 @noinline function unescape(origbuf, x::PosLen, e)
-    buf = view(origbuf, x.pos:(x.pos + x.len - 1))
-    n = length(buf)
+    n = x.len
+    if origbuf isa AbstractVector{UInt8}
+        buf = view(origbuf, x.pos:(x.pos + x.len - 1))
+    else
+        origpos = position(origbuf)
+        fastseek(origbuf, poslen.pos - 1)
+        buf = origbuf
+    end
     out = Base.StringVector(n)
     len = 1
     i = 1
     @inbounds begin
         while i <= n
-            b = buf[i]
+            b = peekbyte(source, i)
             if b == e
+                incr!(source)
                 i += 1
-                b = buf[i]
+                b = peekbyte(source, i)
             end
             out[len] = b
             len += 1
+            incr!(source)
             i += 1
         end
     end
+    if origbuf isa IO
+        fastseek(origbuf, origpos)
+    end
     resize!(out, len - 1)
     return String(out)
-end
-
-"""
-    Parsers.getstring(buf_or_io, vpos, vlen) => String
-
-When calling `Parsers.xparse` directly, you get 5 return values:
-  * `x`: the value parsed
-  * `code`: a parsing return code indicating success/failure
-  * `vpos`: the byte position in the source of the value parsed
-  * `vlen`: the length in bytes of the value parsed
-  * `tlen`: the total number of bytes parsed, which may differ from `vlen` if delimiters or open/close quotes were parsed
-
-When parsing `String`s, however, `x` isn't a `String` and no `String` is made
-of the value parsed. This is for efficiency to allow the caller to avoid
-materializing costly strings if not needed.
-
-If the actual parsed `String` _is_ needed, however, you can pass your source,
-the `vpos`, and `vlen` return values from `Parsers.xparse` to `Parsers.getstring`
-to get the actual parsed `String` value.
-"""
-function getstring end
-
-getstring(str::AbstractString, vpos, vlen) = getstring(codeunits(str), vpos, vlen)
-getstring(buf::AbstractVector{UInt8}, vpos, vlen) =
-    unsafe_string(pointer(buf, vpos), vlen)
-
-function getstring(io::IO, vpos, vlen)
-    fastseek!(io, vpos - 1)
-    str = Base.StringVector(vlen)
-    readbytes!(io, str, vlen)
-    return String(str)
 end

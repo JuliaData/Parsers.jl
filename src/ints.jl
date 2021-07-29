@@ -4,13 +4,10 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
 # if we eventually support non-base 10
 # overflowval(::Type{T}, base) where {T <: Integer} = div(typemax(T) - base + 1, base)
 
-@inline function typeparser(::Type{T}, source, pos, len, b, code, options::Options) where {T <: Integer}
+@inline function typeparser(::Type{T}, source, pos, len, b, code, options) where {T <: Integer}
     x = zero(T)
     neg = false
     # start actual int parsing
-    # if debug
-    #     println("start of actual $T parsing")
-    # end
     neg = b == UInt8('-')
     if neg || b == UInt8('+')
         pos += 1
