@@ -304,6 +304,8 @@ len(x) = Base.bitcast(Int64, x) & Base.bitcast(Int64, 0x00000000000fffff)
 function Base.getproperty(x::PosLen, nm::Symbol)
     nm === :pos && return pos(x)
     nm === :len && return len(x)
+    nm === :missingvalue && return missingvalue(x)
+    nm === :escapedvalue && return escapedvalue(x)
     invalidproperty()
 end
 
@@ -322,7 +324,7 @@ _unsafe_string(p, len) = ccall(:jl_pchar_to_string, Ref{String}, (Ptr{UInt8}, In
 
 @inline function Base.String(buf::AbstractVector{UInt8}, x::PosLen, e::UInt8)
     escapedvalue(x) && return unescape(buf, x, e)
-    return _unsafe_string(pointer(buf, pos(x)), len(x))
+    return _unsafe_string(pointer(buf, x.pos), x.len)
 end
 
 # if a cell value of a csv file has escape characters, we need to unescape it

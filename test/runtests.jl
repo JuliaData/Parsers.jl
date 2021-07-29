@@ -344,7 +344,7 @@ x, code, tlen = res.val, res.code, res.tlen
 @test x.pos == 2
 @test x.len == 26
 @test tlen == 29
-@test code == OK | QUOTED | DELIMITED
+@test code == OK | QUOTED | DELIMITED | EOF
 
 # https://github.com/JuliaData/CSV.jl/issues/344
 str = "1,2,null,4"

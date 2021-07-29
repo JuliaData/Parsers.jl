@@ -19,7 +19,6 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
     # strip leading whitespace
     while b == options.wh1 || b == options.wh2
         # if debug
-        #     println("stripping leading whitespace")
         # end
         pos += 1
         incr!(source)
@@ -305,6 +304,9 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
         ismissing = true
     else
         code |= OK
+    end
+    if eof(source, pos, len)
+        code |= EOF
     end
     # if debug
     #     println("finished parsing: $(codes(code))")
