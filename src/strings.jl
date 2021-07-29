@@ -12,9 +12,9 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
     b = peekbyte(source, pos)
     # strip leading whitespace
     while b == options.wh1 || b == options.wh2
-        vpos = pos
         pos += 1
         incr!(source)
+        vpos = pos
         if eof(source, pos, len)
             code |= EOF
             @goto donedone
@@ -37,9 +37,9 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
             b = peekbyte(source, pos)
             # ignore whitespace within quoted field
             while b == options.wh1 || b == options.wh2
-                vpos = pos
                 pos += 1
                 incr!(source)
+                vpos = pos
                 if eof(source, pos, len)
                     code |= INVALID_QUOTED_FIELD | EOF
                     @goto donedone

@@ -297,22 +297,6 @@ These individual "fields" can be retrieved via dot access, like `poslen.missingv
 """
 primitive type PosLen 64 end
 
-const MISSING_BIT = Base.bitcast(Int64, 0x8000000000000000)
-const ESCAPE_BIT = Base.bitcast(Int64, 0x4000000000000000)
-const POS_BITS = Base.bitcast(Int64, 0x3ffffffffff00000)
-const LEN_BITS = Base.bitcast(Int64, 0x00000000000fffff)
-
-@noinline invalidproperty() = throw(ArgumentError("invalid property $nm for PosLen"))
-
-function Base.getproperty(x::PosLen, nm::Symbol)
-    y = Base.bitcast(Int64, x)
-    nm === :pos && return (y & POS_BITS) >> 20
-    nm === :len && return y & LEN_BITS
-    nm === :missingvalue && return (y & MISSING_BIT) > 0
-    nm === :escapedvalue && return (y & ESCAPE_BIT) > 0
-    invalidproperty()
-end
-
 const MAX_POS = 4398046511104
 const MAX_LEN = 1048575
 @noinline postoolarge(pos) = throw(ArgumentError("position argument to Parsers.PosLen ($pos) is too large; max position allowed is $MAX_POS"))
@@ -325,6 +309,22 @@ const MAX_LEN = 1048575
     pos |= ifelse(ismissing, MISSING_BIT, 0)
     pos |= ifelse(escaped, ESCAPE_BIT, 0)
     return Base.bitcast(PosLen, pos | Int64(len))
+end
+
+const MISSING_BIT = Base.bitcast(Int64, 0x8000000000000000)
+const ESCAPE_BIT = Base.bitcast(Int64, 0x4000000000000000)
+const POS_BITS = Base.bitcast(Int64, 0x3ffffffffff00000)
+const LEN_BITS = Base.bitcast(Int64, 0x00000000000fffff)
+
+@noinline invalidproperty() = throw(ArgumentError("invalid property $nm for PosLen"))
+
+function Base.getproperty(x::PosLen, nm::Symbol)
+    y = Base.bitcast(Int64, x)
+    nm === :pos && return (y & POS_BITS) >> 20
+    nm === :len && return y & LEN_BITS
+    nm === :missingvalue && return (y & MISSING_BIT) == MISSING_BIT
+    nm === :escapedvalue && return (y & ESCAPE_BIT) == ESCAPE_BIT
+    invalidproperty()
 end
 
 """

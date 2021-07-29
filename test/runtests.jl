@@ -17,8 +17,8 @@ sentinels = ["NANA", "NAN", "NA"]
 testcases = [
     (str="", kwargs=(), x=0, code=(INVALID | EOF), vpos=1, vlen=0, tlen=0),
     (str="", kwargs=(sentinel=missing,), x=0, code=(SENTINEL | EOF), vpos=1, vlen=0, tlen=0),
-    (str=" ", kwargs=(), x=0, code=(INVALID | EOF), vpos=1, vlen=0, tlen=1),
-    (str=" ", kwargs=(sentinel=missing,), x=0, code=(INVALID | EOF), vpos=1, vlen=0, tlen=1),
+    (str=" ", kwargs=(), x=0, code=(INVALID | EOF), vpos=1, vlen=1, tlen=1),
+    (str=" ", kwargs=(sentinel=missing,), x=0, code=(INVALID | EOF), vpos=1, vlen=1, tlen=1),
     (str=" -", kwargs=(sentinel=missing,), x=0, code=(INVALID | EOF), vpos=1, vlen=2, tlen=2),
     (str=" +", kwargs=(sentinel=missing,), x=0, code=(INVALID | EOF), vpos=1, vlen=2, tlen=2),
     (str="-", kwargs=(sentinel=missing,), x=0, code=(INVALID | EOF), vpos=1, vlen=1, tlen=1),
