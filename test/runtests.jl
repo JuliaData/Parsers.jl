@@ -17,8 +17,8 @@ sentinels = ["NANA", "NAN", "NA"]
 testcases = [
     (str="", kwargs=(), x=0, code=(INVALID | EOF), vpos=1, vlen=0, tlen=0),
     (str="", kwargs=(sentinel=missing,), x=0, code=(SENTINEL | EOF), vpos=1, vlen=0, tlen=0),
-    (str=" ", kwargs=(), x=0, code=(INVALID | EOF), vpos=1, vlen=0, tlen=1),
-    (str=" ", kwargs=(sentinel=missing,), x=0, code=(INVALID | EOF), vpos=1, vlen=0, tlen=1),
+    (str=" ", kwargs=(), x=0, code=(INVALID | EOF), vpos=1, vlen=1, tlen=1),
+    (str=" ", kwargs=(sentinel=missing,), x=0, code=(INVALID | EOF), vpos=1, vlen=1, tlen=1),
     (str=" -", kwargs=(sentinel=missing,), x=0, code=(INVALID | EOF), vpos=1, vlen=2, tlen=2),
     (str=" +", kwargs=(sentinel=missing,), x=0, code=(INVALID | EOF), vpos=1, vlen=2, tlen=2),
     (str="-", kwargs=(sentinel=missing,), x=0, code=(INVALID | EOF), vpos=1, vlen=1, tlen=1),
@@ -202,16 +202,13 @@ for useio in (false, true)
         for (i, case) in enumerate(testcases)
             str = replace(replace(replace(case.str, '{'=>Char(oq)), '}'=>Char(cq)), '\\'=>Char(e))
             source = useio ? IOBuffer(str) : str
-            x, code, vpos, vlen, tlen = Parsers.xparse(Int64, source; openquotechar=oq, closequotechar=cq, escapechar=e, case.kwargs...)
-            if x != case.x || code != case.code || vpos != case.vpos || vlen != case.vlen || tlen != case.tlen
-                println("ERROR on useio=$useio, case=$i, oq='$(Char(oq))', cq='$(Char(cq))', e='$(Char(e))', str=$(escape_string(str)), $case")
-                source = useio ? IOBuffer(str) : str
-                x, code, vpos, vlen, tlen = Parsers.xparse(Int64, source; debug=true, openquotechar=oq, closequotechar=cq, escapechar=e, case.kwargs...)
+            res = Parsers.xparse(Int64, source; openquotechar=oq, closequotechar=cq, escapechar=e, case.kwargs...)
+            x, code, tlen = res.val, res.code, res.tlen
+            # println("testing int case i = $i, case = $case")
+            if !Parsers.invalid(code) && !Parsers.sentinel(code)
+                @test x == case.x
             end
-            @test x == case.x
             @test code == case.code
-            @test vpos == case.vpos
-            @test vlen == case.vlen
             @test tlen == case.tlen
         end
     end
@@ -223,14 +220,12 @@ cq = UInt8('}')
 e = UInt8('\\')
 for (i, case) in enumerate(testcases)
     str = replace(replace(replace(case.str, '{'=>Char(oq)), '}'=>Char(cq)), '\\'=>Char(e))
-    x, code, vpos, vlen, tlen = Parsers.xparse(String, case.str; openquotechar=oq, closequotechar=cq, escapechar=e, case.kwargs...)
-    if vpos != case.vpos || vlen != case.vlen || tlen != case.tlen
-        println("ERROR on case=$i, oq='$(Char(oq))', cq='$(Char(cq))', e='$(Char(e))', str=$(escape_string(str)), $case")
-        x, code, vpos, vlen, tlen = Parsers.xparse(String, case.str; debug=true, openquotechar=oq, closequotechar=cq, escapechar=e, case.kwargs...)
-    end
+    res = Parsers.xparse(String, case.str; openquotechar=oq, closequotechar=cq, escapechar=e, case.kwargs...)
+    x, code, tlen = res.val, res.code, res.tlen
+    # println("testing string case i = $i, case = $case")
     if !Parsers.invalidquotedfield(code)
-        @test vpos == case.vpos
-        @test vlen == case.vlen
+        @test x.pos == case.vpos
+        @test x.len == case.vlen
         @test tlen == case.tlen
     end
 end
@@ -242,19 +237,21 @@ end # @testset "Core Parsers.xparse"
 # test lots of ints
 @time for i in typemin(Int64):100_000_000_000_000:typemax(Int64)
     str = string(i)
-    x, code, vpos, vlen, tlen = Parsers.xparse(Int64, str)
+    res = Parsers.xparse(Int64, str)
+    x, code, tlen = res.val, res.code, res.tlen
     @test string(x) == str
     @test code == OK | EOF
-    @test vlen == length(str)
+    @test tlen == length(str)
 end
 
 # test some critical ints Issue #44
 for i in [typemin(Int64):typemin(Int64)+20; typemax(Int)-20:typemax(Int)]
     str = string(i)
-    x, code, vpos, vlen, tlen = Parsers.xparse(Int64, str)
+    res = Parsers.xparse(Int64, str)
+    x, code, tlen = res.val, res.code, res.tlen
     @test string(x) == str
     @test code == OK | EOF
-    @test vlen == length(str)
+    @test tlen == length(str)
 end
 
 end # @testset "ints"
@@ -267,54 +264,54 @@ trues2 = ["truthy"]
 falses2 = ["falsy"]
 
 testcases = [
-    (str="", kwargs=(), x=false, code=(INVALID | EOF), vpos=1, vlen=0),
-    (str="t", kwargs=(), x=false, code=(INVALID | EOF), vpos=1, vlen=1),
-    (str="tr", kwargs=(), x=false, code=(INVALID | EOF), vpos=1, vlen=2),
-    (str="tru", kwargs=(), x=false, code=(INVALID | EOF), vpos=1, vlen=3),
-    (str="true", kwargs=(), x=true, code=(OK | EOF), vpos=1, vlen=4),
+    (str="", kwargs=(), x=false, code=(INVALID | EOF), tlen=0),
+    (str="t", kwargs=(), x=false, code=(INVALID | EOF), tlen=1),
+    (str="tr", kwargs=(), x=false, code=(INVALID | EOF), tlen=2),
+    (str="tru", kwargs=(), x=false, code=(INVALID | EOF), tlen=3),
+    (str="true", kwargs=(), x=true, code=(OK | EOF), tlen=4),
 
-    (str="f", kwargs=(), x=false, code=(INVALID | EOF), vpos=1, vlen=1),
-    (str="fa", kwargs=(), x=false, code=(INVALID | EOF), vpos=1, vlen=2),
-    (str="fal", kwargs=(), x=false, code=(INVALID | EOF), vpos=1, vlen=3),
-    (str="fals", kwargs=(), x=false, code=(INVALID | EOF), vpos=1, vlen=4),
-    (str="false", kwargs=(), x=false, code=(OK | EOF), vpos=1, vlen=5),
+    (str="f", kwargs=(), x=false, code=(INVALID | EOF), tlen=1),
+    (str="fa", kwargs=(), x=false, code=(INVALID | EOF), tlen=2),
+    (str="fal", kwargs=(), x=false, code=(INVALID | EOF), tlen=3),
+    (str="fals", kwargs=(), x=false, code=(INVALID | EOF), tlen=4),
+    (str="false", kwargs=(), x=false, code=(OK | EOF), tlen=5),
 
-    (str="t,", kwargs=(), x=false, code=(INVALID | DELIMITED), vpos=1, vlen=1),
-    (str="tr,", kwargs=(), x=false, code=(INVALID | DELIMITED), vpos=1, vlen=2),
-    (str="tru,", kwargs=(), x=false, code=(INVALID | DELIMITED), vpos=1, vlen=3),
-    (str="true,", kwargs=(), x=true, code=(OK | DELIMITED), vpos=1, vlen=4),
+    (str="t,", kwargs=(), x=false, code=(INVALID | DELIMITED), tlen=2),
+    (str="tr,", kwargs=(), x=false, code=(INVALID | DELIMITED), tlen=3),
+    (str="tru,", kwargs=(), x=false, code=(INVALID | DELIMITED), tlen=4),
+    (str="true,", kwargs=(), x=true, code=(OK | DELIMITED), tlen=5),
 
-    (str="f,", kwargs=(), x=false, code=(INVALID | DELIMITED), vpos=1, vlen=1),
-    (str="fa,", kwargs=(), x=false, code=(INVALID | DELIMITED), vpos=1, vlen=2),
-    (str="fal,", kwargs=(), x=false, code=(INVALID | DELIMITED), vpos=1, vlen=3),
-    (str="fals,", kwargs=(), x=false, code=(INVALID | DELIMITED), vpos=1, vlen=4),
-    (str="false,", kwargs=(), x=false, code=(OK | DELIMITED), vpos=1, vlen=5),
+    (str="f,", kwargs=(), x=false, code=(INVALID | DELIMITED), tlen=2),
+    (str="fa,", kwargs=(), x=false, code=(INVALID | DELIMITED), tlen=3),
+    (str="fal,", kwargs=(), x=false, code=(INVALID | DELIMITED), tlen=4),
+    (str="fals,", kwargs=(), x=false, code=(INVALID | DELIMITED), tlen=5),
+    (str="false,", kwargs=(), x=false, code=(OK | DELIMITED), tlen=6),
 
-    (str="0", kwargs=(), x=false, code=(OK | EOF), vpos=1, vlen=1),
-    (str="1", kwargs=(), x=true, code=(OK | EOF), vpos=1, vlen=1),
-    (str="001", kwargs=(), x=true, code=(OK | EOF), vpos=1, vlen=3),
-    (str="2", kwargs=(), x=false, code=(INVALID | EOF | INVALID_DELIMITER), vpos=1, vlen=1),
+    (str="0", kwargs=(), x=false, code=(OK | EOF), tlen=1),
+    (str="1", kwargs=(), x=true, code=(OK | EOF), tlen=1),
+    (str="001", kwargs=(), x=true, code=(OK | EOF), tlen=3),
+    (str="2", kwargs=(), x=false, code=(INVALID | EOF | INVALID_DELIMITER), tlen=1),
 
-    (str="t", kwargs=(trues=trues1, falses=falses1,), x=false, code=(INVALID | EOF | INVALID_DELIMITER), vpos=1, vlen=1),
-    (str="T", kwargs=(trues=trues1, falses=falses1,), x=true, code=(OK | EOF), vpos=1, vlen=1),
-    (str="T,", kwargs=(trues=trues1, falses=falses1,), x=true, code=(OK | DELIMITED), vpos=1, vlen=1),
-    (str="Tr", kwargs=(trues=trues1, falses=falses1,), x=true, code=(OK | EOF | INVALID_DELIMITER), vpos=1, vlen=2),
-    (str="F", kwargs=(trues=trues1, falses=falses1,), x=false, code=(OK | EOF), vpos=1, vlen=1),
-    (str="truthy", kwargs=(trues=trues2, falses=falses2,), x=true, code=(OK | EOF), vpos=1, vlen=6),
-    (str="truthyfalsy", kwargs=(trues=trues2, falses=falses2,), x=true, code=(OK | EOF | INVALID_DELIMITER), vpos=1, vlen=11),
-    (str="falsytruthy", kwargs=(trues=trues2, falses=falses2,), x=false, code=(OK | EOF | INVALID_DELIMITER), vpos=1, vlen=11),
+    (str="t", kwargs=(trues=trues1, falses=falses1,), x=false, code=(INVALID | EOF | INVALID_DELIMITER), tlen=1),
+    (str="T", kwargs=(trues=trues1, falses=falses1,), x=true, code=(OK | EOF), tlen=1),
+    (str="T,", kwargs=(trues=trues1, falses=falses1,), x=true, code=(OK | DELIMITED), tlen=2),
+    (str="Tr", kwargs=(trues=trues1, falses=falses1,), x=true, code=(OK | EOF | INVALID_DELIMITER), tlen=2),
+    (str="F", kwargs=(trues=trues1, falses=falses1,), x=false, code=(OK | EOF), tlen=1),
+    (str="truthy", kwargs=(trues=trues2, falses=falses2,), x=true, code=(OK | EOF), tlen=6),
+    (str="truthyfalsy", kwargs=(trues=trues2, falses=falses2,), x=true, code=(OK | EOF | INVALID_DELIMITER), tlen=11),
+    (str="falsytruthy", kwargs=(trues=trues2, falses=falses2,), x=false, code=(OK | EOF | INVALID_DELIMITER), tlen=11),
 ];
 
 for useio in (false, true)
     for (i, case) in enumerate(testcases)
-        x, code, vpos, vlen, tot = Parsers.xparse(Bool, useio ? IOBuffer(case.str) : case.str; case.kwargs...)
-        if x != case.x || code != case.code || vlen != case.vlen
-            println("error for case = $i: useio=$useio, $case")
-            println(Parsers.codes(code))
+        res = Parsers.xparse(Bool, useio ? IOBuffer(case.str) : case.str; case.kwargs...)
+        x, code, tlen = res.val, res.code, res.tlen
+        if !Parsers.invalid(code) && !Parsers.sentinel(code)
+            @test x == case.x
         end
-        @test x == case.x
+        # println("testing bool case i = $i, case = $case")
         @test code == case.code
-        @test vlen == case.vlen
+        @test tlen == case.tlen
     end
 end
 
@@ -327,8 +324,8 @@ oq = UInt8('{')
 cq = UInt8('}')
 e = UInt8('\\')
 str=" {\\"
-x, code, vpos, vlen, tlen = Parsers.xparse(Int64, str; openquotechar=oq, closequotechar=cq, escapechar=e)
-@test x == 0
+res = Parsers.xparse(Int64, str; openquotechar=oq, closequotechar=cq, escapechar=e)
+x, code, tlen = res.val, res.code, res.tlen
 @test code == QUOTED | EOF | INVALID_QUOTED_FIELD
 @test tlen == 3
 
@@ -342,42 +339,38 @@ x, code, vpos, vlen, tlen = Parsers.xparse(Int64, str; openquotechar=oq, closequ
 @test Parsers.parse(Date, "01/20/2018", Parsers.Options(dateformat="mm/dd/yyyy")) === Date(2018, 1, 20)
 
 # https://github.com/JuliaData/CSV.jl/issues/345
-x, code, vpos, vlen, tlen = Parsers.xparse(String, "\"DALLAS BLACK DANCE THEATRE\",")
-@test vpos == 2
-@test vlen == 26
+res = Parsers.xparse(String, "\"DALLAS BLACK DANCE THEATRE\",")
+x, code, tlen = res.val, res.code, res.tlen
+@test x.pos == 2
+@test x.len == 26
 @test tlen == 29
-@test code == OK | QUOTED | DELIMITED
+@test code == OK | QUOTED | DELIMITED | EOF
 
 # https://github.com/JuliaData/CSV.jl/issues/344
 str = "1,2,null,4"
 pos = 1
-x, code, vpos, vlen, tlen = Parsers.xparse(Int, str; pos=pos, sentinel=["null"])
+res = Parsers.xparse(Int, str; pos=pos, sentinel=["null"])
+x, code, tlen = res.val, res.code, res.tlen
 pos += tlen
 @test x === 1
 @test code === OK | DELIMITED
-@test vpos == 1
-@test vlen == 1
 @test pos == 3
-x, code, vpos, vlen, tlen = Parsers.xparse(Int, str; pos=pos, sentinel=["null"])
+res = Parsers.xparse(Int, str; pos=pos, sentinel=["null"])
+x, code, tlen = res.val, res.code, res.tlen
 pos += tlen
 @test x === 2
 @test code === OK | DELIMITED
-@test vpos == 3
-@test vlen == 1
 @test pos == 5
-x, code, vpos, vlen, tlen = Parsers.xparse(Int, str; pos=pos, sentinel=["null"])
+res = Parsers.xparse(Int, str; pos=pos, sentinel=["null"])
+x, code, tlen = res.val, res.code, res.tlen
 pos += tlen
-@test x == 0
 @test code === SENTINEL | DELIMITED
-@test vpos == 5
-@test vlen == 4
 @test pos == 10
-x, code, vpos, vlen, tlen = Parsers.xparse(Int, str; pos=pos, sentinel=["null"])
+res = Parsers.xparse(Int, str; pos=pos, sentinel=["null"])
+x, code, tlen = res.val, res.code, res.tlen
 pos += tlen
 @test x === 4
 @test code === OK | EOF
-@test vpos == 10
-@test vlen == 1
 @test pos == 11
 
 @test Parsers.parse(Int, SubString("101")) === 101
@@ -389,11 +382,6 @@ pos += tlen
 @test_throws ArgumentError Parsers.Options(sentinel=["\""])
 @test_throws ArgumentError Parsers.Options(sentinel=[","], delim=',')
 @test_throws ArgumentError Parsers.Options(sentinel=[","], delim=",")
-
-@test Parsers.default(Int32) === Int32(0)
-@test Parsers.default(Float32) === Float32(0)
-@test Parsers.xparse(Int64, "10", 1, 2, Parsers.XOPTIONS) == (Int64(10), OK | EOF, 1, 2, 2)
-@test Parsers.xparse(Int64, "a", 1, 1, Parsers.Options(sentinel=missing)) == (Int64(0), SENTINEL, 1, 0, 0)
 
 @test Parsers.checkdelim!(UInt8[], 1, 0, Parsers.OPTIONS) == 1
 @test Parsers.checkdelim!(codeunits(","), 1, 1, Parsers.XOPTIONS) == 2
@@ -430,10 +418,12 @@ showerror(io, e2)
 @test !Parsers.quotednotescaped(QUOTED | ESCAPED_STRING)
 
 # https://github.com/JuliaData/CSV.jl/issues/454
-x, code, vpos, vlen, tlen = Parsers.xparse(Float64, "\"\"", 1, 2)
+res = Parsers.xparse(Float64, "\"\"", 1, 2)
+x, code, tlen = res.val, res.code, res.tlen
 @test Parsers.sentinel(code)
 
-x, code, vpos, vlen, tlen = Parsers.xparse(String, "\"\"", 1, 2)
+res = Parsers.xparse(String, "\"\"", 1, 2)
+x, code, tlen = res.val, res.code, res.tlen
 @test Parsers.sentinel(code)
 
 @test_throws ArgumentError Parsers.Options(delim=' ')
@@ -464,6 +454,16 @@ end
 @test Parsers.parse(Symbol, "a") === :a
 @test Parsers.parse(Symbol, "漢") === :漢
 
+res = Parsers.xparse(Char, codeunits("a"), 1, 1, Parsers.XOPTIONS)
+@test res.code == (Parsers.EOF | Parsers.OK)
+@test res.val == 'a'
+res = Parsers.xparse(Symbol, codeunits("a"), 1, 1, Parsers.XOPTIONS)
+@test res.code == (Parsers.EOF | Parsers.OK)
+@test res.val == :a
+res = Parsers.xparse(CustomType, codeunits("a"), 1, 1, Parsers.XOPTIONS)
+@test res.code == (Parsers.EOF | Parsers.OK)
+@test res.val == CustomType("a")
+
 # 67
 @test Parsers.parse(CustomType, "hey there", Parsers.XOPTIONS) == CustomType("hey there")
 
@@ -473,12 +473,19 @@ opts = Parsers.Options(sentinel=missings, trues=["true"])
 @test missings == ["na"]
 
 # reported from Slack via CSV.jl
-@test Parsers.xparse(String, ""; sentinel=["NULL"]) == (33, 33, 1, 0, 0)
+@test Parsers.xparse(String, ""; sentinel=["NULL"]) == Parsers.Result{PosLen}(Int16(33), 0, Base.bitcast(PosLen, 0x0000000000100000))
 
 # Parsers.getstring
-@test Parsers.getstring(b"hey there", 5, 5) == "there"
-@test Parsers.getstring(IOBuffer("hey there"), 5, 5) == "there"
-@test Parsers.getstring("hey there", 5, 5) == "there" 
+@test Parsers.getstring(b"hey there", Parsers.PosLen(5, 5), 0x00) == "there"
+@test Parsers.getstring(IOBuffer("hey there"), Parsers.PosLen(5, 5), 0x00) == "there"
+@test Parsers.getstring("hey there", Parsers.PosLen(5, 5), 0x00) == "there"
+@test Parsers.getstring("hey \"\" there", Parsers.PosLen(1, 12, false, true), UInt8('"')) == "hey \" there"
+@test Parsers.getstring(IOBuffer("hey \"\" there"), Parsers.PosLen(1, 12, false, true), UInt8('"')) == "hey \" there"
+
+# PosLen
+@test_throws ArgumentError Parsers.PosLen(Parsers.MAX_POS + 1, 0)
+@test_throws ArgumentError Parsers.PosLen(1, Parsers.MAX_LEN + 1)
+@test_throws ArgumentError Parsers.PosLen(1, 1).invalidproperty
 
 end # @testset "misc"
 

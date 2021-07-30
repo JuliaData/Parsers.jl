@@ -1,6 +1,6 @@
 @testset "Floats" begin
 
-x, code, vpos, vlen, vlen = Parsers.xparse(Float64, "1x")
+res = Parsers.xparse(Float64, "1x")
 
 testcases = [
     (str="", x=0.0, code=(INVALID | EOF), len=0, tot=0),
@@ -77,8 +77,8 @@ testcases = [
     (str="infin", x=Inf, code=(OK | EOF), len=1, tot=1),
     (str="infini", x=Inf, code=(OK | EOF), len=1, tot=1),
     (str="infinit", x=Inf, code=(OK | EOF), len=1, tot=1),
-    (str="i,", x=0.0, code=(INVALID | DELIMITED), len=1, tot=1),
-    (str="in,", x=0.0, code=(INVALID | DELIMITED), len=2, tot=2),
+    (str="i,", x=0.0, code=(INVALID | DELIMITED | INVALID_DELIMITER), len=1, tot=1),
+    (str="in,", x=0.0, code=(INVALID | DELIMITED | INVALID_DELIMITER), len=2, tot=2),
     (str="infi,", x=Inf, code=(OK | DELIMITED), len=1, tot=1),
     (str="infin,", x=Inf, code=(OK | DELIMITED), len=1, tot=1),
     (str="infini,", x=Inf, code=(OK | DELIMITED), len=1, tot=1),
@@ -283,52 +283,57 @@ testcases = [
     (str="-2.22507e-308", x=-2.22507e-308, code=(OK | EOF), len=0, tot=0),
 ];
 
-for (i, case) in enumerate(testcases)
-    x, code, vpos, vlen, tlen = Parsers.xparse(Float64, case.str)
-    if x != case.x || code != case.code #|| len != case.len || tlen != case.tlen
-        println("ERROR on case=$i, $case")
-        x, code, vpos, vlen, tlen = Parsers.xparse(Float64, case.str; debug=true)
+for useio in (false, true)
+    for (i, case) in enumerate(testcases)
+        # println("testing case = $i, str = $(case.str)")
+        res = Parsers.xparse(Float64, useio ? IOBuffer(case.str) : case.str)
+        x, code, tlen = res.val, res.code, res.tlen
+        if !Parsers.invalid(code)
+            @test x == case.x
+        end
+        @test code == case.code
     end
-    @test x == case.x
-    @test code == case.code
-    # @test len == case.len
-    # @test tlen == case.tlen
 end
 
 # NaNs
 case = (str="nan", x=NaN, code=(OK | EOF), len=3, tot=3)
-x, code, vpos, vlen, tlen = Parsers.xparse(Float64, case.str)
+res = Parsers.xparse(Float64, case.str)
+x, code, tlen = res.val, res.code, res.tlen
 @test isnan(x)
 @test code == case.code
-@test vlen == tlen == 3
+@test tlen == 3
 case = (str="NaN", x=NaN, code=(OK | EOF), len=3, tot=3)
-x, code, vpos, vlen, tlen = Parsers.xparse(Float64, case.str)
+res = Parsers.xparse(Float64, case.str)
+x, code, tlen = res.val, res.code, res.tlen
 @test isnan(x)
 @test code == case.code
-@test vlen == tlen == 3
+@test tlen == 3
 case = (str="NAN", x=NaN, code=(OK | EOF), len=3, tot=3)
-x, code, vpos, vlen, tlen = Parsers.xparse(Float64, case.str)
+res = Parsers.xparse(Float64, case.str)
+x, code, tlen = res.val, res.code, res.tlen
 @test isnan(x)
 @test code == case.code
-@test vlen == tlen == 3
+@test tlen == 3
 case = (str="nAN", x=NaN, code=(OK | EOF), len=3, tot=3)
-x, code, vpos, vlen, tlen = Parsers.xparse(Float64, case.str)
+res = Parsers.xparse(Float64, case.str)
+x, code, tlen = res.val, res.code, res.tlen
 @test isnan(x)
 @test code == case.code
-@test vlen == tlen == 3
+@test tlen == 3
 case = (str="nAN,", x=NaN, code=(OK | DELIMITED), len=4, tot=4)
-x, code, vpos, vlen, tlen = Parsers.xparse(Float64, case.str)
+res = Parsers.xparse(Float64, case.str)
+x, code, tlen = res.val, res.code, res.tlen
 @test isnan(x)
 @test code == case.code
-@test vlen == 3
 @test tlen == 4
 
 # #25
 case = (str="74810199.033988851037472901827191090834", x=7.481019903398885e7, code=(OK | EOF))
-x, code, vpos, vlen, tlen = Parsers.xparse(Float64, case.str)
+res = Parsers.xparse(Float64, case.str)
+x, code, tlen = res.val, res.code, res.tlen
 @test x == case.x
 @test code == case.code
-@test vlen == tlen == 39
+@test tlen == 39
 
 # https://github.com/quinnj/JSON3.jl/issues/57
 @test_throws Parsers.Error Parsers.parse(Float64,join(rand(1:9, 2000), ""))
@@ -337,7 +342,8 @@ x, code, vpos, vlen, tlen = Parsers.xparse(Float64, case.str)
 
 # https://github.com/JuliaData/Parsers.jl/issues/53
 bytes = codeunits("a,b,c\n.,1,3")
-x, code, vpos, vlen, tlen = Parsers.xparse(Float64, bytes, 7, 11)
+res = Parsers.xparse(Float64, bytes, 7, 11)
+x, code, tlen = res.val, res.code, res.tlen
 @test code == (INVALID | DELIMITED)
 
 # https://github.com/JuliaData/CSV.jl/issues/710
@@ -349,5 +355,12 @@ x, code, vpos, vlen, tlen = Parsers.xparse(Float64, bytes, 7, 11)
 
 # https://github.com/JuliaData/CSV.jl/issues/769
 @test Parsers.parse(Float64, "9223372036854775808") === 9.223372036854776e18
+
+# random sampling of Float16 testing
+for _ = 1:1000
+    x = rand(Float16)
+    str = string(x)
+    @test Base.parse(Float16, str) === Parsers.parse(Float16, str)
+end
 
 end # @testset

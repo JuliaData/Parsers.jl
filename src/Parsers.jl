@@ -1,5 +1,7 @@
 module Parsers
 
+export PosLen
+
 using Dates
 
 include("utils.jl")
@@ -8,6 +10,30 @@ struct Format
     tokens::Vector{Dates.AbstractDateToken}
     locale::Dates.DateLocale
 end
+
+const PtrLen = Tuple{Ptr{UInt8}, Int}
+
+const SupportedFloats = Union{Float16, Float32, Float64, BigFloat}
+const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
+
+"""
+    Parsers.Result{T}(code::Parsers.ReturnCode, tlen[, val])
+
+Struct for holding the results of a parsing operations, returned from `Parsers.xparse`.
+Contains 3 fields:
+  * `code`: parsing bitmask with various flags set based on parsing (see [ReturnCode](@ref))
+  * `tlen`: the total number of bytes consumed while parsing
+  * `val`: the parsed value; note that `val` is optional when constructing; users *MUST* check `!Parsers.invalid(result.code)` before accessing `result.val`; if parsing fails, `result.val` is undefined
+"""
+struct Result{T}
+    code::ReturnCode
+    tlen::Int64
+    val::T
+    Result{T}(code::ReturnCode, tlen::Integer) where {T} = new{T}(code, tlen)
+    Result{T}(code::ReturnCode, tlen::Integer, val) where {T} = new{T}(code, tlen, val)
+end
+
+# Result(code::ReturnCode, tlen::Integer, val::T) where {T} = Result{T}(code, tlen, val)
 
 """
     `Parsers.Options` is a structure for holding various parsing settings when calling `Parsers.parse`, `Parsers.tryparse`, and `Parsers.xparse`. They include:
@@ -29,22 +55,23 @@ end
   * `ignoreemptylines=false`: after parsing a value, if a newline is detected, another immediately proceeding newline will be checked for and consumed
   * `debug=false`: if `true`, various debug logging statements will be printed while parsing; useful when diagnosing why parsing returns certain `Parsers.ReturnCode` values
 """
-struct Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
+struct Options
     refs::Vector{String} # for holding references to sentinel, trues, falses, cmt strings
-    sentinel::S # Union{Nothing, Missing, Vector{Tuple{Ptr{UInt8}, Int}}}
+    sentinel::Union{Nothing, Missing, Vector{PtrLen}}
+    ignorerepeated::Bool
+    ignoreemptylines::Bool
     wh1::UInt8
     wh2::UInt8
+    quoted::Bool
     oq::UInt8
     cq::UInt8
     e::UInt8
-    delim::D # Union{Nothing, UInt8, Tuple{Ptr{UInt8}, Int}}
+    delim::Union{Nothing, UInt8, PtrLen}
     decimal::UInt8
-    trues::Union{Nothing, Vector{Tuple{Ptr{UInt8}, Int}}}
-    falses::Union{Nothing, Vector{Tuple{Ptr{UInt8}, Int}}}
-    dateformat::DF # Union{Nothing, Format}
-    cmt::Union{Nothing, Tuple{Ptr{UInt8}, Int}}
-    strict::Bool
-    silencewarnings::Bool
+    trues::Union{Nothing, Vector{PtrLen}}
+    falses::Union{Nothing, Vector{PtrLen}}
+    dateformat::Union{Nothing, Format}
+    cmt::Union{Nothing, PtrLen}
 end
 
 prepare(x::Vector{String}) = sort!(map(ptrlen, x), by=x->x[2], rev=true)
@@ -63,7 +90,7 @@ function Options(
             trues::Union{Nothing, Vector{String}},
             falses::Union{Nothing, Vector{String}},
             dateformat::Union{Nothing, String, Dates.DateFormat, Format},
-            ignorerepeated, ignoreemptylines, comment, quoted, debug, strict=false, silencewarnings=false)
+            ignorerepeated, ignoreemptylines, comment, quoted, debug)
     asciival(wh1) && asciival(wh2) || throw(ArgumentError("whitespace characters must be ASCII"))
     asciival(oq) && asciival(cq) && asciival(e) || throw(ArgumentError("openquotechar, closequotechar, and escapechar must be ASCII characters"))
     (oq == delim) || (cq == delim) || (e == delim) && throw(ArgumentError("delim argument must be different than openquotechar, closequotechar, and escapechar arguments"))
@@ -105,7 +132,7 @@ function Options(
         cmt = ptrlen(comment)
     end
     df = dateformat === nothing ? nothing : dateformat isa String ? Format(dateformat) : dateformat isa Dates.DateFormat ? Format(dateformat) : dateformat
-    return Options{ignorerepeated, ignoreemptylines, quoted, debug, typeof(sent), typeof(del), typeof(df)}(refs, sent, wh1 % UInt8, wh2 % UInt8, oq % UInt8, cq % UInt8, e % UInt8, del, decimal % UInt8, trues, falses, df, cmt, strict, silencewarnings)
+    return Options(refs, sent, ignorerepeated, ignoreemptylines, wh1 % UInt8, wh2 % UInt8, quoted, oq % UInt8, cq % UInt8, e % UInt8, del, decimal % UInt8, trues, falses, df, cmt)
 end
 
 Options(;
@@ -131,82 +158,113 @@ const OPTIONS = Options(nothing, UInt8(' '), UInt8('\t'), UInt8('"'), UInt8('"')
 const XOPTIONS = Options(missing, UInt8(' '), UInt8('\t'), UInt8('"'), UInt8('"'), UInt8('"'), UInt8(','), UInt8('.'), nothing, nothing, nothing, false, false, nothing, true, false)
 
 # high-level convenience functions like in Base
-"Attempt to parse a value of type `T` from string `buf`. Throws `Parsers.Error` on parser failures and invalid values."
-function parse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
-    x, code, vpos, vlen, tlen = xparse(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
-    fin = buf isa IO || (vlen == (len - pos + 1))
-    return ok(code) && fin ? x : throw(Error(buf, T, code, pos, tlen))
-end
-
-"Attempt to parse a value of type `T` from `buf`. Returns `nothing` on parser failures and invalid values."
-function tryparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
-    x, code, vpos, vlen, tlen = xparse(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
-    fin = buf isa IO || (vlen == (len - pos + 1))
-    return ok(code) && fin ? x : nothing
-end
-
-default(::Type{T}) where {T <: Integer} = zero(T)
-default(::Type{T}) where {T <: AbstractFloat} = T(0.0)
-function default(::Type{T}) where {T <: Dates.TimeType}
-    if applicable(T, 0)
-        T(0)
-    else
-        T(0, TimeZone("UTC"))
-    end
-end
-
-# for testing purposes only, it's much too slow to dynamically create Options for every xparse call
 """
-    Parsers.xparse(T, buf, pos, len, options) => (x, code, startpos, value_len, total_len)
+    Parsers.parse(T, source[, options, pos, len]) => T
 
-    The core parsing function for any type `T`. Takes a `buf`, which can be a `Vector{UInt8}`, `Base.CodeUnits`,
-    or an `IO`. `pos` is the byte position to begin parsing at. `len` is the total # of bytes in `buf` (signaling eof).
-    `options` is an instance of `Parsers.Options`.
+Parse a value of type `T` from `source`, which may be a byte buffer (`AbstractVector{UInt8}`), string, or `IO`. Optional arguments include `options`, a [`Parsers.Options`](@ref)
+struct, `pos` which indicates the byte position where parsing should begin in a byte buffer `source`, and `len` which is the byte position where parsing should stop in a byte
+buffer `source`. If parsing fails for any reason, either invalid value or non-value characters encountered before/after a value, an error will be thrown. To return `nothing`
+instead of throwing an error, use [`Parsers.tryparse`](@ref).
+"""
+function parse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS, pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
+    res = xparse2(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
+    code = res.code
+    tlen = res.tlen
+    fin = buf isa IO || (tlen == (len - pos + 1))
+    return ok(code) && fin ? (res.val::T) : throw(Error(buf, T, code, pos, tlen))
+end
 
-    `Parsers.xparse` returns a tuple of 5 values:
-      * `x` is a value of type `T`, even if parsing does not succeed; for parsed `String`s, no string is returned to avoid excess allocating; if you'd like the actual parsed string value, you can call `Parsers.getstring(source, startpos, value_len)`
-      * `code` is a bitmask of parsing codes, use `Parsers.codes(code)` or `Parsers.text(code)` to see the various bit values set. See `?Parsers.ReturnCode` for additional details on the various parsing codes
-      * `startpos`: the starting byte position of the value being parsed; will always equal the start `pos` passed in, except for quoted field where it will point instead to the first byte after the open quote character
-      * `value_len`: the # of bytes consumed while parsing a value, will be equal to the total number of bytes consumed, except for quoted or delimited fields where the quote and delimiter characters will be subtracted out
-      * `total_len`: the total # of bytes consumed while parsing a value, including any quote or delimiter characters; this can be added to the starting `pos` to allow calling `Parsers.xparse` again for a subsequent field/value
+"""
+    Parsers.tryparse(T, source[, options, pos, len]) => Union{T, Nothing}
+
+Parse a value of type `T` from `source`, which may be a byte buffer (`AbstractVector{UInt8}`), string, or `IO`. Optional arguments include `options`, a [`Parsers.Options`](@ref)
+struct, `pos` which indicates the byte position where parsing should begin in a byte buffer `source`, and `len` which is the byte position where parsing should stop in a byte
+buffer `source`. If parsing fails for any reason, either invalid value or non-value characters encountered before/after a value, `nothing` will be returned. To instead throw
+an error, use [`Parsers.parse`](@ref).
+"""
+function tryparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
+    res = xparse2(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
+    fin = buf isa IO || (res.tlen == (len - pos + 1))
+    return ok(res.code) && fin ? (res.val::T) : nothing
+end
+
+"""
+    Parsers.xparse(T, buf, pos, len, options) => Parsers.Result{T}
+
+The core parsing function for any type `T`. Takes a `buf`, which can be an `AbstractVector{UInt8}`, `AbstractString`,
+or an `IO`. `pos` is the byte position to begin parsing at. `len` is the total # of bytes in `buf` (signaling eof).
+`options` is an instance of `Parsers.Options`.
+
+A [`Parsers.Result`](@ref) struct is returned, with the following fields:
+      * `res.val` is a value of type `T`, but only if parsing succeeded; for parsed `String`s, no string is returned to avoid excess allocating; if you'd like the actual parsed string value, you can call [`Parsers.getstring`](@ref)
+      * `res.code` is a bitmask of parsing codes, use `Parsers.codes(code)` or `Parsers.text(code)` to see the various bit values set. See [`Parsers.ReturnCode`](@ref) for additional details on the various parsing codes
+      * `res.tlen`: the total # of bytes consumed while parsing a value, including any quote or delimiter characters; this can be added to the starting `pos` to allow calling `Parsers.xparse` again for a subsequent field/value
 """
 function xparse end
 
-function xparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=true, openquotechar::Union{UInt8, Char}=UInt8('"'), closequotechar::Union{UInt8, Char}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, ignoreemptylines::Bool=false, delim::Union{UInt8, Char, Tuple{Ptr{UInt8}, Int}, AbstractString, Nothing}=UInt8(','), decimal::Union{UInt8, Char}=UInt8('.'), comment=nothing, trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, debug::Bool=false) where {T}
+# for testing purposes only, it's much too slow to dynamically create Options for every xparse call
+function xparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=true, openquotechar::Union{UInt8, Char}=UInt8('"'), closequotechar::Union{UInt8, Char}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, ignoreemptylines::Bool=false, delim::Union{UInt8, Char, PtrLen, AbstractString, Nothing}=UInt8(','), decimal::Union{UInt8, Char}=UInt8('.'), comment=nothing, trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, debug::Bool=false) where {T}
     options = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, debug)
-    return xparse(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
+    return xparse(T, buf, pos, len, options)
 end
 
-function xparse(::Type{T}, buf::AbstractString, pos, len, options::Options=XOPTIONS) where {T}
-    return xparse(T, codeunits(buf), pos, len, options)
+xparse(::Type{T}, buf::AbstractString, pos, len, options=Parsers.XOPTIONS) where {T} =
+    xparse(T, codeunits(buf), pos, len, options)
+
+# generic fallback calls Base.parse
+function xparse(::Type{T}, source, pos, len, options, ::Type{S}=T) where {T, S}
+    res = xparse(String, source, pos, len, options)
+    code = res.code
+    poslen = res.val
+    if !Parsers.invalid(code) && !Parsers.sentinel(code)
+        str = getstring(source, poslen, options.e)
+        return Result{S}(code, res.tlen, Base.parse(T, str))
+    else
+        return Result{S}(code, res.tlen)
+    end
 end
 
-const SupportedFloats = Union{Float16, Float32, Float64, BigFloat}
-const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
+function xparse(::Type{Char}, source, pos, len, options, ::Type{S}=Char) where {S}
+    res = xparse(String, source, pos, len, options)
+    code = res.code
+    poslen = res.val
+    if !Parsers.invalid(code) && !Parsers.sentinel(code)
+        return Result{S}(code, res.tlen, first(getstring(source, poslen, options.e)))
+    else
+        return Result{S}(code, res.tlen)
+    end
+end
 
-@inline function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}=XOPTIONS) where {T <: SupportedTypes, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
-    startpos = vstartpos = vpos = pos
+function xparse(::Type{Symbol}, source, pos, len, options, ::Type{S}=Symbol) where {S}
+    res = xparse(String, source, pos, len, options)
+    code = res.code
+    poslen = res.val
+    if !Parsers.invalid(code) && !Parsers.sentinel(code)
+        if source isa AbstractVector{UInt8}
+            sym = ccall(:jl_symbol_n, Ref{Symbol}, (Ptr{UInt8}, Int), pointer(source, poslen.pos), poslen.len)
+        else
+            sym = Symbol(getstring(source, poslen, options.e))
+        end
+        return Result{S}(code, res.tlen, sym)
+    else
+        return Result{S}(code, res.tlen)
+    end
+end
+
+function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=T) where {T <: SupportedTypes, S}
+    startpos = vstartpos = pos
     sentinel = options.sentinel
+    wh1 = options.wh1; wh2 = options.wh2
     code = SUCCESS
-    x = default(T)
     quoted = false
     sentinelpos = 0
-    if debug
-        println("parsing $T, pos=$pos, len=$len")
-    end
     if eof(source, pos, len)
         code = (sentinel === missing ? SENTINEL : INVALID) | EOF
         @goto donedone
     end
     b = peekbyte(source, pos)
-    if debug
-        println("1) parsed: '$(escape_string(string(Char(b))))'")
-    end
     # strip leading whitespace
-    while b == options.wh1 || b == options.wh2
-        if debug
-            println("stripping leading whitespace")
-        end
+    while b == wh1 || b == wh2
         pos += 1
         incr!(source)
         if eof(source, pos, len)
@@ -214,17 +272,11 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
             @goto donedone
         end
         b = peekbyte(source, pos)
-        if debug
-            println("2) parsed: '$(escape_string(string(Char(b))))'")
-        end
     end
     # check for start of quoted field
-    if Q
+    if options.quoted
         quoted = b == options.oq
         if quoted
-            if debug
-                println("detected open quote character")
-            end
             code = QUOTED
             pos += 1
             vstartpos = pos
@@ -234,14 +286,8 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                 @goto donedone
             end
             b = peekbyte(source, pos)
-            if debug
-                println("3) parsed: '$(escape_string(string(Char(b))))'")
-            end
             # ignore whitespace within quoted field
-            while b == options.wh1 || b == options.wh2
-                if debug
-                    println("stripping whitespace within quoted field")
-                end
+            while b == wh1 || b == wh2
                 pos += 1
                 incr!(source)
                 if eof(source, pos, len)
@@ -249,18 +295,12 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                     @goto donedone
                 end
                 b = peekbyte(source, pos)
-                if debug
-                    println("4) parsed: '$(escape_string(string(Char(b))))'")
-                end
             end
         end
     end
     # check for sentinel values if applicable
     if sentinel !== nothing && sentinel !== missing
-        if debug
-            println("checking for sentinel value")
-        end
-        sentinelpos = checksentinel(source, pos, len, sentinel, debug)
+        sentinelpos = checksentinel(source, pos, len, sentinel)
     end
     x, code, pos = typeparser(T, source, pos, len, b, code, options)
     if sentinel !== nothing && sentinel !== missing && sentinelpos >= pos
@@ -276,7 +316,6 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
         code &= ~(OK | INVALID)
         code |= SENTINEL
     end
-    vpos = pos
     if (code & EOF) == EOF
         if quoted
             # if we detected a quote character, it's an invalid quoted field due to eof in the middle
@@ -287,17 +326,10 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
 
 @label donevalue
     b = peekbyte(source, pos)
-    if debug
-        println("finished $T value parsing: pos=$pos, current character: '$(escape_string(string(Char(b))))'")
-    end
     # donevalue means we finished parsing a value or sentinel, but didn't reach len, b is still the current byte
     # strip trailing whitespace
-    while b == options.wh1 || b == options.wh2
-        if debug
-            println("stripping trailing whitespace")
-        end
+    while b == wh1 || b == wh2
         pos += 1
-        vpos += 1
         incr!(source)
         if eof(source, pos, len)
             code |= EOF
@@ -307,22 +339,15 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
             @goto donedone
         end
         b = peekbyte(source, pos)
-        if debug
-            println("8) parsed: '$(escape_string(string(Char(b))))'")
-        end
     end
-    if Q
+    if options.quoted
         # for quoted fields, find the closing quote character
         # we should be positioned at the correct place to find the closing quote character if everything is as it should be
         # if we don't find the quote character immediately, something's wrong, so mark INVALID
         if quoted
-            if debug
-                println("looking for close quote character")
-            end
             same = options.cq == options.e
             first = true
             while true
-                vpos = pos
                 pos += 1
                 incr!(source)
                 if same && b == options.e
@@ -365,19 +390,10 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                 end
                 first = false
                 b = peekbyte(source, pos)
-                if debug
-                    println("9) parsed: '$(escape_string(string(Char(b))))'")
-                end
             end
             b = peekbyte(source, pos)
-            if debug
-                println("10) parsed: '$(escape_string(string(Char(b))))'")
-            end
             # ignore whitespace after quoted field
-            while b == options.wh1 || b == options.wh2
-                if debug
-                    println("stripping trailing whitespace after close quote character")
-                end
+            while b == wh1 || b == wh2
                 pos += 1
                 incr!(source)
                 if eof(source, pos, len)
@@ -385,9 +401,6 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                     @goto donedone
                 end
                 b = peekbyte(source, pos)
-                if debug
-                    println("11) parsed: '$(escape_string(string(Char(b))))'")
-                end
             end
         end
     end
@@ -395,10 +408,7 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
     if options.delim !== nothing
         delim = options.delim
         # now we check for a delimiter; if we don't find it, keep parsing until we do
-        if debug
-            println("checking for delimiter: pos=$pos")
-        end
-        if !ignorerepeated
+        if !options.ignorerepeated
             # we're checking for a single appearance of a delimiter
             if delim isa UInt8
                 if b == delim
@@ -407,7 +417,7 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                     code |= DELIMITED
                     @goto donedone
                 end
-            else
+            elseif delim isa PtrLen
                 predelimpos = pos
                 pos = checkdelim(source, pos, len, delim)
                 if pos > predelimpos
@@ -415,6 +425,8 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                     code |= DELIMITED
                     @goto donedone
                 end
+            else
+                error()
             end
         else
             # keep parsing as long as we keep matching delims/newlines
@@ -450,14 +462,11 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                         @goto donedone
                     end
                     b = peekbyte(source, pos)
-                    if debug
-                        println("12) parsed: '$(escape_string(string(Char(b))))'")
-                    end
                 end
                 if matched
                     @goto donedone
                 end
-            else
+            elseif delim isa PtrLen
                 matched = false
                 matchednewline = false
                 while true
@@ -489,13 +498,12 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                         @goto donedone
                     end
                     b = peekbyte(source, pos)
-                    if debug
-                        println("12) parsed: '$(escape_string(string(Char(b))))'")
-                    end
                 end
                 if matched
                     @goto donedone
                 end
+            else
+                error()
             end
         end
         # didn't find delimiter, but let's check for a newline character
@@ -517,21 +525,16 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
             @goto donedone
         end
         # didn't find delimiter or newline, so we're invalid, keep parsing until we find delimiter, newline, or len
-        quo = Int(!quoted)
         code |= INVALID_DELIMITER
         while true
             pos += 1
-            vpos += quo
             incr!(source)
             if eof(source, pos, len)
                 code |= EOF
                 @goto donedone
             end
             b = peekbyte(source, pos)
-            if debug
-                println("13) parsed: '$(escape_string(string(Char(b))))'")
-            end
-            if !ignorerepeated
+            if !options.ignorerepeated
                 if delim isa UInt8
                     if b == delim
                         pos += 1
@@ -539,7 +542,7 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                         code |= DELIMITED
                         @goto donedone
                     end
-                else
+                elseif delim isa PtrLen
                     predelimpos = pos
                     pos = checkdelim(source, pos, len, delim)
                     if pos > predelimpos
@@ -547,6 +550,8 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                         code |= DELIMITED
                         @goto donedone
                     end
+                else
+                    error()
                 end
             else
                 if delim isa UInt8
@@ -581,14 +586,11 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                             @goto donedone
                         end
                         b = peekbyte(source, pos)
-                        if debug
-                            println("14) parsed: '$(escape_string(string(Char(b))))'")
-                        end
                     end
                     if matched
                         @goto donedone
                     end
-                else
+                elseif delim isa PtrLen
                     matched = false
                     matchednewline = false
                     while true
@@ -620,13 +622,12 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
                             @goto donedone
                         end
                         b = peekbyte(source, pos)
-                        if debug
-                            println("14) parsed: '$(escape_string(string(Char(b))))'")
-                        end
                     end
                     if matched
                         @goto donedone
                     end
+                else
+                    error()
                 end
             end
             # didn't find delimiter, but let's check for a newline character
@@ -651,18 +652,109 @@ const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
     end
 
 @label donedone
-    if debug
-        println("finished parsing: $(codes(code))")
+    tlen = pos - startpos
+    if ok(code)
+        y::T = x
+        return Result{S}(code, tlen, y)
+    else
+        return Result{S}(code, tlen)
     end
-    return x, code, Int64(vstartpos), Int64(vpos - vstartpos), Int64(pos - startpos)
 end
 
-function checkdelim!(buf, pos, len, options::Options{ignorerepeated}) where {ignorerepeated}
+# condensed version of xparse that doesn't worry about quoting or delimiters; called from Parsers.parse/Parsers.tryparse
+@inline function xparse2(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=T) where {T <: SupportedTypes, S}
+    startpos = pos
+    sentinel = options.sentinel
+    wh1 = options.wh1; wh2 = options.wh2
+    code = SUCCESS
+    quoted = false
+    if eof(source, pos, len)
+        code = (sentinel === missing ? SENTINEL : INVALID) | EOF
+        @goto donedone
+    end
+    b = peekbyte(source, pos)
+    # strip leading whitespace
+    while b == wh1 || b == wh2
+        pos += 1
+        incr!(source)
+        if eof(source, pos, len)
+            code = INVALID | EOF
+            @goto donedone
+        end
+        b = peekbyte(source, pos)
+    end
+    x, code, pos = typeparser(T, source, pos, len, b, code, options)
+    if (code & EOF) == EOF
+        @goto donedone
+    end
+
+@label donevalue
+    b = peekbyte(source, pos)
+    # donevalue means we finished parsing a value or sentinel, but didn't reach len, b is still the current byte
+    # strip trailing whitespace
+    while b == wh1 || b == wh2
+        pos += 1
+        incr!(source)
+        if eof(source, pos, len)
+            code |= EOF
+            if quoted
+                code |= INVALID_QUOTED_FIELD
+            end
+            @goto donedone
+        end
+        b = peekbyte(source, pos)
+    end
+
+@label donedone
+    tlen = pos - startpos
+    return ok(code) ? Result{S}(code, tlen, x) : Result{S}(code, tlen)
+end
+
+@inline function xparse2(::Type{T}, source, pos, len, options, ::Type{S}=T) where {T, S}
+    res = xparse(String, source, pos, len, options)
+    code = res.code
+    poslen = res.val
+    if !Parsers.invalid(code) && !Parsers.sentinel(code)
+        str = getstring(source, poslen, options.e)
+        return Result{S}(code, res.tlen, Base.parse(T, str))
+    else
+        return Result{S}(code, res.tlen)
+    end
+end
+
+@inline function xparse2(::Type{Char}, source, pos, len, options, ::Type{S}=Char) where {S}
+    res = xparse(String, source, pos, len, options)
+    code = res.code
+    poslen = res.val
+    if !Parsers.invalid(code) && !Parsers.sentinel(code)
+        return Result{S}(code, res.tlen, first(getstring(source, poslen, options.e)))
+    else
+        return Result{S}(code, res.tlen)
+    end
+end
+
+@inline function xparse2(::Type{Symbol}, source, pos, len, options, ::Type{S}=Symbol) where {S}
+    res = xparse(String, source, pos, len, options)
+    code = res.code
+    poslen = res.val::PosLen
+    if !Parsers.invalid(code) && !Parsers.sentinel(code)
+        if source isa AbstractVector{UInt8}
+            sym = ccall(:jl_symbol_n, Ref{Symbol}, (Ptr{UInt8}, Int), pointer(source, poslen.pos), poslen.len)
+        else
+            sym = Symbol(getstring(source, poslen, options.e))
+        end
+        return Result{S}(code, res.tlen, sym)
+    else
+        return Result{S}(code, res.tlen)
+    end
+end
+
+function checkdelim!(buf, pos, len, options::Options)
     pos > len && return pos
     delim = options.delim
     @inbounds b = buf[pos]
     valuepos = pos
-    if !ignorerepeated
+    if !options.ignorerepeated
         # we're checking for a single appearance of a delimiter
         if delim isa UInt8
             b == delim && return pos + 1
@@ -681,7 +773,7 @@ function checkdelim!(buf, pos, len, options::Options{ignorerepeated}) where {ign
                 @inbounds b = buf[pos]
             end
             matched && return pos
-        else
+        elseif delim isa PtrLen
             matched = false
             predelimpos = pos
             pos = checkdelim(buf, pos, len, delim)
@@ -692,16 +784,18 @@ function checkdelim!(buf, pos, len, options::Options{ignorerepeated}) where {ign
                 pos = checkdelim(buf, pos, len, delim)
             end
             matched && return pos
+        else
+            error()
         end
     end
     return pos
 end
 
-function checkcmtemptylines(source, pos, len, options::Options{ignorerepeated, ignoreemptylines}) where {ignorerepeated, ignoreemptylines}
+function checkcmtemptylines(source, pos, len, options::Options)
     cmt = options.cmt
     while !eof(source, pos, len)
         skipped = false
-        if ignoreemptylines
+        if options.ignoreemptylines
             b = peekbyte(source, pos)
             if b == UInt8('\n')
                 pos += 1
@@ -756,35 +850,6 @@ function __init__()
     Threads.resize_nthreads!(BIGFLOAT)
     Threads.resize_nthreads!(BIGINT)
     return
-end
-
-# generic fallback calls Base.parse
-@inline function xparse(::Type{T}, source, pos, len, options) where {T}
-    _, code, vpos, vlen, tlen = xparse(String, source, pos, len, options)
-    if !Parsers.sentinel(code) && code > 0
-        str = unsafe_string(pointer(source, vpos), vlen)
-        x = Base.parse(T, str)
-        return x, code, vpos, vlen, tlen
-    end
-    return nothing, code, vpos, vlen, tlen
-end
-
-@inline function xparse(::Type{Char}, source, pos, len, options)
-    _, code, vpos, vlen, tlen = xparse(String, source, pos, len, options)
-    x = '\0'
-    if !Parsers.sentinel(code) && code > 0
-        x = unsafe_string(pointer(source, vpos), vlen)[1]
-    end
-    return x, code, vpos, vlen, tlen
-end
-
-@inline function xparse(::Type{Symbol}, source, pos, len, options)
-    _, code, vpos, vlen, tlen = xparse(String, source, pos, len, options)
-    x = Symbol()
-    if !Parsers.sentinel(code) && code > 0
-        x = ccall(:jl_symbol_n, Ref{Symbol}, (Ptr{UInt8}, Int), pointer(source, vpos), vlen)
-    end
-    return x, code, vpos, vlen, tlen
 end
 
 include("precompile.jl")

@@ -34,18 +34,16 @@ function _muladd(ten, digits::BigInt, b)
     return digits
 end
 
-@inline function typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}) where {T <: Real, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
+# for non SupportedFloat Reals, parse as Float64, then convert
+@inline function typeparser(::Type{T}, source, pos, len, b, code, options) where {T <: Real}
     x, code, pos = typeparser(Float64, source, pos, len, b, code, options)
     return T(x), code, pos
 end
 
-@inline function typeparser(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}) where {T <: SupportedFloats, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}
+@inline function typeparser(::Type{T}, source, pos, len, b, code, options) where {T <: SupportedFloats}
     # keep track of starting pos in case of invalid, we can rewind to start of parsing
     startpos = pos
     x = zero(T)
-    if debug
-        println("float parsing")
-    end
     neg = b == UInt8('-')
     if neg || b == UInt8('+')
         pos += 1
@@ -162,7 +160,8 @@ end
         else
         end
 @label invalid
-        fastseek!(source, startpos)
+        fastseek!(source, startpos - 1)
+        pos = startpos
         code |= INVALID
         @goto done
     end
@@ -174,19 +173,16 @@ end
     return x, code, pos
 end
 
-# if we need to _widen the type due to `digits` overflow, we want a non-inlined version to base case compilation doesn't get out of control
-@noinline _parsedigits(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, digits::IntType, neg::Bool, startpos) where {T <: SupportedFloats, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, IntType} =
+# if we need to _widen the type due to `digits` overflow, we want a non-inlined version so base case compilation doesn't get out of control
+@noinline _parsedigits(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos) where {T <: SupportedFloats, IntType} =
     parsedigits(T, source, pos, len, b, code, options, digits, neg, startpos)
 
-@inline function parsedigits(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, digits::IntType, neg::Bool, startpos) where {T <: SupportedFloats, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, IntType}
+@inline function parsedigits(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos) where {T <: SupportedFloats, IntType}
     x = zero(T)
     ndigits = 0
-    # we already previously check if `b` was decimal or a digit, so don't need to check explicitly again
+    # we already previously checked if `b` was decimal or a digit, so don't need to check explicitly again
     if b != options.decimal
         b -= UInt8('0')
-        if debug
-            println("float 1) $(Char(b + UInt8('0')))")
-        end
         while true
             digits = _muladd(ten(IntType), digits, b)
             pos += 1
@@ -199,25 +195,20 @@ end
                 @goto done
             end
             b = peekbyte(source, pos) - UInt8('0')
-            if debug
-                println("float 2) $(Char(b + UInt8('0')))")
-            end
             # if `b` isn't a digit, time to break out of digit parsing while loop
             b > 0x09 && break
             if overflows(IntType) && digits > overflowval(IntType)
                 return _parsedigits(T, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos)
             elseif ndigits > maxdigits(T)
                 # if input is way too big, just bail
-                fastseek!(source, startpos)
+                fastseek!(source, startpos - 1)
+                pos = startpos
                 code |= INVALID
                 @goto done
             end
         end
         # b wasn't a digit, so add back '0' to recover original Char value
         b += UInt8('0')
-        if debug
-            println("float 3) $(Char(b))")
-        end
     end
     if b == options.decimal
         pos += 1
@@ -257,14 +248,11 @@ end
 # same as above; if digits overflows, we want a non-inlined version to call with a wider type
 # note that we never expect `frac` to overflow, since it's just keep track of the # of digits
 # we parse post-decimal point
-@noinline _parsefrac(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, digits::IntType, neg::Bool, startpos, frac) where {T <: SupportedFloats, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, IntType} =
+@noinline _parsefrac(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac) where {T <: SupportedFloats, IntType} =
     parsefrac(T, source, pos, len, b, code, options, digits, neg, startpos, frac)
 
-@inline function parsefrac(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, digits::IntType, neg::Bool, startpos, frac) where {T <: SupportedFloats, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, IntType}
+@inline function parsefrac(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac) where {T <: SupportedFloats, IntType}
     x = zero(T)
-    if debug
-        println("float 4) $(Char(b + UInt8('0')))")
-    end
     # check if `b` is a digit
     if b - UInt8('0') < 0x0a
         b -= UInt8('0')
@@ -281,18 +269,12 @@ end
                 @goto done
             end
             b = peekbyte(source, pos) - UInt8('0')
-            if debug
-                println("float 5) $b")
-            end
             b > 0x09 && break
             if overflows(IntType) && digits > overflowval(IntType)
                 return _parsefrac(T, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos, frac)
             end
         end
         b += UInt('0')
-    end
-    if debug
-        println("float 6) $(Char(b))")
     end
     # check for exponent notation
     if b == UInt8('e') || b == UInt8('E') || b == UInt8('f') || b == UInt8('F')
@@ -304,9 +286,6 @@ end
             @goto done
         end
         b = peekbyte(source, pos)
-        if debug
-            println("float 7) $(Char(b))")
-        end
         # check for plus or minus sign for exponent number
         negexp = b == UInt8('-')
         if negexp || b == UInt8('+')
@@ -314,9 +293,6 @@ end
             incr!(source)
         end
         b = peekbyte(source, pos) - UInt8('0')
-        if debug
-            println("float 8) $b")
-        end
         if b > 0x09
             # invalid to have a "dangling" 'e'
             code |= INVALID
@@ -338,10 +314,10 @@ end
 
 # same no-inline story, but this time for exponent number; probably even more rare to overflow the exponent number
 # compared to pre/post decimal digits, but we account for it all the same (a lot of float parsers don't account for this)
-@noinline _parseexp(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, digits, neg::Bool, startpos, frac, exp::ExpType, negexp) where {T <: SupportedFloats, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, ExpType} =
+@noinline _parseexp(::Type{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::ExpType, negexp) where {T <: SupportedFloats, ExpType} =
     parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, exp, negexp)
 
-@inline function parseexp(::Type{T}, source, pos, len, b, code, options::Options{ignorerepeated, ignoreemptylines, Q, debug, S, D, DF}, digits, neg::Bool, startpos, frac, exp::ExpType, negexp) where {T <: SupportedFloats, ignorerepeated, ignoreemptylines, Q, debug, S, D, DF, ExpType}
+@inline function parseexp(::Type{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::ExpType, negexp) where {T <: SupportedFloats, ExpType}
     x = zero(T)
     # note that `b` has already had `b - UInt8('0')` applied to it for parseexp
     while true
@@ -355,9 +331,6 @@ end
             @goto done
         end
         b = peekbyte(source, pos) - UInt8('0')
-        if debug
-            println("float 9) $b")
-        end
         # if we encounter a non-digit, that must mean we're done
         if b > 0x09
             x = scale(T, digits, ifelse(negexp, -signed(exp), signed(exp)) - signed(frac), neg)
@@ -372,6 +345,7 @@ end
     return x, code, pos
 end
 
+# utilities for calculating final float value
 maxsig(::Type{Float16}) = 2048
 maxsig(::Type{Float32}) = 16777216
 maxsig(::Type{Float64}) = 9007199254740992
@@ -458,7 +432,7 @@ end
 
 @inline function _scale(::Type{T}, v::V, exp, neg) where {T, V <: UInt128}
     if exp == 23
-        # special-case due to https://github.com/JuliaLang/julia/issues/38509
+        # special-case concluded from https://github.com/JuliaLang/julia/issues/38509
         x = v * V(1e23)
     elseif exp > 0
         x = v * exp10(exp)

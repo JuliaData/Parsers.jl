@@ -47,4 +47,5 @@ y = Parsers.tryparse(Int, "abc")
 Read through the docs of the following types/functions for more information on using advanced Parsers machinery:
   * `?Parsers.Options`
   * `?Parsers.xparse`
+  * `?Parsers.Result`
   * `?Parsers.ReturnCode`
