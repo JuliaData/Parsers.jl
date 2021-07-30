@@ -363,4 +363,7 @@ for _ = 1:1000
     @test Base.parse(Float16, str) === Parsers.parse(Float16, str)
 end
 
+# discovered from JSON tests
+@test Parsers.tryparse(Float64, "0e+") === nothing
+
 end # @testset
