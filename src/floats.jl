@@ -291,6 +291,11 @@ end
         if negexp || b == UInt8('+')
             pos += 1
             incr!(source)
+            if eof(source, pos, len)
+                # it's an error to have a "dangling" '-' or '+', so input was something like "1.1e-"
+                code |= INVALID | EOF
+                @goto done
+            end
         end
         b = peekbyte(source, pos) - UInt8('0')
         if b > 0x09
