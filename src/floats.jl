@@ -160,7 +160,8 @@ end
         else
         end
 @label invalid
-        fastseek!(source, startpos)
+        fastseek!(source, startpos - 1)
+        pos = startpos
         code |= INVALID
         @goto done
     end
@@ -200,7 +201,8 @@ end
                 return _parsedigits(T, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos)
             elseif ndigits > maxdigits(T)
                 # if input is way too big, just bail
-                fastseek!(source, startpos)
+                fastseek!(source, startpos - 1)
+                pos = startpos
                 code |= INVALID
                 @goto done
             end

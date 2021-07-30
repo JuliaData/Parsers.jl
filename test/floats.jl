@@ -77,8 +77,8 @@ testcases = [
     (str="infin", x=Inf, code=(OK | EOF), len=1, tot=1),
     (str="infini", x=Inf, code=(OK | EOF), len=1, tot=1),
     (str="infinit", x=Inf, code=(OK | EOF), len=1, tot=1),
-    (str="i,", x=0.0, code=(INVALID | DELIMITED), len=1, tot=1),
-    (str="in,", x=0.0, code=(INVALID | DELIMITED), len=2, tot=2),
+    (str="i,", x=0.0, code=(INVALID | DELIMITED | INVALID_DELIMITER), len=1, tot=1),
+    (str="in,", x=0.0, code=(INVALID | DELIMITED | INVALID_DELIMITER), len=2, tot=2),
     (str="infi,", x=Inf, code=(OK | DELIMITED), len=1, tot=1),
     (str="infin,", x=Inf, code=(OK | DELIMITED), len=1, tot=1),
     (str="infini,", x=Inf, code=(OK | DELIMITED), len=1, tot=1),
@@ -283,13 +283,16 @@ testcases = [
     (str="-2.22507e-308", x=-2.22507e-308, code=(OK | EOF), len=0, tot=0),
 ];
 
-for (i, case) in enumerate(testcases)
-    res = Parsers.xparse(Float64, case.str)
-    x, code, tlen = res.val, res.code, res.tlen
-    if !Parsers.invalid(code)
-        @test x == case.x
+for useio in (false, true)
+    for (i, case) in enumerate(testcases)
+        # println("testing case = $i, str = $(case.str)")
+        res = Parsers.xparse(Float64, useio ? IOBuffer(case.str) : case.str)
+        x, code, tlen = res.val, res.code, res.tlen
+        if !Parsers.invalid(code)
+            @test x == case.x
+        end
+        @test code == case.code
     end
-    @test code == case.code
 end
 
 # NaNs
@@ -352,5 +355,12 @@ x, code, tlen = res.val, res.code, res.tlen
 
 # https://github.com/JuliaData/CSV.jl/issues/769
 @test Parsers.parse(Float64, "9223372036854775808") === 9.223372036854776e18
+
+# random sampling of Float16 testing
+for _ = 1:1000
+    x = rand(Float16)
+    str = string(x)
+    @test Base.parse(Float16, str) === Parsers.parse(Float16, str)
+end
 
 end # @testset

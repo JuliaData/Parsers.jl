@@ -274,8 +274,6 @@ codes(r) = chop(chop(string(
     ifelse(r & (~INVALID & OVERFLOW) > 0, "OVERFLOW | ", "")
 )))
 
-defaultdateformat(T) = Dates.dateformat""
-defaultdateformat(::Type{T}) where {T <: Dates.TimeType} = Dates.default_format(T)
 ptrlen(s::String) = (pointer(s), sizeof(s))
 
 """
@@ -316,7 +314,7 @@ const ESCAPE_BIT = Base.bitcast(Int64, 0x4000000000000000)
 const POS_BITS = Base.bitcast(Int64, 0x3ffffffffff00000)
 const LEN_BITS = Base.bitcast(Int64, 0x00000000000fffff)
 
-@noinline invalidproperty() = throw(ArgumentError("invalid property $nm for PosLen"))
+@noinline invalidproperty(nm) = throw(ArgumentError("invalid property $nm for PosLen"))
 
 function Base.getproperty(x::PosLen, nm::Symbol)
     y = Base.bitcast(Int64, x)
@@ -324,7 +322,7 @@ function Base.getproperty(x::PosLen, nm::Symbol)
     nm === :len && return y & LEN_BITS
     nm === :missingvalue && return (y & MISSING_BIT) == MISSING_BIT
     nm === :escapedvalue && return (y & ESCAPE_BIT) == ESCAPE_BIT
-    invalidproperty()
+    invalidproperty(nm)
 end
 
 """
@@ -361,11 +359,11 @@ getstring(str::AbstractString, poslen::PosLen, e::UInt8) = getstring(codeunits(s
 @noinline function unescape(origbuf, x::PosLen, e)
     n = x.len
     if origbuf isa AbstractVector{UInt8}
-        buf = view(origbuf, x.pos:(x.pos + x.len - 1))
+        source = view(origbuf, x.pos:(x.pos + x.len - 1))
     else
         origpos = position(origbuf)
-        fastseek(origbuf, poslen.pos - 1)
-        buf = origbuf
+        fastseek!(origbuf, x.pos - 1)
+        source = origbuf
     end
     out = Base.StringVector(n)
     len = 1
@@ -385,7 +383,7 @@ getstring(str::AbstractString, poslen::PosLen, e::UInt8) = getstring(codeunits(s
         end
     end
     if origbuf isa IO
-        fastseek(origbuf, origpos)
+        fastseek!(origbuf, origpos)
     end
     resize!(out, len - 1)
     return String(out)

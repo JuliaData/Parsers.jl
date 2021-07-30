@@ -454,6 +454,16 @@ end
 @test Parsers.parse(Symbol, "a") === :a
 @test Parsers.parse(Symbol, "漢") === :漢
 
+res = Parsers.xparse(Char, codeunits("a"), 1, 1, Parsers.XOPTIONS)
+@test res.code == (Parsers.EOF | Parsers.OK)
+@test res.val == 'a'
+res = Parsers.xparse(Symbol, codeunits("a"), 1, 1, Parsers.XOPTIONS)
+@test res.code == (Parsers.EOF | Parsers.OK)
+@test res.val == :a
+res = Parsers.xparse(CustomType, codeunits("a"), 1, 1, Parsers.XOPTIONS)
+@test res.code == (Parsers.EOF | Parsers.OK)
+@test res.val == CustomType("a")
+
 # 67
 @test Parsers.parse(CustomType, "hey there", Parsers.XOPTIONS) == CustomType("hey there")
 
@@ -468,7 +478,14 @@ opts = Parsers.Options(sentinel=missings, trues=["true"])
 # Parsers.getstring
 @test Parsers.getstring(b"hey there", Parsers.PosLen(5, 5), 0x00) == "there"
 @test Parsers.getstring(IOBuffer("hey there"), Parsers.PosLen(5, 5), 0x00) == "there"
-@test Parsers.getstring("hey there", Parsers.PosLen(5, 5), 0x00) == "there" 
+@test Parsers.getstring("hey there", Parsers.PosLen(5, 5), 0x00) == "there"
+@test Parsers.getstring("hey \"\" there", Parsers.PosLen(1, 12, false, true), UInt8('"')) == "hey \" there"
+@test Parsers.getstring(IOBuffer("hey \"\" there"), Parsers.PosLen(1, 12, false, true), UInt8('"')) == "hey \" there"
+
+# PosLen
+@test_throws ArgumentError Parsers.PosLen(Parsers.MAX_POS + 1, 0)
+@test_throws ArgumentError Parsers.PosLen(1, Parsers.MAX_LEN + 1)
+@test_throws ArgumentError Parsers.PosLen(1, 1).invalidproperty
 
 end # @testset "misc"
 

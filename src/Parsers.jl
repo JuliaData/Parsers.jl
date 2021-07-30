@@ -33,7 +33,7 @@ struct Result{T}
     Result{T}(code::ReturnCode, tlen::Integer, val) where {T} = new{T}(code, tlen, val)
 end
 
-Result(code::ReturnCode, tlen::Integer, val::T) where {T} = Result{T}(code, tlen, val)
+# Result(code::ReturnCode, tlen::Integer, val::T) where {T} = Result{T}(code, tlen, val)
 
 """
     `Parsers.Options` is a structure for holding various parsing settings when calling `Parsers.parse`, `Parsers.tryparse`, and `Parsers.xparse`. They include:

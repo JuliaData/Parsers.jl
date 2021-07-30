@@ -313,25 +313,16 @@ end
 
 # fallback that would call custom DatePart overloads that are expecting a string
 function tryparsenext(tok, source, pos, len, b, code)::Tuple{Any, Int, UInt8, ReturnCode}
+    println("here")
     strlen = min(len - pos + 1, 64)
-    if source isa AbstractVector{UInt8}
-        str = unsafe_string(pointer(source, pos), strlen)
-    else # source isa IO
-        str = String(read(source, strlen))
-    end
+    str = getstring(source, PosLen(pos, strlen), 0x00)
     res = Dates.tryparsenext(tok, str, 1, strlen)
     if res === nothing
         val = nothing
         code |= INVALID_TOKEN
-        if !(source isa AbstractVector{UInt8})
-            fastseek!(source, pos)
-        end
     else
         val, i = res
         pos += i - 1
-        if !(source isa AbstractVector{UInt8})
-            fastseek!(source, pos)
-        end
         if eof(source, pos, len)
             code |= EOF
         else

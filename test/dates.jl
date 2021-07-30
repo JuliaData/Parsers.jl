@@ -226,9 +226,11 @@ testcases = [
     ("y-u-d H:M:S.s", "2017-Mar-17 00:00:00.1230", Dates.DateTime(2017, 3, 17, 0, 0, 0, 123)),
 ]
 
-for case in testcases
-    fmt, str, dt = case
-    @test Parsers.parse(typeof(dt), str, Parsers.Options(dateformat=fmt)) == dt
+for useio in (true, false)
+    for case in testcases
+        fmt, str, dt = case
+        @test Parsers.parse(typeof(dt), useio ? IOBuffer(str) : str, Parsers.Options(dateformat=fmt)) == dt
+    end
 end
 
 @static if VERSION >= v"1.3-DEV"
