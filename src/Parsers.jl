@@ -211,14 +211,19 @@ end
 xparse(::Type{T}, buf::AbstractString, pos, len, options=Parsers.XOPTIONS) where {T} =
     xparse(T, codeunits(buf), pos, len, options)
 
-# generic fallback calls Base.parse
+# generic fallback calls Base.tryparse
 function xparse(::Type{T}, source, pos, len, options, ::Type{S}=T) where {T, S}
     res = xparse(String, source, pos, len, options)
     code = res.code
     poslen = res.val
     if !Parsers.invalid(code) && !Parsers.sentinel(code)
         str = getstring(source, poslen, options.e)
-        return Result{S}(code, res.tlen, Base.parse(T, str))
+	x = Base.tryparse(T, str)
+	if x === nothing
+	    return Result{S}(code | INVALID, res.tlen)
+	else
+	    return Result{S}(code, res.tlen, x)
+	end
     else
         return Result{S}(code, res.tlen)
     end
@@ -716,7 +721,12 @@ end
     poslen = res.val
     if !Parsers.invalid(code) && !Parsers.sentinel(code)
         str = getstring(source, poslen, options.e)
-        return Result{S}(code, res.tlen, Base.parse(T, str))
+	x = Base.tryparse(T, str)
+	if x === nothing
+	    return Result{S}(code | INVALID, res.tlen)
+	else
+	    return Result{S}(code, res.tlen, x)
+	end
     else
         return Result{S}(code, res.tlen)
     end

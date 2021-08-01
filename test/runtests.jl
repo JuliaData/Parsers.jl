@@ -487,6 +487,11 @@ opts = Parsers.Options(sentinel=missings, trues=["true"])
 @test_throws ArgumentError Parsers.PosLen(1, Parsers.MAX_LEN + 1)
 @test_throws ArgumentError Parsers.PosLen(1, 1).invalidproperty
 
+# test invalid fallback parsing
+@test_throws Parsers.Error Parsers.parse(Complex{Float64}, "NaN+NaN*im")
+@test Parsers.tryparse(Complex{Float64}, "NaN+NaN*im") === nothing
+
+
 end # @testset "misc"
 
 include("floats.jl")
