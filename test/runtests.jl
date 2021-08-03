@@ -6,7 +6,7 @@ struct CustomType
     x::String
 end
 
-Base.parse(::Type{CustomType}, x::String) = CustomType(x)
+Base.tryparse(::Type{CustomType}, x::String) = CustomType(x)
 
 @testset "Parsers" begin
 
@@ -479,6 +479,11 @@ opts = Parsers.Options(sentinel=missings, trues=["true"])
 @test Parsers.getstring(b"hey there", 5, 5) == "there"
 @test Parsers.getstring(IOBuffer("hey there"), 5, 5) == "there"
 @test Parsers.getstring("hey there", 5, 5) == "there" 
+
+# test invalid fallback parsing
+@test_throws Parsers.Error Parsers.parse(Complex{Float64}, "NaN+NaN*im")
+@test Parsers.tryparse(Complex{Float64}, "NaN+NaN*im") === nothing
+
 
 end # @testset "misc"
 

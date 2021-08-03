@@ -134,7 +134,7 @@ function parse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO},
 end
 
 "Attempt to parse a value of type `T` from `buf`. Returns `nothing` on parser failures and invalid values."
-function tryparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
+function tryparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; options=OPTIONS; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
     x, code, vpos, vlen, tlen = xparse(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
     fin = buf isa IO || (vlen == (len - pos + 1))
     return ok(code) && fin ? x : nothing
