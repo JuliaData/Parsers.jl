@@ -182,7 +182,7 @@ struct, `pos` which indicates the byte position where parsing should begin in a 
 buffer `source`. If parsing fails for any reason, either invalid value or non-value characters encountered before/after a value, `nothing` will be returned. To instead throw
 an error, use [`Parsers.parse`](@ref).
 """
-function tryparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
+function tryparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS, pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
     res = xparse2(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
     fin = buf isa IO || (res.tlen == (len - pos + 1))
     return ok(res.code) && fin ? (res.val::T) : nothing

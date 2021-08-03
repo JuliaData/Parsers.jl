@@ -6,7 +6,7 @@ struct CustomType
     x::String
 end
 
-Base.parse(::Type{CustomType}, x::String) = CustomType(x)
+Base.tryparse(::Type{CustomType}, x::String) = CustomType(x)
 
 @testset "Parsers" begin
 
