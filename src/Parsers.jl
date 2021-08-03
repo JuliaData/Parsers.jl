@@ -752,8 +752,12 @@ end
     _, code, vpos, vlen, tlen = xparse(String, source, pos, len, options)
     if !Parsers.sentinel(code) && code > 0
         str = unsafe_string(pointer(source, vpos), vlen)
-        x = Base.parse(T, str)
-        return x, code, vpos, vlen, tlen
+        x = Base.tryparse(T, str)
+        if x === nothing
+            return nothing, code | INVALID, vpos, vlen, tlen
+        else
+            return x, code, vpos, vlen, tlen
+        end
     end
     return nothing, code, vpos, vlen, tlen
 end
