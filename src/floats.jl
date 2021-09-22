@@ -2,11 +2,7 @@ using Base.MPFR, Base.GMP, Base.GMP.MPZ
 
 _widen(x::UInt64) = UInt128(x)
 
-if VERSION > v"1.5"
-const BIGINT = [BigInt(; nbits=256)]
-else
-const BIGINT = [BigInt()]
-end
+const BIGINT = BigInt[]
 
 function _widen(v::UInt128)
     @inbounds x = BIGINT[Threads.threadid()]
@@ -451,7 +447,7 @@ end
 end
 
 const BIGEXP10 = [1 / exp10(BigInt(e)) for e = 309:326]
-const BIGFLOAT = [BigFloat()]
+const BIGFLOAT = BigFloat[]
 if VERSION > v"1.5"
 const BIGFLOATEXP10 = [exp10(BigFloat(i; precision=64)) for i = 1:308]
 else

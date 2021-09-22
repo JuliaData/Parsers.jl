@@ -857,8 +857,12 @@ include("ryu.jl")
 
 function __init__()
     # floats.jl globals
-    Threads.resize_nthreads!(BIGFLOAT)
-    Threads.resize_nthreads!(BIGINT)
+    if VERSION > v"1.5"
+        Threads.resize_nthreads!(BIGINT, BigInt(; nbits=256))
+    else
+        Threads.resize_nthreads!(BIGINT, BigInt())
+    end
+    Threads.resize_nthreads!(BIGFLOAT, BigFloat())
     return
 end
 
