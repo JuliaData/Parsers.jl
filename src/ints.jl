@@ -24,7 +24,7 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
         @goto done
     end
     while true
-        x = T(10) * x + T(b)
+        x = T(10) * x + unsafe_trunc(T, b)
         pos += 1
         incr!(source)
         if eof(source, pos, len)
