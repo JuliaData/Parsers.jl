@@ -366,4 +366,8 @@ end
 # discovered from JSON tests
 @test Parsers.tryparse(Float64, "0e+") === nothing
 
+# https://github.com/JuliaData/CSV.jl/issues/916
+@test  Parsers.parse(Float64, "0.44311945001372019574271437679879349172") === 0.4431194500137202
+@test Parsers.parse(BigFloat, "0.44311945001372019574271437679879349172") == BigFloat("0.44311945001372019574271437679879349172")
+
 end # @testset

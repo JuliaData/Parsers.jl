@@ -437,7 +437,10 @@ end
         x = v * V(1e23)
     elseif exp > 0
         x = v * exp10(exp)
-    elseif exp < -308
+    elseif exp < -308 || v > maxsig(T)
+        # if v is too large, we lose precision by just doing
+        # v / exp10(-exp) since that only promotes to Float64
+        # so detect and re-route to this branch where we widen v
         y = _widen(v)
         return _scale(T, y, exp, neg)
     else
