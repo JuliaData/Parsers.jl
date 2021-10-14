@@ -383,7 +383,8 @@ pow10(::Type{BigFloat}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
     if exp > 308
         return T(neg ? -Inf : Inf)
     elseif exp < -326
-        return zero(T)
+        # https://github.com/JuliaData/Parsers.jl/issues/83
+        return _scale(T, UInt128(v), exp, neg)
     end
     return _scale(T, v, exp, neg)
 end
@@ -449,7 +450,7 @@ end
     return T(neg ? -x : x)
 end
 
-const BIGEXP10 = [1 / exp10(BigInt(e)) for e = 309:326]
+const BIGEXP10 = [1 / exp10(BigInt(e)) for e = 309:327]
 const BIGFLOAT = BigFloat[]
 if VERSION > v"1.5"
 const BIGFLOATEXP10 = [exp10(BigFloat(i; precision=64)) for i = 1:308]
@@ -464,7 +465,11 @@ end
         x, v, MPFR.ROUNDING_MODE[])
     if exp < -308
         # v * (1 / exp10(-exp))
-        y = BIGEXP10[-exp - 308]
+        if exp < -327
+            y = 1 / exp10(BigInt(-exp))
+        else
+            y = BIGEXP10[-exp - 308]
+        end
         ccall((:mpfr_mul, :libmpfr), Int32,
             (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
             x, x, y, MPFR.ROUNDING_MODE[])
