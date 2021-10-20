@@ -218,12 +218,12 @@ function xparse(::Type{T}, source, pos, len, options, ::Type{S}=T) where {T, S}
     poslen = res.val
     if !Parsers.invalid(code) && !Parsers.sentinel(code)
         str = getstring(source, poslen, options.e)
-	x = Base.tryparse(T, str)
-	if x === nothing
-	    return Result{S}(code | INVALID, res.tlen)
-	else
-	    return Result{S}(code, res.tlen, x)
-	end
+        x = Base.tryparse(T, str)
+        if x === nothing
+            return Result{S}(code | INVALID, res.tlen)
+        else
+            return Result{S}(code, res.tlen, x)
+        end
     else
         return Result{S}(code, res.tlen)
     end
@@ -721,12 +721,12 @@ end
     poslen = res.val
     if !Parsers.invalid(code) && !Parsers.sentinel(code)
         str = getstring(source, poslen, options.e)
-	x = Base.tryparse(T, str)
-	if x === nothing
-	    return Result{S}(code | INVALID, res.tlen)
-	else
-	    return Result{S}(code, res.tlen, x)
-	end
+        x = Base.tryparse(T, str)
+        if x === nothing
+            return Result{S}(code | INVALID, res.tlen)
+        else
+            return Result{S}(code, res.tlen, x)
+        end
     else
         return Result{S}(code, res.tlen)
     end
