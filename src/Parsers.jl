@@ -171,7 +171,7 @@ function parse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO},
     code = res.code
     tlen = res.tlen
     fin = buf isa IO || (tlen == (len - pos + 1))
-    return ok(code) && fin ? (res.val::T) : throw(Error(buf, T, code, pos, tlen))
+    return !invalid(code) && fin ? (res.val::T) : throw(Error(buf, T, code, pos, tlen))
 end
 
 """
@@ -185,7 +185,7 @@ an error, use [`Parsers.parse`](@ref).
 function tryparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS, pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
     res = xparse2(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
     fin = buf isa IO || (res.tlen == (len - pos + 1))
-    return ok(res.code) && fin ? (res.val::T) : nothing
+    return !invalid(res.code) && fin ? (res.val::T) : nothing
 end
 
 """
