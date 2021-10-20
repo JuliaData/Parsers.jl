@@ -265,7 +265,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
     sentinelpos = 0
     if eof(source, pos, len)
         code = (sentinel === missing ? SENTINEL : INVALID) | EOF
-        @goto donedone
+        @goto earlydone
     end
     b = peekbyte(source, pos)
     # strip leading whitespace
@@ -274,7 +274,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
         incr!(source)
         if eof(source, pos, len)
             code = INVALID | EOF
-            @goto donedone
+            @goto earlydone
         end
         b = peekbyte(source, pos)
     end
@@ -288,7 +288,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
             incr!(source)
             if eof(source, pos, len)
                 code |= INVALID_QUOTED_FIELD
-                @goto donedone
+                @goto earlydone
             end
             b = peekbyte(source, pos)
             # ignore whitespace within quoted field
@@ -297,7 +297,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                 incr!(source)
                 if eof(source, pos, len)
                     code |= INVALID_QUOTED_FIELD | EOF
-                    @goto donedone
+                    @goto earlydone
                 end
                 b = peekbyte(source, pos)
             end
@@ -656,14 +656,15 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
         end
     end
 
+@label earlydone
+    # earlydone means we finished parsing before calling `typeparser(T, ...)` to parse a `value::T`.
+    tlen = pos - startpos
+    return Result{S}(code, tlen)
+
 @label donedone
     tlen = pos - startpos
-    if ok(code)
-        y::T = x
-        return Result{S}(code, tlen, y)
-    else
-        return Result{S}(code, tlen)
-    end
+    y::T = x
+    return Result{S}(code, tlen, y)
 end
 
 # condensed version of xparse that doesn't worry about quoting or delimiters; called from Parsers.parse/Parsers.tryparse
