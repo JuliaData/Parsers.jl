@@ -63,6 +63,7 @@ const INVALID_DELIMITER    = 0b1000000010000000 % ReturnCode
 const OVERFLOW             = 0b1000000100000000 % ReturnCode
 const INVALID_TOKEN        = 0b1000010000000000 % ReturnCode
 
+valueok(x::ReturnCode) = (x & OK) == OK
 ok(x::ReturnCode) = (x & (OK | INVALID)) == OK
 invalid(x::ReturnCode) = x < SUCCESS
 sentinel(x::ReturnCode) = (x & SENTINEL) == SENTINEL

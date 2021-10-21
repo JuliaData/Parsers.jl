@@ -658,7 +658,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
 
 @label donedone
     tlen = pos - startpos
-    if ok(code)
+    if valueok(code)
         y::T = x
         return Result{S}(code, tlen, y)
     else
@@ -712,7 +712,7 @@ end
 
 @label donedone
     tlen = pos - startpos
-    return ok(code) ? Result{S}(code, tlen, x) : Result{S}(code, tlen)
+    return valueok(code) ? Result{S}(code, tlen, x) : Result{S}(code, tlen)
 end
 
 @inline function xparse2(::Type{T}, source, pos, len, options, ::Type{S}=T) where {T, S}
