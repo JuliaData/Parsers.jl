@@ -491,6 +491,19 @@ opts = Parsers.Options(sentinel=missings, trues=["true"])
 @test_throws Parsers.Error Parsers.parse(Complex{Float64}, "NaN+NaN*im")
 @test Parsers.tryparse(Complex{Float64}, "NaN+NaN*im") === nothing
 
+# test we parse and return the correct value up to an invalid delimiter
+# https://github.com/JuliaData/Parsers.jl/issues/93
+for (T, str, val) in (
+    (Float64, "1.0 /", 1.0),
+    (Float64, "1.0 /[ 2.0 ]/", 1.0),
+    (Int, "2 _", 2),
+    (Date, "2021-10-20 *", Date("2021-10-20")),
+    (Bool, "false^", false),
+)
+    res = Parsers.xparse(T, str)
+    @test Parsers.invaliddelimiter(res.code)
+    @test res.val === val
+end
 
 end # @testset "misc"
 
