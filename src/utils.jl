@@ -277,73 +277,55 @@ codes(r) = chop(chop(string(
 
 ptrlen(s::String) = (pointer(s), sizeof(s))
 
-# PosLens
-abstract type AbstractPosLen end
-
 """
     PosLen(pos, len, ismissing, escaped)
 
-A custom 64-bit primitive that allows efficiently storing the byte position
+A custom 80-bit primitive that allows efficiently storing the byte position
 and length of a value within a byte array, along with whether a sentinel
 value was parsed, and whether the parsed value includes escaped characters.
-Specifically, the use of 64-bits is:
+Specifically, the use of 80-bits is:
   * 1 bit to indicate whether a sentinel value was encountered while parsing
   * 1 bit to indicate whether the escape character was encountered while parsing
-  * 42 bits to note the byte position as an integer where a value is located in a byte array (max array size ~4.4TB)
-  * 20 bits to note the length of a parsed value (max length of ~1MB)
+  * 46 bits to note the byte position as an integer where a value is located in a byte array (max array size ~70TB)
+  * 32 bits to note the length of a parsed value (max length of ~4GB)
 
 These individual "fields" can be retrieved via dot access, like `poslen.missingvalue`, `poslen.escapedvalue`,
 `poslen.pos`, `poslen.len`.
 
 `Parsers.xparse(String, buf, pos, len, opts)` returns `Parsers.Result{PosLen}`, where the `x.val` is a `PosLen`.
 """
-primitive type PosLen <: AbstractPosLen 64 end
-
-"""
-    PosLen80(pos, len, ismissing, escaped)
-
-Similar to PosLen, but with 80-bits capacity:
-  * 1 bit for sentinel
-  * 1 bit for escaped
-  * 32 bits for length: 4GB max
-  * 46 bits for position: 70TB max
-"""
-primitive type PosLen80 <: AbstractPosLen 80 end
+primitive type PosLen 80 end
 
 _oftype(::Type{T}, x::S) where {T, S} = sizeof(T) == sizeof(S) ? Base.bitcast(T, x) : sizeof(T) > sizeof(S) ? Base.zext_int(T, x) : Base.trunc_int(T, x)
 
-lenbits(::Type{PosLen}) = 20
-lenbits(::Type{PosLen80}) = 32
-lenbitsmask(::Type{PosLen}) = _oftype(PosLen, 0x00000000000fffff)
-lenbitsmask(::Type{PosLen80}) = _oftype(PosLen80, 0x00000000ffffffff)
-maxlen(::Type{T}) where {T <: AbstractPosLen} = 2^(lenbits(T))
-posbits(::Type{PosLen}) = 42
-posbits(::Type{PosLen80}) = 46
-posbitsmask(::Type{PosLen}) = _oftype(PosLen, 0x3ffffffffff00000)
-posbitsmask(::Type{PosLen80}) = _oftype(PosLen80, 0x3fffffffffff0000)
-maxpos(::Type{T}) where {T <: AbstractPosLen} = 2^(posbits(T))
-missingbit(::Type{T}) where {T <: AbstractPosLen} = _oftype(T, 0x80)
-escapebit(::Type{T}) where {T <: AbstractPosLen} = _oftype(T, 0x40)
+lenbits(::Type{PosLen}) = 32
+lenbitsmask(::Type{PosLen}) = _oftype(PosLen, 0x00000000ffffffff)
+maxlen(::Type{PosLen}) = 2^(lenbits(PosLen))
+posbits(::Type{PosLen}) = 46
+posbitsmask(::Type{PosLen}) = Base.shl_int(_oftype(PosLen, 0x000000003fffffffffff), _oftype(PosLen, lenbits(PosLen)))
+maxpos(::Type{PosLen}) = 2^(posbits(PosLen))
+missingbit(::Type{PosLen}) = Base.shl_int(_oftype(PosLen, 0x01), _oftype(PosLen, (sizeof(PosLen) * 8) - 1))
+escapebit(::Type{PosLen}) = Base.shl_int(_oftype(PosLen, 0x01), _oftype(PosLen, (sizeof(PosLen) * 8) - 2))
 
 @noinline postoolarge(T, pos) = throw(ArgumentError("position argument to Parsers.PosLen ($pos) is too large; max position allowed is $(maxpos(T))"))
 @noinline lentoolarge(T, len) = throw(ArgumentError("length argument to Parsers.PosLen ($len) is too large; max length allowed is $(maxlen(T))"))
 
-@inline function (::Type{T})(pos::Integer, len::Integer, ismissing=false, escaped=false) where {T <: AbstractPosLen}
-    pos > maxpos(T) && postoolarge(T, pos)
-    len > maxlen(T) && lentoolarge(T, len)
-    pos = Base.shl_int(_oftype(T, pos), _oftype(T, lenbits(T)))
-    pos = Base.or_int(pos, _oftype(T, ifelse(ismissing, 0x80, 0x00)))
-    pos = Base.or_int(pos, _oftype(T, ifelse(escaped, 0x40, 0x00)))
-    return Base.or_int(pos, _oftype(T, len))
+@inline function PosLen(pos::Integer, len::Integer, ismissing=false, escaped=false)
+    pos > maxpos(PosLen) && postoolarge(PosLen, pos)
+    len > maxlen(PosLen) && lentoolarge(PosLen, len)
+    pos = Base.shl_int(_oftype(PosLen, pos), _oftype(PosLen, lenbits(PosLen)))
+    pos = Base.or_int(pos, ifelse(ismissing, missingbit(PosLen), _oftype(PosLen, 0x00)))
+    pos = Base.or_int(pos, ifelse(escaped, escapebit(PosLen), _oftype(PosLen, 0x00)))
+    return Base.or_int(pos, _oftype(PosLen, len))
 end
 
 @noinline invalidproperty(nm) = throw(ArgumentError("invalid property $nm for PosLen"))
 
-function Base.getproperty(x::T, nm::Symbol) where {T <: AbstractPosLen}
-    nm === :pos && return _oftype(Int64, Base.lshr_int(Base.and_int(x, posbitsmask(T)), lenbits(T)))
-    nm === :len && return _oftype(Int64, Base.and_int(x, lenbitsmask(T)))
-    nm === :missingvalue && return Base.and_int(x, missingbit(T)) == missingbit(T)
-    nm === :escapedvalue && return Base.and_int(x, escapebit(T)) == escapebit(T)
+function Base.getproperty(x::PosLen, nm::Symbol)
+    nm === :pos && return _oftype(Int64, Base.lshr_int(Base.and_int(x, posbitsmask(PosLen)), lenbits(PosLen)))
+    nm === :len && return _oftype(Int64, Base.and_int(x, lenbitsmask(PosLen)))
+    nm === :missingvalue && return Base.and_int(x, missingbit(PosLen)) === missingbit(PosLen)
+    nm === :escapedvalue && return Base.and_int(x, escapebit(PosLen)) === escapebit(PosLen)
     invalidproperty(nm)
 end
 
@@ -362,7 +344,7 @@ function getstring end
 
 _unsafe_string(p, len) = ccall(:jl_pchar_to_string, Ref{String}, (Ptr{UInt8}, Int), p, len)
 
-@inline function getstring(source::Union{IO, AbstractVector{UInt8}}, x::AbstractPosLen, e::UInt8)
+@inline function getstring(source::Union{IO, AbstractVector{UInt8}}, x::PosLen, e::UInt8)
     x.escapedvalue && return unescape(source, x, e)
     if source isa AbstractVector{UInt8}
         return _unsafe_string(pointer(source, x.pos), x.len)
@@ -375,10 +357,10 @@ _unsafe_string(p, len) = ccall(:jl_pchar_to_string, Ref{String}, (Ptr{UInt8}, In
     end
 end
 
-getstring(str::AbstractString, poslen::AbstractPosLen, e::UInt8) = getstring(codeunits(str), poslen, e)
+getstring(str::AbstractString, poslen::PosLen, e::UInt8) = getstring(codeunits(str), poslen, e)
 
 # if a cell value of a csv file has escape characters, we need to unescape it
-@noinline function unescape(origbuf, x::AbstractPosLen, e)
+@noinline function unescape(origbuf, x::PosLen, e)
     n = x.len
     if origbuf isa AbstractVector{UInt8}
         source = view(origbuf, x.pos:(x.pos + x.len - 1))
