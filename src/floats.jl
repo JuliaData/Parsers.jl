@@ -4,8 +4,21 @@ _widen(x::UInt64) = UInt128(x)
 
 const BIGINT = BigInt[]
 
+function access_threaded(f, v::Vector)
+    tid = Threads.threadid()
+    0 < tid <= length(v) || _length_assert()
+    if @inbounds isassigned(v, tid)
+        @inbounds x = v[tid]
+    else
+        x = f()
+        @inbounds v[tid] = x
+    end
+    return x
+end
+@noinline _length_assert() =  @assert false "0 < tid <= v"
+
 function _widen(v::UInt128)
-    @inbounds x = BIGINT[Threads.threadid()]
+    x = access_threaded(() -> (@static VERSION > v"1.5" ? BigInt(; nbits=256) : BigInt()), BIGINT)
     ccall((:__gmpz_import, :libgmp), Int32,
         (Ref{BigInt}, Csize_t, Cint, Csize_t, Cint, Csize_t, Ref{UInt128}),
         x, 1, 1, 16, 0, 0, v)
@@ -459,7 +472,8 @@ const BIGFLOATEXP10 = [exp10(BigFloat(i)) for i = 1:308]
 end
 
 @inline function _scale(::Type{T}, v::V, exp, neg) where {T, V <: BigInt}
-    @inbounds x = BIGFLOAT[Threads.threadid()]
+    x = access_threaded(BigFloat, BIGFLOAT)
+
     ccall((:mpfr_set_z, :libmpfr), Int32,
         (Ref{BigFloat}, Ref{BigInt}, Int32),
         x, v, MPFR.ROUNDING_MODE[])
