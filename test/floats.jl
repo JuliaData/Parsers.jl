@@ -374,4 +374,9 @@ end
 @test Parsers.parse(Float64,"9.3494547075363499E-311") === 9.3494547075363e-311
 @test Parsers.parse(Float64,"9.349454707536349999E-311") === 9.3494547075363e-311
 
+# https://github.com/JuliaData/CSV.jl/issues/938
+v1 = Parsers.parse(BigFloat, "0.994322841995507271075540969506")
+v2 = Parsers.parse(BigFloat, "0.794322841995507271075540969506")
+@test v1 !== v2
+
 end # @testset

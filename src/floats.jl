@@ -445,6 +445,14 @@ end
     return T(Core.bitcast(Float64, mantissa))
 end
 
+# Copied from https://github.com/JuliaLang/julia/blob/c054dbc6d4e03d7168864fed018e3635b546d251/base/mpfr.jl#L1029-L1031
+function copy_if_mutable(::Type{BigFloat}, x::BigFloat)
+    d = x._d
+    d′ = GC.@preserve d unsafe_string(pointer(d), sizeof(d)) # creates a definitely-new String
+    return Base.MPFR._BigFloat(x.prec, x.sign, x.exp, d′)
+end
+copy_if_mutable(::Type{T}, x) where {T} = T(x)
+
 @inline function _scale(::Type{T}, v::V, exp, neg) where {T, V <: UInt128}
     if exp == 23
         # special-case concluded from https://github.com/JuliaLang/julia/issues/38509
@@ -460,7 +468,8 @@ end
     else
         x = v / exp10(-exp)
     end
-    return T(neg ? -x : x)
+    # See https://github.com/JuliaData/CSV.jl/issues/938
+    return neg ? T(-x) : copy_if_mutable(T, x)
 end
 
 const BIGEXP10 = [1 / exp10(BigInt(e)) for e = 309:327]
@@ -500,7 +509,8 @@ end
             (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
             x, x, y, MPFR.ROUNDING_MODE[])
     end
-    return T(neg ? -x : x)
+    # See https://github.com/JuliaData/CSV.jl/issues/938
+    return neg ? T(-x) : copy_if_mutable(T, x)
 end
 
 @inline function two_prod(a, b)
