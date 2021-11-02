@@ -460,7 +460,7 @@ end
 function convert_and_apply_neg(::Type{BigFloat}, x::BigFloat, neg)
     y = unalias_bigfloat(x)
     if neg
-        ccall((:mpfr_neg, :libmpfr), Int32, (Ref{BigFloat}, Ref{BigFloat}, MPFR.MPFRRoundingMode), y, y, MPFR.ROUNDING_MODE[])
+        ccall((:mpfr_neg, :libmpfr), Int32, (Ref{BigFloat}, Ref{BigFloat}, Int32), y, y, MPFR.ROUNDING_MODE[])
     end
     return y
 end
