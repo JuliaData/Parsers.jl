@@ -445,6 +445,26 @@ end
     return T(Core.bitcast(Float64, mantissa))
 end
 
+convert_and_apply_neg(::Type{T}, x, neg) where {T} = neg ? T(-x) : T(x)
+
+# Copied from https://github.com/JuliaLang/julia/blob/c054dbc6d4e03d7168864fed018e3635b546d251/base/mpfr.jl#L1029-L1031
+function unalias_bigfloat(x::BigFloat)
+    d = x._d
+    d′ = GC.@preserve d unsafe_string(pointer(d), sizeof(d)) # creates a definitely-new String
+    return Base.MPFR._BigFloat(x.prec, x.sign, x.exp, d′)
+end
+
+# need to special-case here because `x` came from thread-local BIGFLOATS array
+# so we need to make a copy to get a fresh BigFloat
+# # See https://github.com/JuliaData/CSV.jl/issues/938
+function convert_and_apply_neg(::Type{BigFloat}, x::BigFloat, neg)
+    y = unalias_bigfloat(x)
+    if neg
+        ccall((:mpfr_neg, :libmpfr), Int32, (Ref{BigFloat}, Ref{BigFloat}, Int32), y, y, MPFR.ROUNDING_MODE[])
+    end
+    return y
+end
+
 @inline function _scale(::Type{T}, v::V, exp, neg) where {T, V <: UInt128}
     if exp == 23
         # special-case concluded from https://github.com/JuliaLang/julia/issues/38509
@@ -460,7 +480,7 @@ end
     else
         x = v / exp10(-exp)
     end
-    return T(neg ? -x : x)
+    return convert_and_apply_neg(T, x, neg)
 end
 
 const BIGEXP10 = [1 / exp10(BigInt(e)) for e = 309:327]
@@ -500,7 +520,7 @@ end
             (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
             x, x, y, MPFR.ROUNDING_MODE[])
     end
-    return T(neg ? -x : x)
+    return convert_and_apply_neg(T, x, neg)
 end
 
 @inline function two_prod(a, b)
