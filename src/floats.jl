@@ -497,6 +497,7 @@ end
     ccall((:mpfr_set_z, :libmpfr), Int32,
         (Ref{BigFloat}, Ref{BigInt}, Int32),
         x, v, MPFR.ROUNDING_MODE[])
+    @show v, exp, neg
     if exp < -308
         # v * (1 / exp10(-exp))
         if exp < -327
