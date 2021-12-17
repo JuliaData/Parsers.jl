@@ -262,9 +262,11 @@ end
 
 @inline function parsefrac(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac) where {T <: SupportedFloats, IntType}
     x = zero(T)
+    parsedanyfrac = false
     # check if `b` is a digit
     if b - UInt8('0') < 0x0a
         b -= UInt8('0')
+        parsedanyfrac = true
         # if so, parse fractional digits
         while true
             digits = _muladd(ten(IntType), digits, b)
@@ -318,7 +320,11 @@ end
         return parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, UInt64(0), negexp)
     else
         # if no scientific notation, we're done, so scale digits + frac and return
-        x = scale(T, digits, -signed(frac), neg)
+        if parsedanyfrac
+            x = scale(T, digits, -signed(frac), neg)
+        else
+            x = ifelse(neg, -T(digits), T(digits))
+        end
         code |= OK
     end
 
