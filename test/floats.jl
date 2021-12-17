@@ -379,4 +379,7 @@ v1 = Parsers.parse(BigFloat, "0.994322841995507271075540969506")
 v2 = Parsers.parse(BigFloat, "0.794322841995507271075540969506")
 @test v1 !== v2
 
+# parsing larger than Int64 with dangling non-digits
+@test_throws Parsers.Error Parsers.parse(Float64, "3130307457683247493156627A")
+
 end # @testset
