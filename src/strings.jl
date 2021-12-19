@@ -109,6 +109,19 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
     if options.delim !== nothing
         delim = options.delim
         quo = Int(!quoted)
+        # if stripwhitespace: strip leading whitespace
+        if options.stripwhitespace
+            while b == options.wh1 || b == options.wh2
+                pos += 1
+                incr!(source)
+                if eof(source, pos, len)
+                    code |= EOF
+                    @goto donedone
+                end
+                b = peekbyte(source, pos)
+            end
+            vstartpos = vpos = pos
+        end
         # now we check for a delimiter; if we don't find it, keep parsing until we do
         while true
             if !options.ignorerepeated
