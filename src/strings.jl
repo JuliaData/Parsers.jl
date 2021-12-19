@@ -123,6 +123,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
             vstartpos = vpos = pos
         end
         # now we check for a delimiter; if we don't find it, keep parsing until we do
+        local last_nonwhite = vpos ## used to strip trailing space
         while true
             if !options.ignorerepeated
                 if delim isa UInt8
@@ -241,6 +242,9 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
             # didn't find delimiter nor newline, so increment and check the next byte
             pos += 1
             vpos += quo
+            if b != options.wh1 && b != options.wh2
+                last_nonwhite = vpos ## increment the nonwhite if current is not whitespace
+            end
             incr!(source)
             if eof(source, pos, len)
                 code |= EOF
@@ -271,6 +275,9 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
     end
     if eof(source, pos, len)
         code |= EOF
+    end
+    if options.stripwhitespace
+        vpos = last_nonwhite # go back to last non-whitespace
     end
     poslen = PosLen(vstartpos, vpos - vstartpos, ismissing, escapedstring(code))
     tlen = pos - startpos
