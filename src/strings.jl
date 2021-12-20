@@ -259,7 +259,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
     if eof(source, pos, len)
         code |= EOF
     end
-    poslen = PosLen(vstartpos, vpos - vstartpos, ismissing, escapedstring(code))
+    poslen = S(vstartpos, vpos - vstartpos, ismissing, escapedstring(code))
     tlen = pos - startpos
     return Result{S}(code, tlen, poslen)
 end

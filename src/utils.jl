@@ -280,49 +280,52 @@ ptrlen(s::String) = (pointer(s), sizeof(s))
 """
     PosLen(pos, len, ismissing, escaped)
 
-A custom 64-bit primitive that allows efficiently storing the byte position
+A custom 80-bit primitive that allows efficiently storing the byte position
 and length of a value within a byte array, along with whether a sentinel
 value was parsed, and whether the parsed value includes escaped characters.
-Specifically, the use of 64-bits is:
+Specifically, the use of 80-bits is:
   * 1 bit to indicate whether a sentinel value was encountered while parsing
   * 1 bit to indicate whether the escape character was encountered while parsing
-  * 42 bits to note the byte position as an integer where a value is located in a byte array (max array size ~4.4TB)
-  * 20 bits to note the length of a parsed value (max length of ~1MB)
+  * 46 bits to note the byte position as an integer where a value is located in a byte array (max array size ~70TB)
+  * 32 bits to note the length of a parsed value (max length of ~4GB)
 
 These individual "fields" can be retrieved via dot access, like `poslen.missingvalue`, `poslen.escapedvalue`,
 `poslen.pos`, `poslen.len`.
 
 `Parsers.xparse(String, buf, pos, len, opts)` returns `Parsers.Result{PosLen}`, where the `x.val` is a `PosLen`.
 """
-primitive type PosLen 64 end
+primitive type PosLen 80 end
 
-const MAX_POS = 4398046511104
-const MAX_LEN = 1048575
-@noinline postoolarge(pos) = throw(ArgumentError("position argument to Parsers.PosLen ($pos) is too large; max position allowed is $MAX_POS"))
-@noinline lentoolarge(len) = throw(ArgumentError("length argument to Parsers.PosLen ($len) is too large; max length allowed is $MAX_LEN"))
+_oftype(::Type{T}, x::S) where {T, S} = sizeof(T) == sizeof(S) ? Base.bitcast(T, x) : sizeof(T) > sizeof(S) ? Base.zext_int(T, x) : Base.trunc_int(T, x)
+
+lenbits(::Type{PosLen}) = 32
+lenbitsmask(::Type{PosLen}) = _oftype(PosLen, 0x00000000ffffffff)
+maxlen(::Type{PosLen}) = 2^(lenbits(PosLen))
+posbits(::Type{PosLen}) = 46
+posbitsmask(::Type{PosLen}) = Base.shl_int(_oftype(PosLen, 0x000000003fffffffffff), _oftype(PosLen, lenbits(PosLen)))
+maxpos(::Type{PosLen}) = 2^(posbits(PosLen))
+missingbit(::Type{PosLen}) = Base.shl_int(_oftype(PosLen, 0x01), _oftype(PosLen, (sizeof(PosLen) * 8) - 1))
+escapebit(::Type{PosLen}) = Base.shl_int(_oftype(PosLen, 0x01), _oftype(PosLen, (sizeof(PosLen) * 8) - 2))
+
+@noinline postoolarge(T, pos) = throw(ArgumentError("position argument to Parsers.PosLen ($pos) is too large; max position allowed is $(maxpos(T))"))
+@noinline lentoolarge(T, len) = throw(ArgumentError("length argument to Parsers.PosLen ($len) is too large; max length allowed is $(maxlen(T))"))
 
 @inline function PosLen(pos::Integer, len::Integer, ismissing=false, escaped=false)
-    pos > MAX_POS && postoolarge(pos)
-    len > MAX_LEN && lentoolarge(len)
-    pos = Int64(pos) << 20
-    pos |= ifelse(ismissing, MISSING_BIT, 0)
-    pos |= ifelse(escaped, ESCAPE_BIT, 0)
-    return Base.bitcast(PosLen, pos | Int64(len))
+    pos > maxpos(PosLen) && postoolarge(PosLen, pos)
+    len > maxlen(PosLen) && lentoolarge(PosLen, len)
+    pos = Base.shl_int(_oftype(PosLen, pos), _oftype(PosLen, lenbits(PosLen)))
+    pos = Base.or_int(pos, ifelse(ismissing, missingbit(PosLen), _oftype(PosLen, 0x00)))
+    pos = Base.or_int(pos, ifelse(escaped, escapebit(PosLen), _oftype(PosLen, 0x00)))
+    return Base.or_int(pos, _oftype(PosLen, len))
 end
-
-const MISSING_BIT = Base.bitcast(Int64, 0x8000000000000000)
-const ESCAPE_BIT = Base.bitcast(Int64, 0x4000000000000000)
-const POS_BITS = Base.bitcast(Int64, 0x3ffffffffff00000)
-const LEN_BITS = Base.bitcast(Int64, 0x00000000000fffff)
 
 @noinline invalidproperty(nm) = throw(ArgumentError("invalid property $nm for PosLen"))
 
 function Base.getproperty(x::PosLen, nm::Symbol)
-    y = Base.bitcast(Int64, x)
-    nm === :pos && return (y & POS_BITS) >> 20
-    nm === :len && return y & LEN_BITS
-    nm === :missingvalue && return (y & MISSING_BIT) == MISSING_BIT
-    nm === :escapedvalue && return (y & ESCAPE_BIT) == ESCAPE_BIT
+    nm === :pos && return _oftype(Int64, Base.lshr_int(Base.and_int(x, posbitsmask(PosLen)), lenbits(PosLen)))
+    nm === :len && return _oftype(Int64, Base.and_int(x, lenbitsmask(PosLen)))
+    nm === :missingvalue && return Base.and_int(x, missingbit(PosLen)) === missingbit(PosLen)
+    nm === :escapedvalue && return Base.and_int(x, escapebit(PosLen)) === escapebit(PosLen)
     invalidproperty(nm)
 end
 
