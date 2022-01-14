@@ -253,8 +253,14 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
         # no delimiter, so read until EOF
         while !eof(source, pos, len)
             pos += 1
-            vpos += 1
             incr!(source)
+            if options.stripwhitespace
+                b = peekbyte(source, pos)
+                if b != options.wh1 && b != options.wh2
+                    lastnonwhitespacepos = vpos
+                end
+            end
+            vpos += 1
         end
     end
 

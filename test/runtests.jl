@@ -250,6 +250,8 @@ res = Parsers.xparse(String, "hey there ,"; delim=',', stripwhitespace=true)
 @test res.val.pos == 1 && res.val.len == 9
 res = Parsers.xparse(String, " hey there "; stripwhitespace=true)
 @test res.val.pos == 2 && res.val.len == 9
+res = Parsers.xparse(String, " hey there "; delim=nothing, stripwhitespace=true)
+@test res.val.pos == 2 && res.val.len == 9
 
 end # @testset "Core Parsers.xparse"
 
