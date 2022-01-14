@@ -1,6 +1,6 @@
 # this is mostly copy-pasta from Parsers.jl main xparse function
 function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options, ::Type{S}=PosLen) where {T <: AbstractString, S}
-    startpos = vstartpos = vpos = pos
+    startpos = vstartpos = vpos = lastnonwhitespacepos = pos
     sentstart = sentinelpos = 0
     code = SUCCESS
     sentinel = options.sentinel
@@ -15,6 +15,9 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
         pos += 1
         incr!(source)
         vpos = pos
+        if options.stripwhitespace
+            vstartpos = pos
+        end
         if eof(source, pos, len)
             code |= EOF
             @goto donedone
@@ -40,6 +43,9 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                 pos += 1
                 incr!(source)
                 vpos = pos
+                if options.stripwhitespace
+                    vstartpos = pos
+                end
                 if eof(source, pos, len)
                     code |= INVALID_QUOTED_FIELD | EOF
                     @goto donedone
@@ -53,7 +59,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
         sentstart = pos
         sentinelpos = checksentinel(source, pos, len, sentinel)
     end
-    vpos = pos
+    vpos = lastnonwhitespacepos = pos
     if options.quoted
         # for quoted fields, find the closing quote character
         if quoted
@@ -91,6 +97,9 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                     code |= INVALID_QUOTED_FIELD | EOF
                     @goto donedone
                 end
+                if options.stripwhitespace && b != options.wh1 && b != options.wh2
+                    lastnonwhitespacepos = pos
+                end
                 b = peekbyte(source, pos)
             end
             b = peekbyte(source, pos)
@@ -108,7 +117,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
     end
     if options.delim !== nothing
         delim = options.delim
-        quo = Int(!quoted)
+        unquoted = Int(!quoted)
         # now we check for a delimiter; if we don't find it, keep parsing until we do
         while true
             if !options.ignorerepeated
@@ -227,7 +236,12 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
             end
             # didn't find delimiter nor newline, so increment and check the next byte
             pos += 1
-            vpos += quo
+            vpos += unquoted
+            if options.stripwhitespace
+                if b != options.wh1 && b != options.wh2
+                    lastnonwhitespacepos = vpos
+                end
+            end
             incr!(source)
             if eof(source, pos, len)
                 code |= EOF
@@ -239,8 +253,14 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
         # no delimiter, so read until EOF
         while !eof(source, pos, len)
             pos += 1
-            vpos += 1
             incr!(source)
+            if options.stripwhitespace
+                b = peekbyte(source, pos)
+                if b != options.wh1 && b != options.wh2
+                    lastnonwhitespacepos = vpos
+                end
+            end
+            vpos += 1
         end
     end
 
@@ -258,6 +278,9 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
     end
     if eof(source, pos, len)
         code |= EOF
+    end
+    if options.stripwhitespace
+        vpos = lastnonwhitespacepos
     end
     poslen = PosLen(vstartpos, vpos - vstartpos, ismissing, escapedstring(code))
     tlen = pos - startpos

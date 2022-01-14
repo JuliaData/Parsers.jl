@@ -195,6 +195,13 @@ testcases = [
     (str="1\r\n#  \r\n\r\n", kwargs=(ignoreemptylines=true, comment="#",), x=1, code=(OK | NEWLINE | EOF), vpos=1, vlen=1, tlen=10),
     (str="1,\r\n#  \r\n\r\n,", kwargs=(ignorerepeated=true, ignoreemptylines=true, comment="#", delim=UInt8(',')), x=1, code=(OK | NEWLINE | DELIMITED), vpos=1, vlen=1, tlen=12),
     (str="1::\r\n#  \r\n\r\n::", kwargs=(ignorerepeated=true, ignoreemptylines=true, comment="#", delim="::"), x=1, code=(OK | NEWLINE | DELIMITED), vpos=1, vlen=1, tlen=14),
+    # stripwhitespace
+    (str=" 1", kwargs=(stripwhitespace=true,), x=1, code=(OK | EOF), vpos=2, vlen=1, tlen=2),
+    (str="{ 1}", kwargs=(stripwhitespace=true,), x=1, code=(OK | QUOTED | EOF), vpos=3, vlen=1, tlen=4),
+    (str="{1 }", kwargs=(stripwhitespace=true,), x=1, code=(OK | QUOTED | EOF), vpos=2, vlen=1, tlen=4),
+    (str="1 ", kwargs=(stripwhitespace=true,), x=1, code=(OK | EOF), vpos=1, vlen=1, tlen=2),
+    (str="1 ,", kwargs=(stripwhitespace=true,delim=UInt8(',')), x=1, code=(OK | DELIMITED), vpos=1, vlen=1, tlen=3),
+    (str="{1 } ,", kwargs=(stripwhitespace=true,delim=UInt8(',')), x=1, code=(OK | DELIMITED | QUOTED), vpos=2, vlen=1, tlen=6),
 ];
 
 for useio in (false, true)
@@ -229,6 +236,22 @@ for (i, case) in enumerate(testcases)
         @test tlen == case.tlen
     end
 end
+
+# stripwhitespace
+res = Parsers.xparse(String, "{hey there}"; openquotechar='{', closequotechar='}', stripwhitespace=true)
+@test res.val.pos == 2 && res.val.len == 9
+res = Parsers.xparse(String, "{hey there }"; openquotechar='{', closequotechar='}', stripwhitespace=true)
+@test res.val.pos == 2 && res.val.len == 9
+res = Parsers.xparse(String, "{hey there },"; openquotechar='{', closequotechar='}', delim=',', stripwhitespace=true)
+@test res.val.pos == 2 && res.val.len == 9
+res = Parsers.xparse(String, "{hey there } ,"; openquotechar='{', closequotechar='}', delim=',', stripwhitespace=true)
+@test res.val.pos == 2 && res.val.len == 9
+res = Parsers.xparse(String, "hey there ,"; delim=',', stripwhitespace=true)
+@test res.val.pos == 1 && res.val.len == 9
+res = Parsers.xparse(String, " hey there "; stripwhitespace=true)
+@test res.val.pos == 2 && res.val.len == 9
+res = Parsers.xparse(String, " hey there "; delim=nothing, stripwhitespace=true)
+@test res.val.pos == 2 && res.val.len == 9
 
 end # @testset "Core Parsers.xparse"
 
