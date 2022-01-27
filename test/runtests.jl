@@ -246,6 +246,10 @@ res = Parsers.xparse(String, "{hey there },"; openquotechar='{', closequotechar=
 @test res.val.pos == 2 && res.val.len == 9
 res = Parsers.xparse(String, "{hey there } ,"; openquotechar='{', closequotechar='}', delim=',', stripwhitespace=true)
 @test res.val.pos == 2 && res.val.len == 9
+res = Parsers.xparse(String, "{hey there } a,"; openquotechar='{', closequotechar='}', delim=',', stripwhitespace=true)
+@test res.val.pos == 2 && res.val.len == 9 && Parsers.invaliddelimiter(res.code)
+res = Parsers.xparse(String, "{hey there } a "; openquotechar='{', closequotechar='}', delim=nothing, stripwhitespace=true)
+@test res.val.pos == 2 && res.val.len == 9 && res.tlen == 13
 res = Parsers.xparse(String, "hey there ,"; delim=',', stripwhitespace=true)
 @test res.val.pos == 1 && res.val.len == 9
 res = Parsers.xparse(String, " hey there "; stripwhitespace=true)

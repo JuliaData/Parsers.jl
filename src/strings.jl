@@ -237,8 +237,11 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
             # didn't find delimiter nor newline, so increment and check the next byte
             pos += 1
             vpos += unquoted
+            if quoted
+                code |= INVALID_DELIMITER
+            end
             if options.stripwhitespace
-                if b != options.wh1 && b != options.wh2
+                if !quoted && b != options.wh1 && b != options.wh2
                     lastnonwhitespacepos = vpos
                 end
             end
@@ -249,14 +252,14 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
             end
             b = peekbyte(source, pos)
         end
-    else
+    elseif !quoted
         # no delimiter, so read until EOF
         while !eof(source, pos, len)
             pos += 1
             incr!(source)
             if options.stripwhitespace
                 b = peekbyte(source, pos)
-                if b != options.wh1 && b != options.wh2
+                if !quoted && b != options.wh1 && b != options.wh2
                     lastnonwhitespacepos = vpos
                 end
             end
