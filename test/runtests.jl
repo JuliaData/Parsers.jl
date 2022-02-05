@@ -538,4 +538,7 @@ include("floats.jl")
 include("dates.jl")
 include("ryu.jl")
 
+# Cover precompile code
+Parsers._precompile_()
+
 end # @testset "Parsers"

@@ -5,26 +5,39 @@ function _precompile_()
     precompile(Tuple{typeof(Parsers.parse), Type{Date}, String})
 
     options = Parsers.Options()
-    pos = 0
-    source = codeunits("a")
-    len = length(source)
-    for T in (Char, String)
-        Parsers.xparse(T, source, pos, len, options)
-        Parsers.xparse(T, source, pos, len, options, Any)
-        source = Vector(source)
-        Parsers.xparse(T, source, pos, len, options)
-        Parsers.xparse(T, source, pos, len, options, Any)
+    pos = 1
+    val = "a"
+    len = length(val)
+    for T in (Char, String), buf in (codeunits(val), Vector(codeunits(val)))
+        Parsers.xparse(T, buf, pos, len, options)
+        Parsers.xparse(T, buf, pos, len, options, Any)
     end
-    source = codeunits("123")
-    len = length(source)
-    for T in (Int8, Int16, Int32, Int64, Float16, Float32, Float64, BigFloat, Dates.Date, Dates.DateTime, Dates.Time, Bool)
-        Parsers.xparse(T, source, pos, len, options)
-        Parsers.xparse(T, source, pos, len, options, T)
-        Parsers.xparse(T, source, pos, len, options, Any)
-        source = Vector(source)
-        Parsers.xparse(T, source, pos, len, options)
-        Parsers.xparse(T, source, pos, len, options, T)
-        Parsers.xparse(T, source, pos, len, options, Any)
+
+    for T in (Char, Symbol), buf in (val, Vector(codeunits(val)))
+        Parsers.xparse2(T, buf, pos, len, options)
+        Parsers.xparse2(T, buf, pos, len, options, T)
+        Parsers.xparse2(T, buf, pos, len, options, Any)
+    end
+
+    val = "123"
+    len = length(val)
+    for T in (Int8, Int16, Int32, Int64, Float16, Float32, Float64, BigFloat, Dates.Date, Dates.DateTime, Dates.Time, Bool), 
+        buf in (codeunits(val), Vector(codeunits(val)))
+        Parsers.xparse(T, buf, pos, len, options)
+        Parsers.xparse(T, buf, pos, len, options, T)
+        Parsers.xparse(T, buf, pos, len, options, Any)
+    end
+    for T in (Int8, Int16, Int32, Int64, Float16, Float32, Float64, BigFloat, Dates.Date, Dates.DateTime, Dates.Time, Bool), 
+        buf in (val, SubString(val, 1:3), Vector(codeunits(val)), view(Vector(codeunits(val)), 1:3))
+        Parsers.xparse2(T, buf, pos, len, options)
+        Parsers.xparse2(T, buf, pos, len, options, T)
+        Parsers.xparse2(T, buf, pos, len, options, Any)
+    end
+    for T in (Int8, Int16, Int32, Int64, Float16, Float32, Float64, BigFloat, Dates.Date, Dates.DateTime), 
+        buf in (val, SubString(val, 1:3), Vector(codeunits(val)), view(Vector(codeunits(val)), 1:3))
+        Parsers.parse(T, buf)
+        Parsers.parse(T, buf, options)
+        Parsers.tryparse(T, buf)
     end
 end
 _precompile_()
