@@ -531,7 +531,7 @@ end
 
 @inline function two_prod(a, b)
     x = UInt128(a) * b
-    return UInt64(x >> 64), unsafe_trunc(UInt64, x)
+    return UInt64(x >> 64), x % UInt64
 end
 
 pow10spl(i) = (@inbounds x = POW10SPL[i + 1]; return x)
