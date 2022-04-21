@@ -385,7 +385,7 @@ pow10(::Type{Float32}, e) = (@inbounds v = F32_SHORT_POWERS[e+1]; return v)
 pow10(::Type{Float64}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
 pow10(::Type{BigFloat}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
 
-@inline function scale(::Type{T}, v, exp, neg) where {T}
+function scale(::Type{T}, v, exp, neg) where {T}
     ms = maxsig(T)
     cl = ceillog5(T)
     if v < ms
@@ -408,7 +408,7 @@ pow10(::Type{BigFloat}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
     return _scale(T, v, exp, neg)
 end
 
-@inline function _scale(::Type{T}, v::UInt64, exp, neg) where {T}
+function _scale(::Type{T}, v::UInt64, exp, neg) where {T}
     mant, pow = pow10spl(exp + 326)
     lz = leading_zeros(v)
     newv = v << lz
@@ -471,7 +471,7 @@ function convert_and_apply_neg(::Type{BigFloat}, x::BigFloat, neg)
     return y
 end
 
-@inline function _scale(::Type{T}, v::V, exp, neg) where {T, V <: UInt128}
+function _scale(::Type{T}, v::V, exp, neg) where {T, V <: UInt128}
     if exp == 23
         # special-case concluded from https://github.com/JuliaLang/julia/issues/38509
         x = v * V(1e23)
@@ -497,53 +497,37 @@ else
 const BIGFLOATEXP10 = [exp10(BigFloat(i)) for i = 1:308]
 end
 
-@inline function _scale(::Type{T}, v::V, exp, neg) where {T, V <: BigInt}
+function _scale(::Type{T}, v::V, exp, neg) where {T, V <: BigInt}
     x = access_threaded(BigFloat, BIGFLOAT)
 
     ccall((:mpfr_set_z, :libmpfr), Int32,
         (Ref{BigFloat}, Ref{BigInt}, Int32),
         x, v, MPFR.ROUNDING_MODE[])
     if exp < -308
-        _setrounding_mul308(exp)
+        # v * (1 / exp10(-exp))
+        if exp < -327
+            y = 1 / exp10(BigInt(-exp))
+        else
+            y = BIGEXP10[-exp - 308]
+        end
+        ccall((:mpfr_mul, :libmpfr), Int32,
+            (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
+            x, x, y, MPFR.ROUNDING_MODE[])
     elseif exp < 0
-        _setrounding_div(exp)
+        # v / exp10(-exp)
+        y = BIGFLOATEXP10[-exp]
+        ccall((:mpfr_div, :libmpfr), Int32,
+            (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
+            x, x, y, MPFR.ROUNDING_MODE[])
     else
-        _setrounding_rul(exp)
+        # v * exp10(V(exp))
+        y = BIGFLOATEXP10[exp]
+        ccall((:mpfr_mul, :libmpfr), Int32,
+            (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
+            x, x, y, MPFR.ROUNDING_MODE[])
     end
     return convert_and_apply_neg(T, x, neg)
 end
-
-@noinline function _setrounding_mul308(exp)
-    # v * (1 / exp10(-exp))
-    if exp < -327
-        y = 1 / exp10(BigInt(-exp))
-    else
-        y = BIGEXP10[-exp - 308]
-    end
-    ccall((:mpfr_mul, :libmpfr), Int32,
-        (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
-        x, x, y, MPFR.ROUNDING_MODE[])
-    return nothing
-end
-
-@noinline function _setrounding_div(exp)
-    # v / exp10(-exp)
-    y = BIGFLOATEXP10[-exp]
-    ccall((:mpfr_div, :libmpfr), Int32,
-        (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
-        x, x, y, MPFR.ROUNDING_MODE[])
-    return nothing
-end
-
-@noinline function _setrounding_mul(exp)
-    # v * exp10(V(exp))
-    y = BIGFLOATEXP10[exp]
-    ccall((:mpfr_mul, :libmpfr), Int32,
-        (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
-        x, x, y, MPFR.ROUNDING_MODE[])
-    return nothing
-end
-
 
 @inline function two_prod(a, b)
     x = UInt128(a) * b
