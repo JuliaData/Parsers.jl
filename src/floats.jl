@@ -504,30 +504,46 @@ end
         (Ref{BigFloat}, Ref{BigInt}, Int32),
         x, v, MPFR.ROUNDING_MODE[])
     if exp < -308
-        # v * (1 / exp10(-exp))
-        if exp < -327
-            y = 1 / exp10(BigInt(-exp))
-        else
-            y = BIGEXP10[-exp - 308]
-        end
-        ccall((:mpfr_mul, :libmpfr), Int32,
-            (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
-            x, x, y, MPFR.ROUNDING_MODE[])
+        _setrounding_mul308(exp)
     elseif exp < 0
-        # v / exp10(-exp)
-        y = BIGFLOATEXP10[-exp]
-        ccall((:mpfr_div, :libmpfr), Int32,
-            (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
-            x, x, y, MPFR.ROUNDING_MODE[])
+        _setrounding_div(exp)
     else
-        # v * exp10(V(exp))
-        y = BIGFLOATEXP10[exp]
-        ccall((:mpfr_mul, :libmpfr), Int32,
-            (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
-            x, x, y, MPFR.ROUNDING_MODE[])
+        _setrounding_rul(exp)
     end
     return convert_and_apply_neg(T, x, neg)
 end
+
+@noinline function _setrounding_mul308(exp)
+    # v * (1 / exp10(-exp))
+    if exp < -327
+        y = 1 / exp10(BigInt(-exp))
+    else
+        y = BIGEXP10[-exp - 308]
+    end
+    ccall((:mpfr_mul, :libmpfr), Int32,
+        (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
+        x, x, y, MPFR.ROUNDING_MODE[])
+    return nothing
+end
+
+@noinline function _setrounding_div(exp)
+    # v / exp10(-exp)
+    y = BIGFLOATEXP10[-exp]
+    ccall((:mpfr_div, :libmpfr), Int32,
+        (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
+        x, x, y, MPFR.ROUNDING_MODE[])
+    return nothing
+end
+
+@noinline function _setrounding_mul(exp)
+    # v * exp10(V(exp))
+    y = BIGFLOATEXP10[exp]
+    ccall((:mpfr_mul, :libmpfr), Int32,
+        (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
+        x, x, y, MPFR.ROUNDING_MODE[])
+    return nothing
+end
+
 
 @inline function two_prod(a, b)
     x = UInt128(a) * b
