@@ -54,7 +54,7 @@ end
   * `comment=nothing`: a string which, if matched at the start of a line, will make parsing consume the rest of the line
   * `ignoreemptylines=false`: after parsing a value, if a newline is detected, another immediately proceeding newline will be checked for and consumed
   * `stripwhitespace=false`: if true, leading and trailing whitespace is stripped from string fields, note that for *quoted* strings however, whitespace is preserved within quotes (but ignored before/after quote characters). To also strip *within* quotes, see `stripquoted`
-  * `stripquoted=false`: if true, whitespace is also stripped within quoted strings. If true, `stripewhitespace` is also set to true.
+  * `stripquoted=false`: if true, whitespace is also stripped within quoted strings. If true, `stripwhitespace` is also set to true.
   * `debug=false`: if `true`, various debug logging statements will be printed while parsing; useful when diagnosing why parsing returns certain `Parsers.ReturnCode` values
 """
 struct Options
