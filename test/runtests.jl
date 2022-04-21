@@ -275,6 +275,9 @@ res = Parsers.xparse(String, " hey there "; stripquoted=true)
 @test res.val.pos == 2 && res.val.len == 9
 res = Parsers.xparse(String, " hey there "; delim=nothing, stripquoted=true)
 @test res.val.pos == 2 && res.val.len == 9
+# `stripquoted=true` should always override `stripwhitespace` to `true`
+res = Parsers.xparse(String, " hey there "; delim=nothing, stripquoted=true, stripwhitespace=false)
+@test res.val.pos == 2 && res.val.len == 9
 
 end # @testset "Core Parsers.xparse"
 
