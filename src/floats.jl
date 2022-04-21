@@ -385,7 +385,7 @@ pow10(::Type{Float32}, e) = (@inbounds v = F32_SHORT_POWERS[e+1]; return v)
 pow10(::Type{Float64}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
 pow10(::Type{BigFloat}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
 
-@inline function scale(::Type{T}, v, exp, neg) where {T}
+function scale(::Type{T}, v, exp, neg) where {T}
     ms = maxsig(T)
     cl = ceillog5(T)
     if v < ms
@@ -408,7 +408,7 @@ pow10(::Type{BigFloat}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
     return _scale(T, v, exp, neg)
 end
 
-@inline function _scale(::Type{T}, v::UInt64, exp, neg) where {T}
+function _scale(::Type{T}, v::UInt64, exp, neg) where {T}
     mant, pow = pow10spl(exp + 326)
     lz = leading_zeros(v)
     newv = v << lz
@@ -471,7 +471,7 @@ function convert_and_apply_neg(::Type{BigFloat}, x::BigFloat, neg)
     return y
 end
 
-@inline function _scale(::Type{T}, v::V, exp, neg) where {T, V <: UInt128}
+function _scale(::Type{T}, v::V, exp, neg) where {T, V <: UInt128}
     if exp == 23
         # special-case concluded from https://github.com/JuliaLang/julia/issues/38509
         x = v * V(1e23)
@@ -497,7 +497,7 @@ else
 const BIGFLOATEXP10 = [exp10(BigFloat(i)) for i = 1:308]
 end
 
-@inline function _scale(::Type{T}, v::V, exp, neg) where {T, V <: BigInt}
+function _scale(::Type{T}, v::V, exp, neg) where {T, V <: BigInt}
     x = access_threaded(BigFloat, BIGFLOAT)
 
     ccall((:mpfr_set_z, :libmpfr), Int32,
