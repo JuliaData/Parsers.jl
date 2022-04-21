@@ -53,7 +53,8 @@ end
   * `quoted=false`: whether parsing should check for `openquotechar` and `closequotechar` characters to signal quoted fields
   * `comment=nothing`: a string which, if matched at the start of a line, will make parsing consume the rest of the line
   * `ignoreemptylines=false`: after parsing a value, if a newline is detected, another immediately proceeding newline will be checked for and consumed
-  * `stripwhitespace=false`: if true, leading and trailing whitespace is stripped from string fields
+  * `stripwhitespace=false`: if true, leading and trailing whitespace is stripped from string fields, note that for *quoted* strings however, whitespace is preserved within quotes (but ignored before/after quote characters). To also strip *within* quotes, see `stripquoted`
+  * `stripquoted=false`: if true, whitespace is also stripped within quoted strings. If true, `stripwhitespace` is also set to true.
   * `debug=false`: if `true`, various debug logging statements will be printed while parsing; useful when diagnosing why parsing returns certain `Parsers.ReturnCode` values
 """
 struct Options
@@ -74,6 +75,7 @@ struct Options
     dateformat::Union{Nothing, Format}
     cmt::Union{Nothing, PtrLen}
     stripwhitespace::Bool
+    stripquoted::Bool
 end
 
 prepare(x::Vector{String}) = sort!(map(ptrlen, x), by=x->x[2], rev=true)
@@ -92,7 +94,7 @@ function Options(
             trues::Union{Nothing, Vector{String}},
             falses::Union{Nothing, Vector{String}},
             dateformat::Union{Nothing, String, Dates.DateFormat, Format},
-            ignorerepeated, ignoreemptylines, comment, quoted, debug, stripwhitespace=false)
+            ignorerepeated, ignoreemptylines, comment, quoted, debug, stripwhitespace=false, stripquoted=false)
     asciival(wh1) && asciival(wh2) || throw(ArgumentError("whitespace characters must be ASCII"))
     asciival(oq) && asciival(cq) && asciival(e) || throw(ArgumentError("openquotechar, closequotechar, and escapechar must be ASCII characters"))
     (oq == delim) || (cq == delim) || (e == delim) && throw(ArgumentError("delim argument must be different than openquotechar, closequotechar, and escapechar arguments"))
@@ -134,7 +136,7 @@ function Options(
         cmt = ptrlen(comment)
     end
     df = dateformat === nothing ? nothing : dateformat isa String ? Format(dateformat) : dateformat isa Dates.DateFormat ? Format(dateformat) : dateformat
-    return Options(refs, sent, ignorerepeated, ignoreemptylines, wh1 % UInt8, wh2 % UInt8, quoted, oq % UInt8, cq % UInt8, e % UInt8, del, decimal % UInt8, trues, falses, df, cmt, stripwhitespace)
+    return Options(refs, sent, ignorerepeated, ignoreemptylines, wh1 % UInt8, wh2 % UInt8, quoted, oq % UInt8, cq % UInt8, e % UInt8, del, decimal % UInt8, trues, falses, df, cmt, stripwhitespace || stripquoted, stripquoted)
 end
 
 Options(;
@@ -155,7 +157,8 @@ Options(;
     quoted::Bool=false,
     debug::Bool=false,
     stripwhitespace::Bool=false,
-) = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, debug, stripwhitespace)
+    stripquoted::Bool=false,
+) = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, debug, stripwhitespace, stripquoted)
 
 const OPTIONS = Options(nothing, UInt8(' '), UInt8('\t'), UInt8('"'), UInt8('"'), UInt8('"'), nothing, UInt8('.'), nothing, nothing, nothing, false, false, nothing, false, false, false)
 const XOPTIONS = Options(missing, UInt8(' '), UInt8('\t'), UInt8('"'), UInt8('"'), UInt8('"'), UInt8(','), UInt8('.'), nothing, nothing, nothing, false, false, nothing, true, false, false)
@@ -206,8 +209,8 @@ A [`Parsers.Result`](@ref) struct is returned, with the following fields:
 function xparse end
 
 # for testing purposes only, it's much too slow to dynamically create Options for every xparse call
-function xparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=true, openquotechar::Union{UInt8, Char}=UInt8('"'), closequotechar::Union{UInt8, Char}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, ignoreemptylines::Bool=false, delim::Union{UInt8, Char, PtrLen, AbstractString, Nothing}=UInt8(','), decimal::Union{UInt8, Char}=UInt8('.'), comment=nothing, trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, debug::Bool=false, stripwhitespace::Bool=false) where {T}
-    options = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, debug, stripwhitespace)
+function xparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=true, openquotechar::Union{UInt8, Char}=UInt8('"'), closequotechar::Union{UInt8, Char}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, ignoreemptylines::Bool=false, delim::Union{UInt8, Char, PtrLen, AbstractString, Nothing}=UInt8(','), decimal::Union{UInt8, Char}=UInt8('.'), comment=nothing, trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, debug::Bool=false, stripwhitespace::Bool=false, stripquoted::Bool=false) where {T}
+    options = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, debug, stripwhitespace, stripquoted)
     return xparse(T, buf, pos, len, options)
 end
 
