@@ -43,7 +43,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                 pos += 1
                 incr!(source)
                 vpos = pos
-                if options.stripwhitespace
+                if options.stripquoted
                     vstartpos = pos
                 end
                 if eof(source, pos, len)
@@ -97,7 +97,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                     code |= INVALID_QUOTED_FIELD | EOF
                     @goto donedone
                 end
-                if options.stripwhitespace && b != options.wh1 && b != options.wh2
+                if options.stripquoted && b != options.wh1 && b != options.wh2
                     lastnonwhitespacepos = pos
                 end
                 b = peekbyte(source, pos)
@@ -282,7 +282,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
     if eof(source, pos, len)
         code |= EOF
     end
-    if options.stripwhitespace
+    if options.stripquoted || (options.stripwhitespace && !quoted)
         vpos = lastnonwhitespacepos
     end
     poslen = PosLen(vstartpos, vpos - vstartpos, ismissing, escapedstring(code))
