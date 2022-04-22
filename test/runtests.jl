@@ -279,6 +279,10 @@ res = Parsers.xparse(String, " hey there "; delim=nothing, stripquoted=true)
 res = Parsers.xparse(String, " hey there "; delim=nothing, stripquoted=true, stripwhitespace=false)
 @test res.val.pos == 2 && res.val.len == 9
 
+# https://github.com/JuliaData/Parsers.jl/issues/115
+res = Parsers.xparse(String, "{hey there } "; openquotechar='{', closequotechar='}', stripquoted=true, delim=' ', wh1=0x00)
+@test res.val.pos == 2 && res.val.len == 9
+
 end # @testset "Core Parsers.xparse"
 
 @testset "ints" begin

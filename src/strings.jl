@@ -97,7 +97,8 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                     code |= INVALID_QUOTED_FIELD | EOF
                     @goto donedone
                 end
-                if options.stripquoted && b != options.wh1 && b != options.wh2
+                # Always treat space ' ' and tab '\t' as whitespace when quoted
+                if options.stripquoted && b != options.wh1 && b != options.wh2 && b != UInt8(' ') && b != UInt8('\t')
                     lastnonwhitespacepos = pos
                 end
                 b = peekbyte(source, pos)
