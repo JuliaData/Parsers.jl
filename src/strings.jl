@@ -26,11 +26,11 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
     end
     # check for start of quoted field
     if options.quoted
-        quoted = b == options.oq
+        preqpos = pos
+        pos = checkquote(source, pos, len, options.oq)
+        quoted = pos > preqpos
         if quoted
             code = QUOTED
-            pos += 1
-            incr!(source)
             # since we're in quoted mode, reset vstartpos & vpos
             vstartpos = vpos = pos
             if eof(source, pos, len)
@@ -66,9 +66,9 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
             same = options.cq == options.e
             while true
                 vpos = pos
-                pos += 1
-                incr!(source)
                 if same && b == options.e
+                    pos += 1
+                    incr!(source)
                     if eof(source, pos, len)
                         code |= EOF
                         @goto donedone
@@ -79,6 +79,8 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                     pos += 1
                     incr!(source)
                 elseif b == options.e
+                    pos += 1
+                    incr!(source)
                     if eof(source, pos, len)
                         code |= INVALID_QUOTED_FIELD | EOF
                         @goto donedone
@@ -87,11 +89,26 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                     pos += 1
                     incr!(source)
                 elseif b == options.cq
+                    pos += 1
+                    incr!(source)
                     if eof(source, pos, len)
                         code |= EOF
                         @goto donedone
                     end
                     break
+                else
+                    preqpos = pos
+                    pos = checkquote(source, pos, len, options.oq)
+                    if pos > preqpos
+                        if eof(source, pos, len)
+                            code |= EOF
+                            @goto donedone
+                        end
+                        break
+                    else
+                        pos += 1
+                        incr!(source)
+                    end
                 end
                 if eof(source, pos, len)
                     code |= INVALID_QUOTED_FIELD | EOF

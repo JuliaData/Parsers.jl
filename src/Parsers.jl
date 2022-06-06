@@ -41,8 +41,8 @@ end
   * `sentinel=nothing`: valid values include: `nothing` meaning don't check for sentinel values; `missing` meaning an "empty field" should be considered a sentinel value; or a `Vector{String}` of the various string values that should each be checked as a sentinel value. Note that sentinels will always be checked longest to shortest, with the longest valid match taking precedence.
   * `wh1=' '`: the first ascii character to be considered when ignoring leading/trailing whitespace in value parsing
   * `wh2='\t'`: the second ascii character to be considered when ignoring leading/trailing whitespace in value parsing
-  * `openquotechar='"'`: the ascii character that signals a "quoted" field while parsing; subsequent characters will be treated as non-significant until a valid `closequotechar` is detected
-  * `closequotechar='"'`: the ascii character that signals the end of a quoted field
+  * `openquotechar='"'`: the ascii character or string that signals a "quoted" field while parsing; subsequent characters will be treated as non-significant until a valid `closequotechar` is detected
+  * `closequotechar='"'`: the ascii character or string that signals the end of a quoted field
   * `escapechar='"'`: an ascii character used to "escape" a `closequotechar` within a quoted field
   * `delim=nothing`: if `nothing`, no delimiter will be checked for; if a `Char` or `String`, a delimiter will be checked for directly after parsing a value or `closequotechar`; a newline (`\n`), return (`\r`), or CRLF (`"\r\n"`) are always considered "delimiters", in addition to EOF
   * `decimal='.'`: an ascii character to be used when parsing float values that separates a decimal value
@@ -65,8 +65,8 @@ struct Options
     wh1::UInt8
     wh2::UInt8
     quoted::Bool
-    oq::UInt8
-    cq::UInt8
+    oq::Union{UInt8, PtrLen}
+    cq::Union{UInt8, PtrLen}
     e::UInt8
     delim::Union{Nothing, UInt8, PtrLen}
     decimal::UInt8
@@ -83,11 +83,11 @@ asciival(c::Char) = isascii(c)
 asciival(b::UInt8) = b < 0x80
 
 function Options(
-            sentinel::Union{Nothing, Missing, Vector{String}}, 
+            sentinel::Union{Nothing, Missing, Vector{String}},
             wh1::Union{UInt8, Char},
             wh2::Union{UInt8, Char},
-            oq::Union{UInt8, Char},
-            cq::Union{UInt8, Char},
+            oq::Union{UInt8, Char, String},
+            cq::Union{UInt8, Char, String},
             e::Union{UInt8, Char},
             delim::Union{Nothing, UInt8, Char, String},
             decimal::Union{UInt8, Char},
@@ -96,15 +96,20 @@ function Options(
             dateformat::Union{Nothing, String, Dates.DateFormat, Format},
             ignorerepeated, ignoreemptylines, comment, quoted, debug, stripwhitespace=false, stripquoted=false)
     asciival(wh1) && asciival(wh2) || throw(ArgumentError("whitespace characters must be ASCII"))
-    asciival(oq) && asciival(cq) && asciival(e) || throw(ArgumentError("openquotechar, closequotechar, and escapechar must be ASCII characters"))
+    (oq isa String || asciival(oq)) && (cq isa String || asciival(cq)) && asciival(e) || throw(ArgumentError("openquotechar, closequotechar, and escapechar must be ASCII characters"))
     (oq == delim) || (cq == delim) || (e == delim) && throw(ArgumentError("delim argument must be different than openquotechar, closequotechar, and escapechar arguments"))
     if sentinel isa Vector{String}
         for sent in sentinel
             if startswith(sent, string(Char(wh1))) || startswith(sent, string(Char(wh2)))
                 throw(ArgumentError("sentinel value isn't allowed to start with wh1 or wh2 characters"))
             end
-            if startswith(sent, string(Char(oq))) || startswith(sent, string(Char(cq)))
+            if (
+                ((oq isa UInt8 || oq isa Char) && startswith(sent, string(Char(oq)))) ||
+                ((cq isa UInt8 || cq isa Char) && startswith(sent, string(Char(cq))))
+            )
                 throw(ArgumentError("sentinel value isn't allowed to start with openquotechar, closequotechar, or escapechar characters"))
+            elseif (oq isa String && startswith(sent, oq)) || (cq isa String && startswith(sent, cq))
+                throw(ArgumentError("sentinel value isn't allowed to start with openquote or closequote string"))
             end
             if (delim isa UInt8 || delim isa Char) && startswith(sent, string(Char(delim)))
                 throw(ArgumentError("sentinel value isn't allowed to start with a delimiter character"))
@@ -117,6 +122,8 @@ function Options(
         refs = [""]
     end
     sent = sentinel === nothing || sentinel === missing ? sentinel : prepare(sentinel)
+    openq = oq isa String ? ptrlen(oq) : oq % UInt8
+    closeq = cq isa String ? ptrlen(cq) : cq % UInt8
     del = delim === nothing ? nothing : delim isa String ? ptrlen(delim) : delim % UInt8
     if del isa UInt8
         ((wh1 % UInt8) == del || (wh2 % UInt8) == del) && throw(ArgumentError("whitespace characters (`wh1=' '` and `wh2='\\t'` default keyword arguments) must be different than delim argument"))
@@ -136,15 +143,15 @@ function Options(
         cmt = ptrlen(comment)
     end
     df = dateformat === nothing ? nothing : dateformat isa String ? Format(dateformat) : dateformat isa Dates.DateFormat ? Format(dateformat) : dateformat
-    return Options(refs, sent, ignorerepeated, ignoreemptylines, wh1 % UInt8, wh2 % UInt8, quoted, oq % UInt8, cq % UInt8, e % UInt8, del, decimal % UInt8, trues, falses, df, cmt, stripwhitespace || stripquoted, stripquoted)
+    return Options(refs, sent, ignorerepeated, ignoreemptylines, wh1 % UInt8, wh2 % UInt8, quoted, openq, closeq, e % UInt8, del, decimal % UInt8, trues, falses, df, cmt, stripwhitespace || stripquoted, stripquoted)
 end
 
 Options(;
     sentinel::Union{Nothing, Missing, Vector{String}}=nothing,
     wh1::Union{UInt8, Char}=UInt8(' '),
     wh2::Union{UInt8, Char}=UInt8('\t'),
-    openquotechar::Union{UInt8, Char}=UInt8('"'),
-    closequotechar::Union{UInt8, Char}=UInt8('"'),
+    openquotechar::Union{UInt8, Char, String}=UInt8('"'),
+    closequotechar::Union{UInt8, Char, String}=UInt8('"'),
     escapechar::Union{UInt8, Char}=UInt8('"'),
     delim::Union{Nothing, UInt8, Char, String}=nothing,
     decimal::Union{UInt8, Char}=UInt8('.'),
@@ -209,7 +216,7 @@ A [`Parsers.Result`](@ref) struct is returned, with the following fields:
 function xparse end
 
 # for testing purposes only, it's much too slow to dynamically create Options for every xparse call
-function xparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=true, openquotechar::Union{UInt8, Char}=UInt8('"'), closequotechar::Union{UInt8, Char}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, ignoreemptylines::Bool=false, delim::Union{UInt8, Char, PtrLen, AbstractString, Nothing}=UInt8(','), decimal::Union{UInt8, Char}=UInt8('.'), comment=nothing, trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, debug::Bool=false, stripwhitespace::Bool=false, stripquoted::Bool=false) where {T}
+function xparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=true, openquotechar::Union{UInt8, Char, String}=UInt8('"'), closequotechar::Union{UInt8, Char, String}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, ignoreemptylines::Bool=false, delim::Union{UInt8, Char, PtrLen, AbstractString, Nothing}=UInt8(','), decimal::Union{UInt8, Char}=UInt8('.'), comment=nothing, trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, debug::Bool=false, stripwhitespace::Bool=false, stripquoted::Bool=false) where {T}
     options = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, debug, stripwhitespace, stripquoted)
     return xparse(T, buf, pos, len, options)
 end
@@ -286,12 +293,12 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
     end
     # check for start of quoted field
     if options.quoted
-        quoted = b == options.oq
+        preqpos = pos
+        pos = checkquote(source, pos, len, options.oq)
+        quoted = pos > preqpos
         if quoted
             code = QUOTED
-            pos += 1
             vstartpos = pos
-            incr!(source)
             if eof(source, pos, len)
                 code |= INVALID_QUOTED_FIELD
                 @goto donedone
@@ -359,9 +366,9 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
             same = options.cq == options.e
             first = true
             while true
-                pos += 1
-                incr!(source)
                 if same && b == options.e
+                    pos += 1
+                    incr!(source)
                     if eof(source, pos, len)
                         code |= EOF
                         if !first
@@ -378,6 +385,8 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                     pos += 1
                     incr!(source)
                 elseif b == options.e
+                    pos += 1
+                    incr!(source)
                     if eof(source, pos, len)
                         code |= INVALID_QUOTED_FIELD | EOF
                         @goto donedone
@@ -386,6 +395,8 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                     pos += 1
                     incr!(source)
                 elseif b == options.cq
+                    pos += 1
+                    incr!(source)
                     if !first
                         code |= INVALID
                     end
@@ -394,6 +405,22 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                         @goto donedone
                     end
                     break
+                else
+                    preqpos = pos
+                    pos = checkquote(source, pos, len, options.cq)
+                    if pos > preqpos
+                        if !first
+                            code |= INVALID
+                        end
+                        if eof(source, pos, len)
+                            code |= EOF
+                            @goto donedone
+                        end
+                        break
+                    else
+                        pos += 1
+                        incr!(source)
+                    end
                 end
                 if eof(source, pos, len)
                     code |= INVALID_QUOTED_FIELD | EOF
@@ -765,7 +792,23 @@ end
     end
 end
 
-function checkdelim!(buf, pos, len, options::Options)
+function checkquote(source, pos, len, q::PtrLen)
+    eof(source, pos, len) && return pos
+    return checkdelim(source, pos, len, q)  # calls `incr!` if `q` matches.
+end
+
+function checkquote(source, pos, len, q::UInt8)
+    eof(source, pos, len) && return pos
+    b = peekbyte(source, pos)
+    if b == q
+        pos += 1
+        incr!(source)
+    end
+    return pos
+end
+
+# Used by CSV.jl
+function checkdelim!(buf::AbstractVector{UInt8}, pos, len, options::Options)
     pos > len && return pos
     delim = options.delim
     @inbounds b = buf[pos]

@@ -131,6 +131,7 @@ function checkdelim(source::IO, pos, len, (ptr, ptrlen))
     return delimpos
 end
 
+# if `true`, `source` incremented past the match, else not incremented
 @inline function match!(source::IO, ptr, ptrlen)
     b = peekbyte(source)
     c = unsafe_load(ptr)

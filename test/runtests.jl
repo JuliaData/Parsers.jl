@@ -204,10 +204,17 @@ testcases = [
     (str="{1 } ,", kwargs=(stripquoted=true,delim=UInt8(',')), x=1, code=(OK | DELIMITED | QUOTED), vpos=2, vlen=1, tlen=6),
 ];
 
+chars(s::AbstractString) = s
+chars(s::UInt8) = Char(s)
 for useio in (false, true)
-    for (oq, cq, e) in ((UInt8('"'), UInt8('"'), UInt8('"')), (UInt8('"'), UInt8('"'), UInt8('\\')), (UInt8('{'), UInt8('}'), UInt8('\\')))
+    for (oq, cq, e) in (
+        (UInt8('"'), UInt8('"'), UInt8('"')),
+        (UInt8('"'), UInt8('"'), UInt8('\\')),
+        (UInt8('{'), UInt8('}'), UInt8('\\')),
+        ("{{", "}}", UInt8('\\')),
+    )
         for (i, case) in enumerate(testcases)
-            str = replace(replace(replace(case.str, '{'=>Char(oq)), '}'=>Char(cq)), '\\'=>Char(e))
+            str = replace(replace(replace(case.str, '{'=>chars(oq)), '}'=>chars(cq)), '\\'=>chars(e))
             source = useio ? IOBuffer(str) : str
             res = Parsers.xparse(Int64, source; openquotechar=oq, closequotechar=cq, escapechar=e, case.kwargs...)
             x, code, tlen = res.val, res.code, res.tlen
@@ -216,7 +223,11 @@ for useio in (false, true)
                 @test x == case.x
             end
             @test code == case.code
-            @test tlen == case.tlen
+            if Parsers.invalidquotedfield(code) || Parsers.quoted(code)
+                @test tlen == length(str)
+            else
+                @test tlen == case.tlen
+            end
         end
     end
 end
@@ -238,6 +249,8 @@ for (i, case) in enumerate(testcases)
 end
 
 # stripwhitespace
+res = Parsers.xparse(String, "{{hey there }}"; openquotechar="{{", closequotechar="}}", stripwhitespace=true)
+@test res.val.pos == 3 && res.val.len == 11
 res = Parsers.xparse(String, "{hey there}"; openquotechar='{', closequotechar='}', stripwhitespace=true)
 @test res.val.pos == 2 && res.val.len == 9
 res = Parsers.xparse(String, "{hey there }"; openquotechar='{', closequotechar='}', stripwhitespace=true)
@@ -257,6 +270,8 @@ res = Parsers.xparse(String, " hey there "; stripwhitespace=true)
 res = Parsers.xparse(String, " hey there "; delim=nothing, stripwhitespace=true)
 @test res.val.pos == 2 && res.val.len == 9
 
+res = Parsers.xparse(String, "{{hey there }}"; openquotechar="{{", closequotechar="}}", stripquoted=true)
+@test res.val.pos == 3 && res.val.len == 11
 res = Parsers.xparse(String, "{hey there}"; openquotechar='{', closequotechar='}', stripquoted=true)
 @test res.val.pos == 2 && res.val.len == 9
 res = Parsers.xparse(String, "{hey there }"; openquotechar='{', closequotechar='}', stripquoted=true)
@@ -441,6 +456,17 @@ pos += tlen
 @test Parsers.checkdelim!(codeunits("::"), 1, 2, Parsers.Options(delim="::")) == 3
 @test Parsers.checkdelim!(codeunits(",,"), 1, 2, Parsers.Options(ignorerepeated=true, delim=',')) == 3
 @test Parsers.checkdelim!(codeunits("::::"), 1, 4, Parsers.Options(delim="::", ignorerepeated=true)) == 5
+
+# matches
+@test Parsers.checkquote(codeunits("{1}"), 1, 3, UInt8('{')) == 2
+@test Parsers.checkquote( IOBuffer("{1}"), 1, 3, UInt8('{')) == 2
+@test Parsers.checkquote(codeunits("{{1}}"), 1, 5, Parsers.ptrlen("{{")) == 3
+@test Parsers.checkquote( IOBuffer("{{1}}"), 1, 5, Parsers.ptrlen("{{")) == 3
+# non-matches
+@test Parsers.checkquote(codeunits("{1}"), 1, 3, UInt8('[')) == 1
+@test Parsers.checkquote( IOBuffer("{1}"), 1, 3, UInt8('[')) == 1
+@test Parsers.checkquote(codeunits("{{1}}"), 1, 5, Parsers.ptrlen("[[")) == 1
+@test Parsers.checkquote( IOBuffer("{{1}}"), 1, 5, Parsers.ptrlen("[[")) == 1
 
 e = Parsers.Error(Vector{UInt8}("hey"), Int64, INVALID | EOF, 1, 3)
 io = IOBuffer()
