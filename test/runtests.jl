@@ -211,7 +211,7 @@ for useio in (false, true)
         (UInt8('"'), UInt8('"'), UInt8('"')),
         (UInt8('"'), UInt8('"'), UInt8('\\')),
         (UInt8('{'), UInt8('}'), UInt8('\\')),
-        ("{{", "}}", UInt8('\\')),
+        ("#=", "=#", UInt8('\\')),
     )
         for (i, case) in enumerate(testcases)
             str = replace(replace(replace(case.str, '{'=>chars(oq)), '}'=>chars(cq)), '\\'=>chars(e))
@@ -223,8 +223,8 @@ for useio in (false, true)
                 @test x == case.x
             end
             @test code == case.code
-            if Parsers.invalidquotedfield(code) || Parsers.quoted(code)
-                @test tlen == length(str)
+            if Parsers.quoted(code)
+                @test tlen == ncodeunits(str)
             else
                 @test tlen == case.tlen
             end
@@ -249,8 +249,8 @@ for (i, case) in enumerate(testcases)
 end
 
 # stripwhitespace
-res = Parsers.xparse(String, "{{hey there }}"; openquotechar="{{", closequotechar="}}", stripwhitespace=true)
-@test res.val.pos == 3 && res.val.len == 11
+res = Parsers.xparse(String, "{{hey there}}"; openquotechar="{{", closequotechar="}}", stripwhitespace=true)
+@test res.val.pos == 3 && res.val.len == 9
 res = Parsers.xparse(String, "{hey there}"; openquotechar='{', closequotechar='}', stripwhitespace=true)
 @test res.val.pos == 2 && res.val.len == 9
 res = Parsers.xparse(String, "{hey there }"; openquotechar='{', closequotechar='}', stripwhitespace=true)
@@ -271,7 +271,7 @@ res = Parsers.xparse(String, " hey there "; delim=nothing, stripwhitespace=true)
 @test res.val.pos == 2 && res.val.len == 9
 
 res = Parsers.xparse(String, "{{hey there }}"; openquotechar="{{", closequotechar="}}", stripquoted=true)
-@test res.val.pos == 3 && res.val.len == 11
+@test res.val.pos == 3 && res.val.len == 9
 res = Parsers.xparse(String, "{hey there}"; openquotechar='{', closequotechar='}', stripquoted=true)
 @test res.val.pos == 2 && res.val.len == 9
 res = Parsers.xparse(String, "{hey there }"; openquotechar='{', closequotechar='}', stripquoted=true)
