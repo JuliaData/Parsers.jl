@@ -98,7 +98,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                     break
                 else
                     preqpos = pos
-                    pos = checkquote(source, pos, len, options.oq)
+                    pos = checkquote(source, pos, len, options.cq)
                     if pos > preqpos
                         if eof(source, pos, len)
                             code |= EOF

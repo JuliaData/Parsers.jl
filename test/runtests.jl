@@ -36,7 +36,7 @@ testcases = [
     (str=" {\\\\", kwargs=(), x=0, code=(QUOTED | INVALID_QUOTED_FIELD | ESCAPED_STRING | EOF), vpos=3, vlen=0, tlen=4),
     (str=" {\\}} ", kwargs=(), x=0, code=(QUOTED | INVALID | ESCAPED_STRING | EOF), vpos=3, vlen=2, tlen=6),
     (str=" {\\\\}", kwargs=(), x=0, code=(INVALID | QUOTED | ESCAPED_STRING | EOF), vpos=3, vlen=2, tlen=5),
-    
+
     (str=" {}", kwargs=(), x=0, code=(INVALID | QUOTED | EOF), vpos=3, vlen=0, tlen=3),
     (str=" { }", kwargs=(), x=0, code=(INVALID | QUOTED | EOF), vpos=3, vlen=1, tlen=4),
     (str=" {,} ", kwargs=(), x=0, code=(INVALID | QUOTED | EOF), vpos=3, vlen=1, tlen=5),
@@ -253,6 +253,8 @@ res = Parsers.xparse(String, "{{hey there}}"; openquotechar="{{", closequotechar
 @test res.val.pos == 3 && res.val.len == 9
 res = Parsers.xparse(String, "{hey there}"; openquotechar='{', closequotechar='}', stripwhitespace=true)
 @test res.val.pos == 2 && res.val.len == 9
+res = Parsers.xparse(String, "{{hey there }}"; openquotechar="{{", closequotechar="}}", stripwhitespace=true)
+@test res.val.pos == 3 && res.val.len == 10
 res = Parsers.xparse(String, "{hey there }"; openquotechar='{', closequotechar='}', stripwhitespace=true)
 @test res.val.pos == 2 && res.val.len == 10
 res = Parsers.xparse(String, "{hey there },"; openquotechar='{', closequotechar='}', delim=',', stripwhitespace=true)
@@ -270,10 +272,12 @@ res = Parsers.xparse(String, " hey there "; stripwhitespace=true)
 res = Parsers.xparse(String, " hey there "; delim=nothing, stripwhitespace=true)
 @test res.val.pos == 2 && res.val.len == 9
 
-res = Parsers.xparse(String, "{{hey there }}"; openquotechar="{{", closequotechar="}}", stripquoted=true)
+res = Parsers.xparse(String, "{{hey there}}"; openquotechar="{{", closequotechar="}}", stripquoted=true)
 @test res.val.pos == 3 && res.val.len == 9
 res = Parsers.xparse(String, "{hey there}"; openquotechar='{', closequotechar='}', stripquoted=true)
 @test res.val.pos == 2 && res.val.len == 9
+res = Parsers.xparse(String, "{{hey there }}"; openquotechar="{{", closequotechar="}}", stripquoted=true)
+@test res.val.pos == 3 && res.val.len == 9
 res = Parsers.xparse(String, "{hey there }"; openquotechar='{', closequotechar='}', stripquoted=true)
 @test res.val.pos == 2 && res.val.len == 9
 res = Parsers.xparse(String, "{hey there },"; openquotechar='{', closequotechar='}', delim=',', stripquoted=true)
