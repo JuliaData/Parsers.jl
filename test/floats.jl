@@ -382,4 +382,7 @@ v2 = Parsers.parse(BigFloat, "0.794322841995507271075540969506")
 # parsing larger than Int64 with dangling non-digits
 @test_throws Parsers.Error Parsers.parse(Float64, "3130307457683247493156627A")
 
+# https://github.com/JuliaData/CSV.jl/issues/1007
+@test Parsers.parse(Float64, "19129370688824811353f0") === 1.912937068882481e19
+
 end # @testset

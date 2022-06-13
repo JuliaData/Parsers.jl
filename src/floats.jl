@@ -475,7 +475,7 @@ function _scale(::Type{T}, v::V, exp, neg) where {T, V <: UInt128}
     if exp == 23
         # special-case concluded from https://github.com/JuliaLang/julia/issues/38509
         x = v * V(1e23)
-    elseif exp > 0
+    elseif exp >= 0
         x = v * exp10(exp)
     elseif exp < -308 || v > maxsig(T)
         # if v is too large, we lose precision by just doing
