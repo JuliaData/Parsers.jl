@@ -325,6 +325,7 @@ function Base.getproperty(x::PosLen, nm::Symbol)
     nm === :escapedvalue && return (y & ESCAPE_BIT) == ESCAPE_BIT
     invalidproperty(nm)
 end
+Base.propertynames(::PosLen) = (:pos, :len, :missingvalue, :escapedvalue)
 
 """
     Parsers.getstring(buf_or_io, poslen::PosLen, e::UInt8) => String
