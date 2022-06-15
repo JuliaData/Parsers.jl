@@ -26,17 +26,17 @@ A bitmask value, with various bits corresponding to different parsing signals an
 `Parsers.xparse` returns a `code` value with various bits set according to the various scenarios
 encountered while parsing a value.
 
-    * `INVALID`: there are a number of invalid parsing states, all include the INVALID bit set (check via `Parsers.invalid(code)`)
-    * `OK`: signals specifically that a valid value of type `T` was parsed (check via `Parsers.ok(code)`)
-    * `SENTINEL`: signals that a valid sentinel value was detected while parsing, passed via the `sentinel` keyword argument to `Parsers.Options` (check via `Parsers.sentinel(code)`)
-    * `QUOTED`: a `openquotechar` from `Parsers.Options` was detected at the beginning of parsing (check via `Parsers.quoted(code)`)
-    * `DELIMITED`: a `delim` character or string from `Parsers.Options` was detected while parsing (check via `Parsers.delimited(code)`)
-    * `NEWLINE`: a non-quoted newline character (`'\n'`), return character (`'\r'`), or CRLF (`"\r\n"`) was detected while parsing (check via `Parsers.newline(code)`)
-    * `EOF`: the end of file was reached while parsing
-    * `ESCAPED_STRING`: an `escapechar` from `Parsers.Options` was encountered while parsing (check via `Parsers.escapedstring(code)`)
-    * `INVALID_QUOTED_FIELD`: a `openquotechar` were detected when parsing began, but no corresponding `closequotechar` were found to correctly close a quoted field, this is usually a fatal parsing error because parsing will continue until EOF to look for the close quote character (check via `Parsers.invalidquotedfield(code)`)
-    * `INVALID_DELIMITER`: a `delim` character or string were eventually detected, but not at the expected position (directly after parsing a valid value), indicating there are extra, invalid characters between a valid value and the expected delimiter (check via `Parsers.invaliddelimiter(code)`)
-    * `OVERFLOW`: overflow occurred while parsing a type, like `Integer`, that have limits on valid values (check via `Parsers.overflow(code)`)
+* `INVALID`: there are a number of invalid parsing states, all include the INVALID bit set (check via `Parsers.invalid(code)`)
+* `OK`: signals specifically that a valid value of type `T` was parsed (check via `Parsers.ok(code)`)
+* `SENTINEL`: signals that a valid sentinel value was detected while parsing, passed via the `sentinel` keyword argument to `Parsers.Options` (check via `Parsers.sentinel(code)`)
+* `QUOTED`: a `openquotechar` from `Parsers.Options` was detected at the beginning of parsing (check via `Parsers.quoted(code)`)
+* `DELIMITED`: a `delim` character or string from `Parsers.Options` was detected while parsing (check via `Parsers.delimited(code)`)
+* `NEWLINE`: a non-quoted newline character (`'\\n'`), return character (`'\\r'`), or CRLF (`"\\r\\n"`) was detected while parsing (check via `Parsers.newline(code)`)
+* `EOF`: the end of file was reached while parsing
+* `ESCAPED_STRING`: an `escapechar` from `Parsers.Options` was encountered while parsing (check via `Parsers.escapedstring(code)`)
+* `INVALID_QUOTED_FIELD`: a `openquotechar` were detected when parsing began, but no corresponding `closequotechar` were found to correctly close a quoted field, this is usually a fatal parsing error because parsing will continue until EOF to look for the close quote character (check via `Parsers.invalidquotedfield(code)`)
+* `INVALID_DELIMITER`: a `delim` character or string were eventually detected, but not at the expected position (directly after parsing a valid value), indicating there are extra, invalid characters between a valid value and the expected delimiter (check via `Parsers.invaliddelimiter(code)`)
+* `OVERFLOW`: overflow occurred while parsing a type, like `Integer`, that have limits on valid values (check via `Parsers.overflow(code)`)
 
 One additional convenience function is provided, `Parsers.quotednotescaped(code)`, which checks if a value was quoted,
 but didn't contain any escape characters, useful to indicate if a string may be used "as-is", instead of needing to be unescaped.

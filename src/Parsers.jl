@@ -40,11 +40,11 @@ end
 
   * `sentinel=nothing`: valid values include: `nothing` meaning don't check for sentinel values; `missing` meaning an "empty field" should be considered a sentinel value; or a `Vector{String}` of the various string values that should each be checked as a sentinel value. Note that sentinels will always be checked longest to shortest, with the longest valid match taking precedence.
   * `wh1=' '`: the first ascii character to be considered when ignoring leading/trailing whitespace in value parsing
-  * `wh2='\t'`: the second ascii character to be considered when ignoring leading/trailing whitespace in value parsing
+  * `wh2='\\t'`: the second ascii character to be considered when ignoring leading/trailing whitespace in value parsing
   * `openquotechar='"'`: the ascii character that signals a "quoted" field while parsing; subsequent characters will be treated as non-significant until a valid `closequotechar` is detected
   * `closequotechar='"'`: the ascii character that signals the end of a quoted field
   * `escapechar='"'`: an ascii character used to "escape" a `closequotechar` within a quoted field
-  * `delim=nothing`: if `nothing`, no delimiter will be checked for; if a `Char` or `String`, a delimiter will be checked for directly after parsing a value or `closequotechar`; a newline (`\n`), return (`\r`), or CRLF (`"\r\n"`) are always considered "delimiters", in addition to EOF
+  * `delim=nothing`: if `nothing`, no delimiter will be checked for; if a `Char` or `String`, a delimiter will be checked for directly after parsing a value or `closequotechar`; a newline (`\\n`), return (`\\r`), or CRLF (`"\\r\\n"`) are always considered "delimiters", in addition to EOF
   * `decimal='.'`: an ascii character to be used when parsing float values that separates a decimal value
   * `trues=nothing`: if `nothing`, `Bool` parsing will only check for the string `true` or an `Integer` value of `1` as valid values for `true`; as a `Vector{String}`, each string value will be checked to indicate a valid `true` value
   * `falses=nothing`: if `nothing`, `Bool` parsing will only check for the string `false` or an `Integer` value of `0` as valid values for `false`; as a `Vector{String}`, each string value will be checked to indicate a valid `false` value
@@ -83,7 +83,7 @@ asciival(c::Char) = isascii(c)
 asciival(b::UInt8) = b < 0x80
 
 function Options(
-            sentinel::Union{Nothing, Missing, Vector{String}}, 
+            sentinel::Union{Nothing, Missing, Vector{String}},
             wh1::Union{UInt8, Char},
             wh2::Union{UInt8, Char},
             oq::Union{UInt8, Char},
