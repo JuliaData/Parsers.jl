@@ -346,10 +346,12 @@ _unsafe_string(p, len) = ccall(:jl_pchar_to_string, Ref{String}, (Ptr{UInt8}, In
     if source isa AbstractVector{UInt8}
         return _unsafe_string(pointer(source, x.pos), x.len)
     else
+        pos = position(source)
         vpos, vlen = x.pos, x.len
         fastseek!(source, vpos - 1)
         str = Base.StringVector(vlen)
         readbytes!(source, str, vlen)
+        fastseek!(source, pos) # reset IO to earlier position
         return String(str)
     end
 end
