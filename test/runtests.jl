@@ -36,7 +36,7 @@ testcases = [
     (str=" {\\\\", kwargs=(), x=0, code=(QUOTED | INVALID_QUOTED_FIELD | ESCAPED_STRING | EOF), vpos=3, vlen=0, tlen=4),
     (str=" {\\}} ", kwargs=(), x=0, code=(QUOTED | INVALID | ESCAPED_STRING | EOF), vpos=3, vlen=2, tlen=6),
     (str=" {\\\\}", kwargs=(), x=0, code=(INVALID | QUOTED | ESCAPED_STRING | EOF), vpos=3, vlen=2, tlen=5),
-    
+
     (str=" {}", kwargs=(), x=0, code=(INVALID | QUOTED | EOF), vpos=3, vlen=0, tlen=3),
     (str=" { }", kwargs=(), x=0, code=(INVALID | QUOTED | EOF), vpos=3, vlen=1, tlen=4),
     (str=" {,} ", kwargs=(), x=0, code=(INVALID | QUOTED | EOF), vpos=3, vlen=1, tlen=5),
@@ -557,6 +557,15 @@ for (T, str, val) in (
     @test Parsers.invaliddelimiter(res.code)
     @test res.val === val
 end
+
+# test `getstring` does not change the position of a stream
+source = IOBuffer("\"str1\" \"str2\"")
+opt = Parsers.Options(; quoted=true)
+res = Parsers.xparse(String, source, 1, 0, opt)
+@test Parsers.getstring(source, res.val, opt.e) == "str1"
+res = Parsers.xparse(String, source, 1 + res.tlen, 0, opt)
+@test Parsers.getstring(source, res.val, opt.e) == "str2"
+
 
 end # @testset "misc"
 
