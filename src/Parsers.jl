@@ -202,9 +202,9 @@ or an `IO`. `pos` is the byte position to begin parsing at. `len` is the total #
 `options` is an instance of `Parsers.Options`.
 
 A [`Parsers.Result`](@ref) struct is returned, with the following fields:
-      * `res.val` is a value of type `T`, but only if parsing succeeded; for parsed `String`s, no string is returned to avoid excess allocating; if you'd like the actual parsed string value, you can call [`Parsers.getstring`](@ref)
-      * `res.code` is a bitmask of parsing codes, use `Parsers.codes(code)` or `Parsers.text(code)` to see the various bit values set. See [`Parsers.ReturnCode`](@ref) for additional details on the various parsing codes
-      * `res.tlen`: the total # of bytes consumed while parsing a value, including any quote or delimiter characters; this can be added to the starting `pos` to allow calling `Parsers.xparse` again for a subsequent field/value
+* `res.val` is a value of type `T`, but only if parsing succeeded; for parsed `String`s, no string is returned to avoid excess allocating; if you'd like the actual parsed string value, you can call [`Parsers.getstring`](@ref)
+* `res.code` is a bitmask of parsing codes, use `Parsers.codes(code)` or `Parsers.text(code)` to see the various bit values set. See [`Parsers.ReturnCode`](@ref) for additional details on the various parsing codes
+* `res.tlen`: the total # of bytes consumed while parsing a value, including any quote or delimiter characters; this can be added to the starting `pos` to allow calling `Parsers.xparse` again for a subsequent field/value
 """
 function xparse end
 
