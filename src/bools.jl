@@ -1,4 +1,4 @@
-@inline function typeparser(::Type{Bool}, source, pos, len, b, code, options::Options)
+@inline function typeparser(::Type{Bool}, source, pos, len, b, code, pl, options::Options)
     x = false
     trues = options.trues
     falses = options.falses
@@ -162,5 +162,5 @@
     code |= INVALID
 
 @label done
-    return x, code, pos
+    return pos, code, pl, x
 end

@@ -82,86 +82,148 @@ eof(x::ReturnCode) = (x & EOF) == EOF
 
 memcmp(a::Ptr{UInt8}, b::Ptr{UInt8}, len::Int) = ccall(:memcmp, Cint, (Ptr{UInt8}, Ptr{UInt8}, Csize_t), a, b, len) == 0
 
-function checksentinel(source::AbstractVector{UInt8}, pos, len, sentinel)
-    sentinelpos = 0
-    startptr = pointer(source, pos)
-    # sentinel is an iterable of Tuple{Ptr{UInt8}, Int}, sorted from longest sentinel string to shortest
-    for (ptr, ptrlen) in sentinel
-        if pos + ptrlen - 1 <= len
-            match = memcmp(startptr, ptr, ptrlen)
-            if match
-                sentinelpos = pos + ptrlen
-                break
+struct RegexAndMatchData
+    re::Regex
+    data::Ptr{Cvoid}
+end
+
+function RegexAndMatchData(re::Regex)
+    Base.compile(re)
+    return RegexAndMatchData(re, Base.PCRE.create_match_data(re.regex))
+end
+
+const ByteStringRegex = Union{UInt8, String, RegexAndMatchData}
+
+struct Token
+    token::ByteStringRegex
+end
+import Base: ==
+==(a::Token, b::Token) = a.token == b.token
+Base.isempty(x::Token) = x.token isa String && isempty(x.token)
+
+@noinline notsupported(source) = error("Regex matching not supported on this source type: $(typeof(source))")
+
+function checktoken(source, pos, len, b, token::Token)
+    tok = token.token
+    if tok isa UInt8
+        check = tok == b
+        if check
+            incr!(source)
+        end
+        return check, pos + check
+    elseif tok isa String
+        if source isa Vector{UInt8}
+            # specialize common case
+            return checktoken(source, pos, len, b, tok)
+        else
+            return checktoken(source, pos, len, b, tok)
+        end
+    elseif tok isa Regex
+        if source isa Vector{UInt8}
+            return checktoken(source, pos, len, b, tok)
+        else
+            notsupported(source)
+        end
+    else
+        error() # unreachable
+    end
+end
+
+function checktoken(source::AbstractVector{UInt8}, pos, len, b, tok::RegexAndMatchData)
+    rc = ccall((:pcre2_match_8, Base.PCRE.PCRE_LIB), Cint,
+        (Ptr{Cvoid}, Ptr{UInt8}, Csize_t, Csize_t, UInt32, Ptr{Cvoid}, Ptr{Cvoid}),
+        tok.re.regex, source, len, pos - 1, tok.re.match_options, tok.data, Base.PCRE.get_local_match_context())
+    rc < -2 && error("PCRE.exec error: $(Base.PCRE.err_message(rc))")
+    check = rc >= 0
+    return check, pos + (!check ? 0 : Base.PCRE.substring_length_bynumber(tok.data, 0))
+end
+
+function checktoken(source::AbstractVector{UInt8}, pos, len, b, tok::String)
+    sz = sizeof(tok)
+    check = (pos + sz - 1) <= len && memcmp(pointer(source, pos), pointer(tok), sz)
+    return check, pos + (check * sz)
+end
+
+function checktoken(source::IO, pos, len, b, tok::String)
+    bytes = codeunits(tok)
+    startpos = pos
+    blen = length(bytes)
+    for i = 1:blen
+        @inbounds b2 = bytes[i]
+        if b2 != b
+            fastseek!(source, startpos)
+            return false, startpos
+        end
+        pos += 1
+        incr!(source)
+        i == blen && break
+        if eof(source, pos, len)
+            fastseek!(source, startpos)
+            return false, startpos
+        end
+        b = peekbyte(source, pos)
+    end
+    return true, pos
+end
+
+function checksentinel(source, pos, len, sentinels::Vector{String})
+    for s in sentinels
+        check, pos = checktoken(source, pos, len, 0x00, s)
+        check && return true, pos
+    end
+    return false, pos
+end
+
+function checkcmtemptylines(source, pos, len, cmt, ignoreemptylines)
+    while !eof(source, pos, len)
+        skipped = false
+        if ignoreemptylines
+            b = peekbyte(source, pos)
+            if b == UInt8('\n')
+                pos += 1
+                incr!(source)
+                skipped = true
+            elseif b == UInt8('\r')
+                pos += 1
+                incr!(source)
+                if !eof(source, pos, len) && peekbyte(source, pos) == UInt8('\n')
+                    pos += 1
+                    incr!(source)
+                end
+                skipped = true
             end
         end
-    end
-    return sentinelpos
-end
-
-function checksentinel(source::IO, pos, len, sentinel)
-    sentinelpos = 0
-    origpos = position(source)
-    for (ptr, ptrlen) in sentinel
-        matched = match!(source, ptr, ptrlen)
-        if matched
-            sentinelpos = pos + ptrlen
-            break
+        matched = false
+        if !isempty(cmt) && !eof(source, pos, len)
+            matched, pos = checktoken(source, pos, len, 0x00, cmt)
+            if matched
+                eof(source, pos, len) && break
+                b = peekbyte(source, pos)
+                while true
+                    # consume the rest of the line/row until we hit the newline
+                    if b == UInt8('\n')
+                        pos += 1
+                        incr!(source)
+                        break
+                    elseif b == UInt8('\r')
+                        pos += 1
+                        incr!(source)
+                        if !eof(source, pos, len) && peekbyte(source, pos) == UInt8('\n')
+                            pos += 1
+                            incr!(source)
+                        end
+                        break
+                    end
+                    pos += 1
+                    incr!(source)
+                    eof(source, pos, len) && break
+                    b = peekbyte(source, pos)
+                end
+            end
         end
+        (skipped | matched) || break
     end
-    fastseek!(source, origpos)
-    return sentinelpos
-end
-
-function checkdelim(source::AbstractVector{UInt8}, pos, len, (ptr, ptrlen))
-    startptr = pointer(source, pos)
-    delimpos = pos
-    if pos + ptrlen - 1 <= len
-        match = memcmp(startptr, ptr, ptrlen)
-        if match
-            delimpos = pos + ptrlen
-        end
-    end
-    return delimpos
-end
-
-function checkdelim(source::IO, pos, len, (ptr, ptrlen))
-    delimpos = pos
-    matched = match!(source, ptr, ptrlen)
-    if matched
-        delimpos = pos + ptrlen
-    end
-    return delimpos
-end
-
-@inline function match!(source::IO, ptr, ptrlen)
-    b = peekbyte(source)
-    c = unsafe_load(ptr)
-    if b != c
-        return false
-    elseif ptrlen == 1
-        incr!(source)
-        return true
-    end
-    pos = position(source)
-    i = 1
-    while true
-        incr!(source)
-        if Base.eof(source)
-            fastseek!(source, pos)
-            return false
-        end
-        b = peekbyte(source)
-        c = unsafe_load(ptr + i)
-        if b != c
-            fastseek!(source, pos)
-            return false
-        elseif i == ptrlen - 1
-            break
-        end
-        i += 1
-    end
-    incr!(source)
-    return true
+    return pos
 end
 
 """
@@ -298,8 +360,6 @@ codes(r) = chop(chop(string(
     ifelse(r & (~INVALID & OVERFLOW) > 0, "OVERFLOW | ", "")
 )))
 
-ptrlen(s::String) = (pointer(s), sizeof(s))
-
 """
     PosLen(pos, len, ismissing, escaped)
 
@@ -332,6 +392,10 @@ const MAX_LEN = 1048575
     pos |= ifelse(escaped, ESCAPE_BIT, 0)
     return Base.bitcast(PosLen, pos | Int64(len))
 end
+
+poslen(pos::Integer, len::Integer) = Base.bitcast(PosLen, (Int64(pos) << 20) | Int64(len))
+withmissing(pl::PosLen) = Base.or_int(pl, Base.bitcast(PosLen, MISSING_BIT))
+withescaped(pl::PosLen) = Base.or_int(pl, Base.bitcast(PosLen, ESCAPE_BIT))
 
 const MISSING_BIT = Base.bitcast(Int64, 0x8000000000000000)
 const ESCAPE_BIT = Base.bitcast(Int64, 0x4000000000000000)

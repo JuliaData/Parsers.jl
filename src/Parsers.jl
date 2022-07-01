@@ -11,8 +11,6 @@ struct Format
     locale::Dates.DateLocale
 end
 
-const PtrLen = Tuple{Ptr{UInt8}, Int}
-
 const SupportedFloats = Union{Float16, Float32, Float64, BigFloat}
 const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool}
 
@@ -32,8 +30,6 @@ struct Result{T}
     Result{T}(code::ReturnCode, tlen::Integer) where {T} = new{T}(code, tlen)
     Result{T}(code::ReturnCode, tlen::Integer, val) where {T} = new{T}(code, tlen, val)
 end
-
-# Result(code::ReturnCode, tlen::Integer, val::T) where {T} = Result{T}(code, tlen, val)
 
 """
     `Parsers.Options` is a structure for holding various parsing settings when calling `Parsers.parse`, `Parsers.tryparse`, and `Parsers.xparse`. They include:
@@ -57,40 +53,46 @@ end
   * `stripquoted=false`: if true, whitespace is also stripped within quoted strings. If true, `stripwhitespace` is also set to true.
   * `groupmark=nothing`: optionally specify a single-byte character denoting the number grouping mark, this allows parsing of numbers that have, e.g., thousand separators (`1,000.00`).
 """
-struct Options
-    refs::Vector{String} # for holding references to sentinel, trues, falses, cmt strings
-    sentinel::Union{Nothing, Missing, Vector{PtrLen}}
-    ignorerepeated::Bool
-    ignoreemptylines::Bool
-    wh1::UInt8
-    wh2::UInt8
-    quoted::Bool
-    oq::UInt8
-    cq::UInt8
-    e::UInt8
-    delim::Union{Nothing, UInt8, PtrLen}
-    decimal::UInt8
-    trues::Union{Nothing, Vector{PtrLen}}
-    falses::Union{Nothing, Vector{PtrLen}}
-    dateformat::Union{Nothing, Format}
-    cmt::Union{Nothing, PtrLen}
+struct Options2
     stripwhitespace::Bool
     stripquoted::Bool
+    checkquoted::Bool
+    checksentinel::Bool
+    checkdelim::Bool
+    ignorerepeated::Bool
+    ignoreemptylines::Bool
+    decimal::UInt8
+    oq::Token
+    cq::Token
+    e::Token
+    sentinel::Vector{Token}
+    delim::Token
+    cmt::Token
+    trues::Union{Nothing, Vector{String}}
+    falses::Union{Nothing, Vector{String}}
+    dateformat::Union{Nothing, Format}
     groupmark::Union{Nothing,UInt8}
 end
 
-prepare(x::Vector{String}) = sort!(map(ptrlen, x), by=x->x[2], rev=true)
+const OPTIONS = Options2(true, false, false, false, false, false, false, UInt8('.'),
+    Token(UInt8('"')), Token(UInt8('"')), Token(UInt8('"')), Token[], Token(""), Token(""),
+    nothing, nothing, nothing, nothing)
+const XOPTIONS = Options2(true, false, true, true, true, false, true, UInt8('.'),
+    Token(UInt8('"')), Token(UInt8('"')), Token(UInt8('"')), Token[], Token(UInt8(',')), Token(""),
+    nothing, nothing, nothing, nothing)
+
+prepare(x::Vector) = sort!(x, by=x->sizeof(x), rev=true)
 asciival(c::Char) = isascii(c)
 asciival(b::UInt8) = b < 0x80
 
 function Options(
-            sentinel::Union{Nothing, Missing, Vector{String}},
+            sentinel::Union{Nothing, Missing, Vector},
             wh1::Union{UInt8, Char},
             wh2::Union{UInt8, Char},
-            oq::Union{UInt8, Char},
-            cq::Union{UInt8, Char},
-            e::Union{UInt8, Char},
-            delim::Union{Nothing, UInt8, Char, String},
+            openquotechar::MaybeToken,
+            closequotechar::MaybeToken,
+            escapechar::MaybeToken,
+            delim::MaybeToken,
             decimal::Union{UInt8, Char},
             trues::Union{Nothing, Vector{String}},
             falses::Union{Nothing, Vector{String}},
@@ -125,50 +127,69 @@ function Options(
     if del isa UInt8
         ((wh1 % UInt8) == del || (wh2 % UInt8) == del) && throw(ArgumentError("whitespace characters (`wh1=' '` and `wh2='\\t'` default keyword arguments) must be different than delim argument"))
     end
+    
+    return Options(refs, sent, ignorerepeated, ignoreemptylines, wh1 % UInt8, wh2 % UInt8, quoted, oq % UInt8, cq % UInt8, e % UInt8, del, decimal % UInt8, trues, falses, df, cmt, stripwhitespace || stripquoted, stripquoted)
+    wh1 = token(wh1)
+    wh2 = token(wh2)
+    if wh1.token != UInt8(' ') || wh2.token != UInt8('\t')
+        stripwhitespace = false
+    end
+    oq = token(openquotechar)
+    cq = token(closequotechar)
+    e = token(escapechar)
+    quoted && (isempty(oq) || isempty(cq) || isempty(e)) && throw(ArgumentError("quoted=true requires openquotechar, closequotechar, and escapechar to be specified"))
+    sent = (sent === nothing || sent === missing) ? Token[] : map(token, prepare(sentinel))
+    checksentinel = sent !== nothing
+    delim = token(delim)
+    checkdelim = delim !== nothing
     if trues !== nothing
-        append!(refs, trues)
         trues = prepare(trues)
     end
     if falses !== nothing
-        append!(refs, falses)
         falses = prepare(falses)
     end
-    if comment === nothing
-        cmt = nothing
-    else
-        push!(refs, comment)
-        cmt = ptrlen(comment)
-    end
-    if groupmark !== nothing && (groupmark == decimal || isnumeric(groupmark) || (delim == groupmark && !quoted) || (oq == groupmark) || (cq == groupmark))
+    if groupmark !== nothing && (groupmark == decimal || isnumeric(groupmark) || (delim == groupmark && !quoted) || (openquotechar == groupmark) || (closequotechar == groupmark))
         throw(ArgumentError("`groupmark` cannot be a number, a quoting char, coincide with `decimal` and `delim` unless `quoted=true`."))
     end
     df = dateformat === nothing ? nothing : dateformat isa String ? Format(dateformat) : dateformat isa Dates.DateFormat ? Format(dateformat) : dateformat
-    return Options(refs, sent, ignorerepeated, ignoreemptylines, wh1 % UInt8, wh2 % UInt8, quoted, oq % UInt8, cq % UInt8, e % UInt8, del, decimal % UInt8, trues, falses, df, cmt, stripwhitespace || stripquoted, stripquoted, groupmark === nothing ? nothing : UInt8(groupmark))
+    return Options(stripwhitespace, stripwhitespace || stripquoted, quoted, checksentinel, checkdelim, ignorerepeated, ignoreemptylines, decimal, oq, cq, e, sent, delim, token(comment), trues, falses, df, groupmark === nothing ? nothing : UInt8(groupmark))
+end
+
+const MaybeToken = Union{Nothing, UInt8, Char, String, Regex}
+function token(x::MaybeToken, arg)
+    x === nothing && return Token("")
+    if x isa UInt8
+        asciival(x) || throw(ArgumentError("$arg argument must be ASCII"))
+        return Token(x)
+    elseif x isa Char
+        return Token(asciival(x) ? UInt8(x) : String(x))
+    else
+        return Token(x)
+    end
 end
 
 Options(;
-    sentinel::Union{Nothing, Missing, Vector{String}}=nothing,
+    sentinel::Union{Nothing, Missing, Vector}=nothing,
     wh1::Union{UInt8, Char}=UInt8(' '),
     wh2::Union{UInt8, Char}=UInt8('\t'),
-    openquotechar::Union{UInt8, Char}=UInt8('"'),
-    closequotechar::Union{UInt8, Char}=UInt8('"'),
-    escapechar::Union{UInt8, Char}=UInt8('"'),
-    delim::Union{Nothing, UInt8, Char, String}=nothing,
+    openquotechar::MaybeToken=UInt8('"'),
+    closequotechar::MaybeToken=UInt8('"'),
+    escapechar::MaybeToken=UInt8('"'),
+    delim::MaybeToken=nothing,
     decimal::Union{UInt8, Char}=UInt8('.'),
     trues::Union{Nothing, Vector{String}}=nothing,
     falses::Union{Nothing, Vector{String}}=nothing,
     dateformat::Union{Nothing, String, Dates.DateFormat, Format}=nothing,
     ignorerepeated::Bool=false,
     ignoreemptylines::Bool=false,
-    comment::Union{Nothing, String}=nothing,
+    comment::MaybeToken=nothing,
     quoted::Bool=false,
     stripwhitespace::Bool=false,
     stripquoted::Bool=false,
     groupmark::Union{Nothing,Char,UInt8}=nothing,
 ) = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, stripwhitespace, stripquoted, groupmark)
 
-const OPTIONS = Options(nothing, UInt8(' '), UInt8('\t'), UInt8('"'), UInt8('"'), UInt8('"'), nothing, UInt8('.'), nothing, nothing, nothing, false, false, nothing, false, false, false, nothing)
-const XOPTIONS = Options(missing, UInt8(' '), UInt8('\t'), UInt8('"'), UInt8('"'), UInt8('"'), UInt8(','), UInt8('.'), nothing, nothing, nothing, false, false, nothing, true, false, false, nothing)
+include("components.jl")
 
 # high-level convenience functions like in Base
 """
@@ -179,7 +200,7 @@ struct, `pos` which indicates the byte position where parsing should begin in a 
 buffer `source`. If parsing fails for any reason, either invalid value or non-value characters encountered before/after a value, an error will be thrown. To return `nothing`
 instead of throwing an error, use [`Parsers.tryparse`](@ref).
 """
-function parse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS, pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
+function parse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS2, pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
     res = xparse2(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
     code = res.code
     tlen = res.tlen
@@ -216,13 +237,18 @@ A [`Parsers.Result`](@ref) struct is returned, with the following fields:
 function xparse end
 
 # for testing purposes only, it's much too slow to dynamically create Options for every xparse call
-function xparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=true, openquotechar::Union{UInt8, Char}=UInt8('"'), closequotechar::Union{UInt8, Char}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, ignoreemptylines::Bool=false, delim::Union{UInt8, Char, PtrLen, AbstractString, Nothing}=UInt8(','), decimal::Union{UInt8, Char}=UInt8('.'), comment=nothing, trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, stripwhitespace::Bool=false, stripquoted::Bool=false, groupmark=nothing) where {T}
-    options = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, stripwhitespace, stripquoted, groupmark)
+function xparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=true, openquotechar::Union{UInt8, Char}=UInt8('"'), closequotechar::Union{UInt8, Char}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, ignoreemptylines::Bool=false, delim::Union{UInt8, Char, String, AbstractString, Nothing}=UInt8(','), decimal::Union{UInt8, Char}=UInt8('.'), comment=nothing, trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, debug::Bool=false, stripwhitespace::Bool=false, stripquoted::Bool=false) where {T}
+    options = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, debug, stripwhitespace, stripquoted)
     return xparse(T, buf, pos, len, options)
 end
 
 xparse(::Type{T}, buf::AbstractString, pos, len, options=Parsers.XOPTIONS) where {T} =
     xparse(T, codeunits(buf), pos, len, options)
+
+xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options2=XOPTIONS2, ::Type{S}=T) where {T <: SupportedTypes, S} =
+    Result(delimiter(options)(emptysentinel(options)(whitespace(options)(
+        quoted(options)(whitespace(options)(sentinel(options)(typeparser(options)
+    )))))))(T, source, pos, len, S)
 
 # generic fallback calls Base.tryparse
 function xparse(::Type{T}, source, pos, len, options, ::Type{S}=T) where {T, S}
@@ -242,495 +268,9 @@ function xparse(::Type{T}, source, pos, len, options, ::Type{S}=T) where {T, S}
     end
 end
 
-xparse(::Type{Char}, buf::AbstractString, pos, len, options, ::Type{S}=Char) where {S} =
-    xparse(Char, codeunits(buf), pos, len, options, S)
-function xparse(::Type{Char}, source, pos, len, options, ::Type{S}=Char) where {S}
-    res = xparse(String, source, pos, len, options)
-    code = res.code
-    poslen = res.val
-    if !Parsers.invalid(code) && !Parsers.sentinel(code)
-        return Result{S}(code, res.tlen, first(getstring(source, poslen, options.e)))
-    else
-        return Result{S}(code, res.tlen)
-    end
-end
-
-xparse(::Type{Symbol}, buf::AbstractString, pos, len, options, ::Type{S}=Symbol) where {S} =
-    xparse(Symbol, codeunits(buf), pos, len, options, S)
-function xparse(::Type{Symbol}, source, pos, len, options, ::Type{S}=Symbol) where {S}
-    res = xparse(String, source, pos, len, options, PosLen)
-    code = res.code
-    poslen = res.val
-    if !Parsers.invalid(code) && !Parsers.sentinel(code)
-        if source isa AbstractVector{UInt8}
-            sym = ccall(:jl_symbol_n, Ref{Symbol}, (Ptr{UInt8}, Int), pointer(source, poslen.pos), poslen.len)
-        else
-            sym = Symbol(getstring(source, poslen, options.e))
-        end
-        return Result{S}(code, res.tlen, sym)
-    else
-        return Result{S}(code, res.tlen)
-    end
-end
-
-function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=T) where {T <: SupportedTypes, S}
-    startpos = vstartpos = pos
-    sentinel = options.sentinel
-    wh1 = options.wh1; wh2 = options.wh2
-    code = SUCCESS
-    quoted = false
-    sentinelpos = 0
-    if eof(source, pos, len)
-        code = (sentinel === missing ? SENTINEL : INVALID) | EOF
-        @goto donedone
-    end
-    b = peekbyte(source, pos)
-    # strip leading whitespace
-    while b == wh1 || b == wh2
-        pos += 1
-        incr!(source)
-        if eof(source, pos, len)
-            code = INVALID | EOF
-            @goto donedone
-        end
-        b = peekbyte(source, pos)
-    end
-    # check for start of quoted field
-    if options.quoted
-        quoted = b == options.oq
-        if quoted
-            code = QUOTED
-            pos += 1
-            vstartpos = pos
-            incr!(source)
-            if eof(source, pos, len)
-                code |= INVALID_QUOTED_FIELD
-                @goto donedone
-            end
-            b = peekbyte(source, pos)
-            # ignore whitespace within quoted field
-            while b == wh1 || b == wh2
-                pos += 1
-                incr!(source)
-                if eof(source, pos, len)
-                    code |= INVALID_QUOTED_FIELD | EOF
-                    @goto donedone
-                end
-                b = peekbyte(source, pos)
-            end
-        end
-    end
-    # check for sentinel values if applicable
-    if sentinel !== nothing && sentinel !== missing
-        sentinelpos = checksentinel(source, pos, len, sentinel)
-    end
-    x, code, pos = typeparser(T, source, pos, len, b, code, options)
-    if sentinel !== nothing && sentinel !== missing && sentinelpos >= pos
-        # if we matched a sentinel value that was as long or longer than our type value
-        code &= ~(OK | INVALID | OVERFLOW)
-        pos = sentinelpos
-        fastseek!(source, pos - 1)
-        code |= SENTINEL
-        if eof(source, pos, len)
-            code |= EOF
-        end
-    elseif sentinel === missing && pos == vstartpos
-        code &= ~(OK | INVALID)
-        code |= SENTINEL
-    end
-    if (code & EOF) == EOF
-        if quoted
-            # if we detected a quote character, it's an invalid quoted field due to eof in the middle
-            code |= INVALID_QUOTED_FIELD
-        end
-        @goto donedone
-    end
-
-@label donevalue
-    b = peekbyte(source, pos)
-    # donevalue means we finished parsing a value or sentinel, but didn't reach len, b is still the current byte
-    # strip trailing whitespace
-    while b == wh1 || b == wh2
-        pos += 1
-        incr!(source)
-        if eof(source, pos, len)
-            code |= EOF
-            if quoted
-                code |= INVALID_QUOTED_FIELD
-            end
-            @goto donedone
-        end
-        b = peekbyte(source, pos)
-    end
-    if options.quoted
-        # for quoted fields, find the closing quote character
-        # we should be positioned at the correct place to find the closing quote character if everything is as it should be
-        # if we don't find the quote character immediately, something's wrong, so mark INVALID
-        if quoted
-            same = options.cq == options.e
-            first = true
-            while true
-                pos += 1
-                incr!(source)
-                if same && b == options.e
-                    if eof(source, pos, len)
-                        code |= EOF
-                        if !first
-                            code |= INVALID
-                        end
-                        @goto donedone
-                    elseif peekbyte(source, pos) != options.cq
-                        if !first
-                            code |= INVALID
-                        end
-                        break
-                    end
-                    code |= ESCAPED_STRING
-                    pos += 1
-                    incr!(source)
-                elseif b == options.e
-                    if eof(source, pos, len)
-                        code |= INVALID_QUOTED_FIELD | EOF
-                        @goto donedone
-                    end
-                    code |= ESCAPED_STRING
-                    pos += 1
-                    incr!(source)
-                elseif b == options.cq
-                    if !first
-                        code |= INVALID
-                    end
-                    if eof(source, pos, len)
-                        code |= EOF
-                        @goto donedone
-                    end
-                    break
-                end
-                if eof(source, pos, len)
-                    code |= INVALID_QUOTED_FIELD | EOF
-                    @goto donedone
-                end
-                first = false
-                b = peekbyte(source, pos)
-            end
-            b = peekbyte(source, pos)
-            # ignore whitespace after quoted field
-            while b == wh1 || b == wh2
-                pos += 1
-                incr!(source)
-                if eof(source, pos, len)
-                    code |= EOF
-                    @goto donedone
-                end
-                b = peekbyte(source, pos)
-            end
-        end
-    end
-
-    if options.delim !== nothing
-        delim = options.delim
-        # now we check for a delimiter; if we don't find it, keep parsing until we do
-        if !options.ignorerepeated
-            # we're checking for a single appearance of a delimiter
-            if delim isa UInt8
-                if b == delim
-                    pos += 1
-                    incr!(source)
-                    code |= DELIMITED
-                    @goto donedone
-                end
-            elseif delim isa PtrLen
-                predelimpos = pos
-                pos = checkdelim(source, pos, len, delim)
-                if pos > predelimpos
-                    # found the delimiter we were looking for
-                    code |= DELIMITED
-                    @goto donedone
-                end
-            else
-                error()
-            end
-        else
-            # keep parsing as long as we keep matching delims/newlines
-            if delim isa UInt8
-                matched = false
-                matchednewline = false
-                while true
-                    if b == delim
-                        matched = true
-                        code |= DELIMITED
-                        pos += 1
-                        incr!(source)
-                    elseif !matchednewline && b == UInt8('\n')
-                        matchednewline = matched = true
-                        pos += 1
-                        incr!(source)
-                        pos = checkcmtemptylines(source, pos, len, options)
-                        code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
-                    elseif !matchednewline && b == UInt8('\r')
-                        matchednewline = matched = true
-                        pos += 1
-                        incr!(source)
-                        if !eof(source, pos, len) && peekbyte(source, pos) == UInt8('\n')
-                            pos += 1
-                            incr!(source)
-                        end
-                        pos = checkcmtemptylines(source, pos, len, options)
-                        code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
-                    else
-                        break
-                    end
-                    if eof(source, pos, len)
-                        @goto donedone
-                    end
-                    b = peekbyte(source, pos)
-                end
-                if matched
-                    @goto donedone
-                end
-            elseif delim isa PtrLen
-                matched = false
-                matchednewline = false
-                while true
-                    predelimpos = pos
-                    pos = checkdelim(source, pos, len, delim)
-                    if pos > predelimpos
-                        matched = true
-                        code |= DELIMITED
-                    elseif !matchednewline && b == UInt8('\n')
-                        matchednewline = matched = true
-                        pos += 1
-                        incr!(source)
-                        pos = checkcmtemptylines(source, pos, len, options)
-                        code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
-                    elseif !matchednewline && b == UInt8('\r')
-                        matchednewline = matched = true
-                        pos += 1
-                        incr!(source)
-                        if !eof(source, pos, len) && peekbyte(source, pos) == UInt8('\n')
-                            pos += 1
-                            incr!(source)
-                        end
-                        pos = checkcmtemptylines(source, pos, len, options)
-                        code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
-                    else
-                        break
-                    end
-                    if eof(source, pos, len)
-                        @goto donedone
-                    end
-                    b = peekbyte(source, pos)
-                end
-                if matched
-                    @goto donedone
-                end
-            else
-                error()
-            end
-        end
-        # didn't find delimiter, but let's check for a newline character
-        if b == UInt8('\n')
-            pos += 1
-            incr!(source)
-            pos = checkcmtemptylines(source, pos, len, options)
-            code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
-            @goto donedone
-        elseif b == UInt8('\r')
-            pos += 1
-            incr!(source)
-            if !eof(source, pos, len) && peekbyte(source, pos) == UInt8('\n')
-                pos += 1
-                incr!(source)
-            end
-            pos = checkcmtemptylines(source, pos, len, options)
-            code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
-            @goto donedone
-        end
-        # didn't find delimiter or newline, so we're invalid, keep parsing until we find delimiter, newline, or len
-        code |= INVALID_DELIMITER
-        while true
-            pos += 1
-            incr!(source)
-            if eof(source, pos, len)
-                code |= EOF
-                @goto donedone
-            end
-            b = peekbyte(source, pos)
-            if !options.ignorerepeated
-                if delim isa UInt8
-                    if b == delim
-                        pos += 1
-                        incr!(source)
-                        code |= DELIMITED
-                        @goto donedone
-                    end
-                elseif delim isa PtrLen
-                    predelimpos = pos
-                    pos = checkdelim(source, pos, len, delim)
-                    if pos > predelimpos
-                        # found the delimiter we were looking for
-                        code |= DELIMITED
-                        @goto donedone
-                    end
-                else
-                    error()
-                end
-            else
-                if delim isa UInt8
-                    matched = false
-                    matchednewline = false
-                    while true
-                        if b == delim
-                            matched = true
-                            code |= DELIMITED
-                            pos += 1
-                            incr!(source)
-                        elseif !matchednewline && b == UInt8('\n')
-                            matchednewline = matched = true
-                            pos += 1
-                            incr!(source)
-                            pos = checkcmtemptylines(source, pos, len, options)
-                            code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
-                        elseif !matchednewline && b == UInt8('\r')
-                            matchednewline = matched = true
-                            pos += 1
-                            incr!(source)
-                            if !eof(source, pos, len) && peekbyte(source, pos) == UInt8('\n')
-                                pos += 1
-                                incr!(source)
-                            end
-                            pos = checkcmtemptylines(source, pos, len, options)
-                            code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
-                        else
-                            break
-                        end
-                        if eof(source, pos, len)
-                            @goto donedone
-                        end
-                        b = peekbyte(source, pos)
-                    end
-                    if matched
-                        @goto donedone
-                    end
-                elseif delim isa PtrLen
-                    matched = false
-                    matchednewline = false
-                    while true
-                        predelimpos = pos
-                        pos = checkdelim(source, pos, len, delim)
-                        if pos > predelimpos
-                            matched = true
-                            code |= DELIMITED
-                        elseif !matchednewline && b == UInt8('\n')
-                            matchednewline = matched = true
-                            pos += 1
-                            incr!(source)
-                            pos = checkcmtemptylines(source, pos, len, options)
-                            code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
-                        elseif !matchednewline && b == UInt8('\r')
-                            matchednewline = matched = true
-                            pos += 1
-                            incr!(source)
-                            if !eof(source, pos, len) && peekbyte(source, pos) == UInt8('\n')
-                                pos += 1
-                                incr!(source)
-                            end
-                            pos = checkcmtemptylines(source, pos, len, options)
-                            code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
-                        else
-                            break
-                        end
-                        if eof(source, pos, len)
-                            @goto donedone
-                        end
-                        b = peekbyte(source, pos)
-                    end
-                    if matched
-                        @goto donedone
-                    end
-                else
-                    error()
-                end
-            end
-            # didn't find delimiter, but let's check for a newline character
-            if b == UInt8('\n')
-                pos += 1
-                incr!(source)
-                pos = checkcmtemptylines(source, pos, len, options)
-                code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
-                @goto donedone
-            elseif b == UInt8('\r')
-                pos += 1
-                incr!(source)
-                if !eof(source, pos, len) && peekbyte(source, pos) == UInt8('\n')
-                    pos += 1
-                    incr!(source)
-                end
-                pos = checkcmtemptylines(source, pos, len, options)
-                code |= NEWLINE | ifelse(eof(source, pos, len), EOF, SUCCESS)
-                @goto donedone
-            end
-        end
-    end
-
-@label donedone
-    tlen = pos - startpos
-    if valueok(code)
-        y::T = x
-        return Result{S}(code, tlen, y)
-    else
-        return Result{S}(code, tlen)
-    end
-end
-
 # condensed version of xparse that doesn't worry about quoting or delimiters; called from Parsers.parse/Parsers.tryparse
-@inline function xparse2(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=T) where {T <: SupportedTypes, S}
-    startpos = pos
-    sentinel = options.sentinel
-    wh1 = options.wh1; wh2 = options.wh2
-    code = SUCCESS
-    quoted = false
-    if eof(source, pos, len)
-        code = (sentinel === missing ? SENTINEL : INVALID) | EOF
-        @goto donedone
-    end
-    b = peekbyte(source, pos)
-    # strip leading whitespace
-    while b == wh1 || b == wh2
-        pos += 1
-        incr!(source)
-        if eof(source, pos, len)
-            code = INVALID | EOF
-            @goto donedone
-        end
-        b = peekbyte(source, pos)
-    end
-    x, code, pos = typeparser(T, source, pos, len, b, code, options)
-    if (code & EOF) == EOF
-        @goto donedone
-    end
-
-@label donevalue
-    b = peekbyte(source, pos)
-    # donevalue means we finished parsing a value or sentinel, but didn't reach len, b is still the current byte
-    # strip trailing whitespace
-    while b == wh1 || b == wh2
-        pos += 1
-        incr!(source)
-        if eof(source, pos, len)
-            code |= EOF
-            if quoted
-                code |= INVALID_QUOTED_FIELD
-            end
-            @goto donedone
-        end
-        b = peekbyte(source, pos)
-    end
-
-@label donedone
-    tlen = pos - startpos
-    return valueok(code) ? Result{S}(code, tlen, x) : Result{S}(code, tlen)
-end
+@inline xparse2(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, opts::Options2=XOPTIONS2, ::Type{S}=T) where {T <: SupportedTypes, S} =
+    Result(whitespace(true, false)(typeparser(opts)))(T, source, pos, len, S)
 
 @inline function xparse2(::Type{T}, source, pos, len, options, ::Type{S}=T) where {T, S}
     res = xparse(String, source, pos, len, options)
@@ -800,7 +340,7 @@ function checkdelim!(buf, pos, len, options::Options)
                 @inbounds b = buf[pos]
             end
             matched && return pos
-        elseif delim isa PtrLen
+        elseif delim isa String
             matched = false
             predelimpos = pos
             pos = checkdelim(buf, pos, len, delim)
@@ -818,59 +358,11 @@ function checkdelim!(buf, pos, len, options::Options)
     return pos
 end
 
-function checkcmtemptylines(source, pos, len, options::Options)
-    cmt = options.cmt
-    while !eof(source, pos, len)
-        skipped = false
-        if options.ignoreemptylines
-            b = peekbyte(source, pos)
-            if b == UInt8('\n')
-                pos += 1
-                incr!(source)
-                skipped = true
-            elseif b == UInt8('\r')
-                pos += 1
-                incr!(source)
-                if !eof(source, pos, len) && peekbyte(source, pos) == UInt8('\n')
-                    pos += 1
-                    incr!(source)
-                end
-                skipped = true
-            end
-        end
-        matched = false
-        if cmt !== nothing && !eof(source, pos, len)
-            precmtpos = pos
-            pos = checkdelim(source, pos, len, cmt)
-            if pos > precmtpos
-                matched = true
-                eof(source, pos, len) && break
-                b = peekbyte(source, pos)
-                while b != UInt8('\n') && b != UInt8('\r')
-                    pos += 1
-                    incr!(source)
-                    eof(source, pos, len) && break
-                    b = peekbyte(source, pos)
-                end
-                pos += 1
-                incr!(source)
-                if b == UInt8('\r') && !eof(source, pos, len) && peekbyte(source, pos) == UInt8('\n')
-                    pos += 1
-                    incr!(source)
-                end
-            end
-        end
-        (skipped | matched) || break
-    end
-    return pos
-end
-
 include("ints.jl")
 include("floats.jl")
 include("strings.jl")
 include("bools.jl")
 include("dates.jl")
-include("ryu.jl")
 
 function __init__()
     resize!(empty!(BIGINT), Threads.nthreads())
