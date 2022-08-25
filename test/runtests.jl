@@ -287,6 +287,20 @@ end # @testset "Core Parsers.xparse"
 
 @testset "ints" begin
 
+@testset "groupmark" begin
+    @test Parsers.xparse(Int64, "100,000,000"; groupmark=',').val == 100_000_000
+    @test Parsers.xparse(Int64, "1,0,0,0,0,0,0,0,0"; groupmark=',').val == 100_000_000
+    @test Parsers.xparse(Int64, "100000000"; groupmark=',').val == 100_000_000
+    @test Parsers.xparse(Int64, "9223372036854775807"; groupmark=',').val == 9223372036854775807
+    @test Parsers.xparse(Int64, "9,2,2,3,3,7,2,0,3,6,8,5,4,7,7,5,8,0,7"; groupmark=',').val == 9223372036854775807
+
+    @test Parsers.xparse(Int32, "100,000,000"; groupmark=',').val == 100_000_000
+    @test Parsers.xparse(Int32, "1,0,0,0,0,0,0,0,0"; groupmark=',').val == 100_000_000
+    @test Parsers.xparse(Int32, "100000000"; groupmark=',').val == 100_000_000
+    @test Parsers.xparse(Int64, "2147483647"; groupmark=',').val == 2147483647
+    @test Parsers.xparse(Int64, "2,1,4,7,4,8,3,6,4,7"; groupmark=',').val == 2147483647
+end
+
 # test lots of ints
 @time for i in typemin(Int64):100_000_000_000_000:typemax(Int64)
     str = string(i)

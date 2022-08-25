@@ -366,6 +366,24 @@ end
 # discovered from JSON tests
 @test Parsers.tryparse(Float64, "0e+") === nothing
 
+@testset "groupmark" begin
+    @test Parsers.xparse(Float64, "100,000,000.99"; groupmark=',').val == 100_000_000.99
+    @test Parsers.xparse(Float64, "1,0,0,0,0,0,0,0,0.99"; groupmark=',').val == 100_000_000.99
+    @test Parsers.xparse(Float64, "100000000.99"; groupmark=',').val == 100_000_000.99
+
+    @test Parsers.xparse(Float32, "100,000,000.99"; groupmark=',').val ≈ 100_000_000.99
+    @test Parsers.xparse(Float32, "1,0,0,0,0,0,0,0,0.99"; groupmark=',').val ≈ 100_000_000.99
+    @test Parsers.xparse(Float32, "100000000.99"; groupmark=',').val ≈ 100_000_000.99
+
+    @test Parsers.xparse(Float64, "100,000,00099e-2"; groupmark=',').val == 100_000_000.99
+    @test Parsers.xparse(Float64, "1,0,0,0,0,0,0,0,099e-2"; groupmark=',').val == 100_000_000.99
+    @test Parsers.xparse(Float64, "10000000099e-2"; groupmark=',').val == 100_000_000.99
+
+    @test Parsers.xparse(Float32, "100,000,00099e-2"; groupmark=',').val ≈ 100_000_000.99
+    @test Parsers.xparse(Float32, "1,0,0,0,0,0,0,0,099e-2"; groupmark=',').val ≈ 100_000_000.99
+    @test Parsers.xparse(Float32, "10000000099e-2"; groupmark=',').val ≈ 100_000_000.99
+end
+
 # https://github.com/JuliaData/CSV.jl/issues/916
 @test  Parsers.parse(Float64, "0.44311945001372019574271437679879349172") === 0.4431194500137202
 @test Parsers.parse(BigFloat, "0.44311945001372019574271437679879349172") == BigFloat("0.44311945001372019574271437679879349172")

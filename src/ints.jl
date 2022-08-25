@@ -32,7 +32,12 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
             code |= OK | EOF
             @goto done
         end
-        b = peekbyte(source, pos) - UInt8('0')
+        b, nb = dpeekbyte(source, pos) .- UInt8('0')
+        if !isnothing(options.groupmark) && options.groupmark - UInt8('0') == b && nb <= 0x09
+            incr!(source)
+            pos += 1
+            b = nb
+        end
         if b > 0x09
             # detected a non-digit, time to bail on value parsing
             x = ifelse(neg, -x, x)
@@ -66,7 +71,12 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
             code |= OK | EOF
             @goto done
         end
-        b = peekbyte(source, pos) - UInt8('0')
+        b, nb = dpeekbyte(source, pos) .- UInt8('0')
+        if !isnothing(options.groupmark) && options.groupmark - UInt8('0') == b && nb <= 0x09
+            incr!(source)
+            pos += 1
+            b = nb
+        end
         if b > 0x09
             code |= OK
             @goto done

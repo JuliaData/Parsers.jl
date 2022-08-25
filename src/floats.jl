@@ -203,7 +203,12 @@ end
                 code |= OK | EOF
                 @goto done
             end
-            b = peekbyte(source, pos) - UInt8('0')
+            b, nb = dpeekbyte(source, pos) .- UInt8('0')
+            if !isnothing(options.groupmark) && options.groupmark - UInt8('0') == b && nb <= 0x09
+                incr!(source)
+                pos += 1
+                b = nb
+            end
             # if `b` isn't a digit, time to break out of digit parsing while loop
             b > 0x09 && break
             if overflows(IntType) && digits > overflowval(IntType)
