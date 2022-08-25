@@ -223,7 +223,7 @@ function peekbyte(from::IOBuffer)
 end
 function dpeekbyte(from::IOBuffer)
     @inbounds byte = from.data[from.ptr]
-    return byte, get(from.data, from.ptr+1, EOF_CHAR)
+    return byte, from.ptr >= from.size ? EOF_CHAR : @inbounds from.data[from.ptr+1]
 end
 
 function incr!(from::IOBuffer)
