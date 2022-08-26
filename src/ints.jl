@@ -7,6 +7,7 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
 @inline function typeparser(::Type{T}, source, pos, len, b, code, options) where {T <: Integer}
     x = zero(T)
     neg = false
+    has_groupmark = !isnothing(options.groupmark)
     # start actual int parsing
     neg = b == UInt8('-')
     if neg || b == UInt8('+')
@@ -32,11 +33,15 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
             code |= OK | EOF
             @goto done
         end
-        b, nb = dpeekbyte(source, pos) .- UInt8('0')
-        if !isnothing(options.groupmark) && options.groupmark - UInt8('0') == b && nb <= 0x09
-            incr!(source)
-            pos += 1
-            b = nb
+        if has_groupmark
+            b, nb = dpeekbyte(source, pos) .- UInt8('0')
+            if options.groupmark - UInt8('0') == b && nb <= 0x09
+                incr!(source)
+                pos += 1
+                b = nb
+            end
+        else
+            b = peekbyte(source, pos) - UInt8('0')
         end
         if b > 0x09
             # detected a non-digit, time to bail on value parsing
@@ -71,11 +76,15 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
             code |= OK | EOF
             @goto done
         end
-        b, nb = dpeekbyte(source, pos) .- UInt8('0')
-        if !isnothing(options.groupmark) && options.groupmark - UInt8('0') == b && nb <= 0x09
-            incr!(source)
-            pos += 1
-            b = nb
+        if has_groupmark
+            b, nb = dpeekbyte(source, pos) .- UInt8('0')
+            if options.groupmark - UInt8('0') == b && nb <= 0x09
+                incr!(source)
+                pos += 1
+                b = nb
+            end
+        else
+            b = peekbyte(source, pos) - UInt8('0')
         end
         if b > 0x09
             code |= OK

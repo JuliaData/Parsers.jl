@@ -189,6 +189,7 @@ end
 @inline function parsedigits(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos) where {T <: SupportedFloats, IntType}
     x = zero(T)
     ndigits = 0
+    has_groupmark = !isnothing(options.groupmark)
     # we already previously checked if `b` was decimal or a digit, so don't need to check explicitly again
     if b != options.decimal
         b -= UInt8('0')
@@ -203,11 +204,15 @@ end
                 code |= OK | EOF
                 @goto done
             end
-            b, nb = dpeekbyte(source, pos) .- UInt8('0')
-            if !isnothing(options.groupmark) && options.groupmark - UInt8('0') == b && nb <= 0x09
-                incr!(source)
-                pos += 1
-                b = nb
+            if has_groupmark
+                b, nb = dpeekbyte(source, pos) .- UInt8('0')
+                if options.groupmark - UInt8('0') == b && nb <= 0x09
+                    incr!(source)
+                    pos += 1
+                    b = nb
+                end
+            else
+                b = peekbyte(source, pos) - UInt8('0')
             end
             # if `b` isn't a digit, time to break out of digit parsing while loop
             b > 0x09 && break
