@@ -55,7 +55,7 @@ end
   * `ignoreemptylines=false`: after parsing a value, if a newline is detected, another immediately proceeding newline will be checked for and consumed
   * `stripwhitespace=false`: if true, leading and trailing whitespace is stripped from string fields, note that for *quoted* strings however, whitespace is preserved within quotes (but ignored before/after quote characters). To also strip *within* quotes, see `stripquoted`
   * `stripquoted=false`: if true, whitespace is also stripped within quoted strings. If true, `stripwhitespace` is also set to true.
-  * `groupmark=nothing`: optionally specify a single-byte character denoting the number grouping mark, this allows parsing of numbers that have, e.g., thousand separators.
+  * `groupmark=nothing`: optionally specify a single-byte character denoting the number grouping mark, this allows parsing of numbers that have, e.g., thousand separators (`1,000.00`).
 """
 struct Options
     refs::Vector{String} # for holding references to sentinel, trues, falses, cmt strings
