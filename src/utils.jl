@@ -63,7 +63,7 @@ const INVALID_DELIMITER    = 0b1000000010000000 % ReturnCode
 const OVERFLOW             = 0b1000000100000000 % ReturnCode
 const INVALID_TOKEN        = 0b1000010000000000 % ReturnCode
 
-const EOF_CHAR = 0xFF
+const EOF_BYTE = 0xFF
 
 valueok(x::ReturnCode) = (x & OK) == OK
 ok(x::ReturnCode) = (x & (OK | INVALID)) == OK
@@ -196,11 +196,10 @@ function peekbyte end
 incr!(io::IO) = readbyte(io)
 readbyte(from::IO) = Base.read(from, UInt8)
 peekbyte(from::IO) = UInt8(Base.peek(from))
-# dpeekbyte(from::IO) = (p = Base.peek(from, UInt16); (UInt8(p % UInt8), UInt8(p >> 8)))
 function dpeekbyte(s::IO) where T
     mark(s)
-    b = EOF_CHAR
-    nb = EOF_CHAR
+    b = EOF_BYTE
+    nb = EOF_BYTE
     try
         b = read(s, UInt8)::UInt8
         nb = read(s, UInt8)::UInt8
@@ -223,7 +222,7 @@ function peekbyte(from::IOBuffer)
 end
 function dpeekbyte(from::IOBuffer)
     @inbounds byte = from.data[from.ptr]
-    return byte, from.ptr >= from.size ? EOF_CHAR : @inbounds from.data[from.ptr+1]
+    return byte, from.ptr >= from.size ? EOF_BYTE : @inbounds from.data[from.ptr+1]
 end
 
 function incr!(from::IOBuffer)
@@ -240,7 +239,7 @@ function peekbyte(from::AbstractVector{UInt8}, pos)
 end
 function dpeekbyte(from::AbstractVector{UInt8}, pos)
     @inbounds b = from[pos]
-    return b, get(from, pos+1, EOF_CHAR)
+    return b, get(from, pos+1, EOF_BYTE)
 end
 
 eof(::AbstractVector{UInt8}, pos::Integer, len::Integer) = pos > len

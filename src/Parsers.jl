@@ -55,7 +55,7 @@ end
   * `ignoreemptylines=false`: after parsing a value, if a newline is detected, another immediately proceeding newline will be checked for and consumed
   * `stripwhitespace=false`: if true, leading and trailing whitespace is stripped from string fields, note that for *quoted* strings however, whitespace is preserved within quotes (but ignored before/after quote characters). To also strip *within* quotes, see `stripquoted`
   * `stripquoted=false`: if true, whitespace is also stripped within quoted strings. If true, `stripwhitespace` is also set to true.
-  * `groupmark=nothing`: optionally specify a single-byte character denoting the number grouping mark, this llows parsing of numbers that have thousand separators.
+  * `groupmark=nothing`: optionally specify a single-byte character denoting the number grouping mark, this allows parsing of numbers that have, e.g., thousand separators.
 """
 struct Options
     refs::Vector{String} # for holding references to sentinel, trues, falses, cmt strings
@@ -139,8 +139,8 @@ function Options(
         push!(refs, comment)
         cmt = ptrlen(comment)
     end
-    if !isnothing(groupmark) && (groupmark == decimal || isnumeric(groupmark))
-        throw(ArgumentError("`groupmark` cannot coincide with `decimal` and it must not be a number"))
+    if !isnothing(groupmark) && ((groupmark == decimal || isnumeric(groupmark)) || (delim == groupmark && !quoted) || (oq == groupmark) || (cq == groupmark))
+        throw(ArgumentError("`groupmark` cannot be a number, a quoting char, coincide with `decimal` and `delim` unless `quoted=true`."))
     end
     df = dateformat === nothing ? nothing : dateformat isa String ? Format(dateformat) : dateformat isa Dates.DateFormat ? Format(dateformat) : dateformat
     return Options(refs, sent, ignorerepeated, ignoreemptylines, wh1 % UInt8, wh2 % UInt8, quoted, oq % UInt8, cq % UInt8, e % UInt8, del, decimal % UInt8, trues, falses, df, cmt, stripwhitespace || stripquoted, stripquoted, isnothing(groupmark) ? nothing : UInt8(groupmark))
