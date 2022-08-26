@@ -308,6 +308,7 @@ end # @testset "Core Parsers.xparse"
     @test Parsers.xparse(Int32, "\"100,000,000\",100"; groupmark=',', openquotechar='"', closequotechar='"') == Parsers.Result{Int32}(Int16(13), 14, 100_000_000)
 
     @test_throws ArgumentError Parsers.xparse(Int64, "42"; groupmark=',', quoted=false, delim=',')
+    @test_throws ArgumentError Parsers.xparse(Int64, "42"; groupmark=',', decimal=',')
     @test_throws ArgumentError Parsers.xparse(Int64, "42"; groupmark='0')
     @test_throws ArgumentError Parsers.xparse(Int64, "42"; groupmark='9')
     @test_throws ArgumentError Parsers.xparse(Int64, "42"; groupmark='"', openquotechar='"')
