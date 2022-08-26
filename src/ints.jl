@@ -7,7 +7,7 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
 @inline function typeparser(::Type{T}, source, pos, len, b, code, options) where {T <: Integer}
     x = zero(T)
     neg = false
-    has_groupmark = !isnothing(options.groupmark)
+    has_groupmark = options.groupmark !== nothing
     # start actual int parsing
     neg = b == UInt8('-')
     if neg || b == UInt8('+')

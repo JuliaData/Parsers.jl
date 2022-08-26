@@ -139,11 +139,11 @@ function Options(
         push!(refs, comment)
         cmt = ptrlen(comment)
     end
-    if !isnothing(groupmark) && ((groupmark == decimal || isnumeric(groupmark)) || (delim == groupmark && !quoted) || (oq == groupmark) || (cq == groupmark))
+    if groupmark !== nothing && (groupmark == decimal || isnumeric(groupmark) || (delim == groupmark && !quoted) || (oq == groupmark) || (cq == groupmark))
         throw(ArgumentError("`groupmark` cannot be a number, a quoting char, coincide with `decimal` and `delim` unless `quoted=true`."))
     end
     df = dateformat === nothing ? nothing : dateformat isa String ? Format(dateformat) : dateformat isa Dates.DateFormat ? Format(dateformat) : dateformat
-    return Options(refs, sent, ignorerepeated, ignoreemptylines, wh1 % UInt8, wh2 % UInt8, quoted, oq % UInt8, cq % UInt8, e % UInt8, del, decimal % UInt8, trues, falses, df, cmt, stripwhitespace || stripquoted, stripquoted, isnothing(groupmark) ? nothing : UInt8(groupmark))
+    return Options(refs, sent, ignorerepeated, ignoreemptylines, wh1 % UInt8, wh2 % UInt8, quoted, oq % UInt8, cq % UInt8, e % UInt8, del, decimal % UInt8, trues, falses, df, cmt, stripwhitespace || stripquoted, stripquoted, groupmark === nothing ? nothing : UInt8(groupmark))
 end
 
 Options(;

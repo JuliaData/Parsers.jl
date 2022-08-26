@@ -189,7 +189,7 @@ end
 @inline function parsedigits(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos) where {T <: SupportedFloats, IntType}
     x = zero(T)
     ndigits = 0
-    has_groupmark = !isnothing(options.groupmark)
+    has_groupmark = options.groupmark !== nothing
     # we already previously checked if `b` was decimal or a digit, so don't need to check explicitly again
     if b != options.decimal
         b -= UInt8('0')
