@@ -196,7 +196,7 @@ function peekbyte end
 incr!(io::IO) = readbyte(io)
 readbyte(from::IO) = Base.read(from, UInt8)
 peekbyte(from::IO) = UInt8(Base.peek(from))
-function dpeekbyte(s::IO) where T
+function dpeekbyte(s::IO)
     mark(s)
     b = EOF_BYTE
     nb = EOF_BYTE
