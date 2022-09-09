@@ -1,7 +1,8 @@
 using Parsers, Test, Dates
 
 import Parsers: INVALID, OK, SENTINEL, QUOTED, DELIMITED, NEWLINE, EOF, INVALID_QUOTED_FIELD, INVALID_DELIMITER, OVERFLOW, ESCAPED_STRING
-
+import Aqua
+import JET
 struct CustomType
     x::String
 end
@@ -600,5 +601,30 @@ end # @testset "misc"
 include("floats.jl")
 include("dates.jl")
 include("ryu.jl")
+
+
+@testset "Aqua.jl" begin
+    Aqua.test_all(Parsers)
+end
+
+@testset "JET.jl" begin
+    @testset "Optimization" begin
+        for src in ("", UInt8[], IOBuffer())
+            for T in (String, Symbol, Char, Int64, Int32, UInt64, UInt32, Float64, Float32, Bool)
+                JET.@test_opt Parsers.xparse(T, src, 0, 0, Parsers.Options())
+            end
+        end
+        for src in ("", UInt8[], IOBuffer())
+            for T in (Dates.Date, Dates.Time)
+                JET.@test_opt broken=true Parsers.xparse(T, src, 0, 0, Parsers.Options())
+            end
+        end
+    end
+    @testset "Typos" begin
+        res = JET.report_package(Parsers, mode=:typo, toplevel_logger=nothing);
+        @test isempty(res.res.toplevel_error_reports)
+        !isempty(res.res.toplevel_error_reports) && display(res)
+    end
+end
 
 end # @testset "Parsers"
