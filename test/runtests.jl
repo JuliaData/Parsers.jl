@@ -1,7 +1,7 @@
 using Parsers, Test, Dates
 
 import Parsers: INVALID, OK, SENTINEL, QUOTED, DELIMITED, NEWLINE, EOF, INVALID_QUOTED_FIELD, INVALID_DELIMITER, OVERFLOW, ESCAPED_STRING
-
+import Aqua
 struct CustomType
     x::String
 end
@@ -600,5 +600,36 @@ end # @testset "misc"
 include("floats.jl")
 include("dates.jl")
 include("ryu.jl")
+
+
+@testset "Aqua.jl" begin
+    Aqua.test_all(Parsers)
+end
+
+@static if Base.VERSION >= v"1.7"
+    import JET
+    @testset "JET.jl" begin
+        @testset "Optimization" begin
+            for S in (String, Vector{UInt8}, IOBuffer)
+                for T in (String, Symbol, Char, Int64, Int32, UInt64, UInt32, Float64, Float32, Bool)
+                    JET.test_opt(Parsers.xparse, Tuple{Type{T}, S, Int, Int, Parsers.Options, Type{T === String ? PosLen : T}})
+                end
+            end
+
+            JET.test_opt(Parsers.xparse, Tuple{Type{Date}, String, Int, Int, Parsers.Options, Type{Date}})
+            JET.test_opt(Parsers.xparse, Tuple{Type{Time}, String, Int, Int, Parsers.Options, Type{Time}})
+            for S in (Vector{UInt8}, IOBuffer)
+                for T in (Dates.Date, Dates.Time)
+                    JET.test_opt(Parsers.xparse, Tuple{Type{T}, S, Int, Int, Parsers.Options, Type{T}}, broken=true)
+                end
+            end
+        end
+        @testset "Typos" begin
+            res = JET.report_package(Parsers, mode=:typo, toplevel_logger=nothing);
+            @test isempty(res.res.toplevel_error_reports)
+            !isempty(res.res.toplevel_error_reports) && display(res)
+        end
+    end
+end
 
 end # @testset "Parsers"
