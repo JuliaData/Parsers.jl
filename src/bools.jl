@@ -1,7 +1,7 @@
-@inline function typeparser(::Type{Bool}, source, pos, len, b, code, options::Options)
+@inline function typeparser(c::BoolConf{Bool}, source, pos, len, b, code, options::Options)
     x = false
-    trues = options.trues
-    falses = options.falses
+    trues = c.trues
+    falses = c.falses
     if trues === nothing
         if b == UInt8('t')
             pos += 1
@@ -40,7 +40,7 @@
                 end
             end
         else
-            intx, intcode, intpos = typeparser(UInt8, source, pos, len, b, code, options)
+            intx, intcode, intpos = typeparser(conf(UInt8, options), source, pos, len, b, code, options)
             if ok(intcode) && intx < 0x02
                 x = intx == 0x01 ? true : false
                 code = intcode

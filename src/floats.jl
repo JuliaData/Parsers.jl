@@ -44,12 +44,12 @@ function _muladd(ten, digits::BigInt, b)
 end
 
 # for non SupportedFloat Reals, parse as Float64, then convert
-@inline function typeparser(::Type{T}, source, pos, len, b, code, options) where {T <: Real}
-    x, code, pos = typeparser(Float64, source, pos, len, b, code, options)
+@inline function typeparser(c::FloatConf{T}, source, pos, len, b, code, options) where {T <: Real}
+    x, code, pos = typeparser(conf(Float64, c), source, pos, len, b, code, options)
     return T(x), code, pos
 end
 
-@inline function typeparser(::Type{T}, source, pos, len, b, code, options) where {T <: SupportedFloats}
+@inline function typeparser(c::FloatConf{T}, source, pos, len, b, code, options) where {T <: SupportedFloats}
     # keep track of starting pos in case of invalid, we can rewind to start of parsing
     startpos = pos
     x = zero(T)
@@ -64,7 +64,7 @@ end
         @goto done
     end
     b = peekbyte(source, pos)
-    if b != options.decimal && (b - UInt8('0')) > 0x09
+    if b != c.decimal && (b - UInt8('0')) > 0x09
         # character isn't a digit or decimal point, check for special values, otherwise INVALID
         if b == UInt8('n') || b == UInt8('N')
             pos += 1
@@ -176,22 +176,22 @@ end
     end
 
     # start parsing digits or decimal point; we start digits as UInt64(0) and can _widen type if needed
-    x, code, pos = parsedigits(T, source, pos, len, b, code, options, UInt64(0), neg, startpos)
+    x, code, pos = parsedigits(c, source, pos, len, b, code, UInt64(0), neg, startpos)
 
 @label done
     return x, code, pos
 end
 
 # if we need to _widen the type due to `digits` overflow, we want a non-inlined version so base case compilation doesn't get out of control
-@noinline _parsedigits(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos) where {T <: SupportedFloats, IntType} =
-    parsedigits(T, source, pos, len, b, code, options, digits, neg, startpos)
+@noinline _parsedigits(c::FloatConf{T}, source, pos, len, b, code, digits::IntType, neg::Bool, startpos) where {T <: SupportedFloats, IntType} =
+    parsedigits(c, source, pos, len, b, code, digits, neg, startpos)
 
-@inline function parsedigits(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos) where {T <: SupportedFloats, IntType}
+@inline function parsedigits(c::FloatConf{T}, source, pos, len, b, code, digits::IntType, neg::Bool, startpos) where {T <: SupportedFloats, IntType}
     x = zero(T)
     ndigits = 0
-    has_groupmark = options.groupmark !== nothing
+    has_groupmark = c.groupmark !== nothing
     # we already previously checked if `b` was decimal or a digit, so don't need to check explicitly again
-    if b != options.decimal
+    if b != c.decimal
         b -= UInt8('0')
         while true
             digits = _muladd(ten(IntType), digits, b)
@@ -206,7 +206,7 @@ end
             end
             if has_groupmark
                 b, nb = dpeekbyte(source, pos) .- UInt8('0')
-                if (options.groupmark)::UInt8 - UInt8('0') == b && nb <= 0x09
+                if (c.groupmark)::UInt8 - UInt8('0') == b && nb <= 0x09
                     incr!(source)
                     pos += 1
                     b = nb
@@ -217,7 +217,7 @@ end
             # if `b` isn't a digit, time to break out of digit parsing while loop
             b > 0x09 && break
             if overflows(IntType) && digits > overflowval(IntType)
-                return _parsedigits(T, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos)
+                return _parsedigits(c, source, pos, len, b + UInt8('0'), code, _widen(digits), neg, startpos)
             elseif ndigits > maxdigits(T)
                 # if input is way too big, just bail
                 fastseek!(source, startpos - 1)
@@ -229,7 +229,7 @@ end
         # b wasn't a digit, so add back '0' to recover original Char value
         b += UInt8('0')
     end
-    if b == options.decimal
+    if b == c.decimal
         pos += 1
         incr!(source)
         if eof(source, pos, len)
@@ -258,7 +258,7 @@ end
     # now we parse any digits following decimal point (if any); start `frac` at UInt64(0)
     # `digits` still receives any fractional digits, `frac` just keeps track of how many digits
     # were parsed to combine with any "e123" exponent numbers to determine final exponent value
-    x, code, pos = parsefrac(T, source, pos, len, b, code, options, digits, neg, startpos, UInt64(0))
+    x, code, pos = parsefrac(c, source, pos, len, b, code, digits, neg, startpos, UInt64(0))
 
 @label done
     return x, code, pos
@@ -267,10 +267,10 @@ end
 # same as above; if digits overflows, we want a non-inlined version to call with a wider type
 # note that we never expect `frac` to overflow, since it's just keep track of the # of digits
 # we parse post-decimal point
-@noinline _parsefrac(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac) where {T <: SupportedFloats, IntType} =
-    parsefrac(T, source, pos, len, b, code, options, digits, neg, startpos, frac)
+@noinline _parsefrac(c::FloatConf{T}, source, pos, len, b, code, digits::IntType, neg::Bool, startpos, frac) where {T <: SupportedFloats, IntType} =
+    parsefrac(c, source, pos, len, b, code, digits, neg, startpos, frac)
 
-@inline function parsefrac(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac) where {T <: SupportedFloats, IntType}
+@inline function parsefrac(c::FloatConf{T}, source, pos, len, b, code, digits::IntType, neg::Bool, startpos, frac) where {T <: SupportedFloats, IntType}
     x = zero(T)
     parsedanyfrac = false
     # check if `b` is a digit
@@ -292,7 +292,7 @@ end
             b = peekbyte(source, pos) - UInt8('0')
             b > 0x09 && break
             if overflows(IntType) && digits > overflowval(IntType)
-                return _parsefrac(T, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos, frac)
+                return _parsefrac(c, source, pos, len, b + UInt8('0'), code, _widen(digits), neg, startpos, frac)
             end
         end
         b += UInt('0')
@@ -327,7 +327,7 @@ end
 
         # at this point, we've parsed X and Y in "X.YeZ", but not Z in a scientific notation exponent number
         # we start our exponent number at UInt64(0)
-        return parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, UInt64(0), negexp)
+        return parseexp(c, source, pos, len, b, code, digits, neg, startpos, frac, UInt64(0), negexp)
     else
         # if no scientific notation, we're done, so scale digits + frac and return
         if parsedanyfrac
@@ -344,10 +344,10 @@ end
 
 # same no-inline story, but this time for exponent number; probably even more rare to overflow the exponent number
 # compared to pre/post decimal digits, but we account for it all the same (a lot of float parsers don't account for this)
-@noinline _parseexp(::Type{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::ExpType, negexp) where {T <: SupportedFloats, ExpType} =
-    parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, exp, negexp)
+@noinline _parseexp(c::FloatConf{T}, source, pos, len, b, code, digits, neg::Bool, startpos, frac, exp::ExpType, negexp) where {T <: SupportedFloats, ExpType} =
+    parseexp(c, source, pos, len, b, code, digits, neg, startpos, frac, exp, negexp)
 
-@inline function parseexp(::Type{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::ExpType, negexp) where {T <: SupportedFloats, ExpType}
+@inline function parseexp(c::FloatConf{T}, source, pos, len, b, code, digits, neg::Bool, startpos, frac, exp::ExpType, negexp) where {T <: SupportedFloats, ExpType}
     x = zero(T)
     # note that `b` has already had `b - UInt8('0')` applied to it for parseexp
     while true
@@ -368,7 +368,7 @@ end
             @goto done
         end
         if overflows(ExpType) && exp > overflowval(ExpType)
-            return _parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, _widen(exp), negexp)
+            return _parseexp(c, source, pos, len, b, code, digits, neg, startpos, frac, _widen(exp), negexp)
         end
     end
 @label done

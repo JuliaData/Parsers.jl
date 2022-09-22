@@ -616,8 +616,8 @@ end
                 end
             end
 
-            JET.test_opt(Parsers.xparse, Tuple{Type{Date}, String, Int, Int, Parsers.Options, Type{Date}})
-            JET.test_opt(Parsers.xparse, Tuple{Type{Time}, String, Int, Int, Parsers.Options, Type{Time}})
+            JET.test_opt(Parsers.xparse, Tuple{Type{Date}, String, Int, Int, Parsers.Options, Type{Date}}, broken=true)
+            JET.test_opt(Parsers.xparse, Tuple{Type{Time}, String, Int, Int, Parsers.Options, Type{Time}}, broken=true)
             for S in (Vector{UInt8}, IOBuffer)
                 for T in (Dates.Date, Dates.Time)
                     JET.test_opt(Parsers.xparse, Tuple{Type{T}, S, Int, Int, Parsers.Options, Type{T}}, broken=true)

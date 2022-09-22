@@ -170,6 +170,62 @@ Options(;
 const OPTIONS = Options(nothing, UInt8(' '), UInt8('\t'), UInt8('"'), UInt8('"'), UInt8('"'), nothing, UInt8('.'), nothing, nothing, nothing, false, false, nothing, false, false, false, nothing)
 const XOPTIONS = Options(missing, UInt8(' '), UInt8('\t'), UInt8('"'), UInt8('"'), UInt8('"'), UInt8(','), UInt8('.'), nothing, nothing, nothing, false, false, nothing, true, false, false, nothing)
 
+abstract type AbstractTypeParseConf{T} end
+abstract type AbstractDateTimeParseConf{T} <: AbstractTypeParseConf{T} end
+abstract type AbstractFloatParseConf{T}    <: AbstractTypeParseConf{T} end
+abstract type AbstractIntParseConf{T}      <: AbstractTypeParseConf{T} end
+abstract type AbstractStringParseConf{T}   <: AbstractTypeParseConf{T} end
+
+struct BoolConf{Bool} <: AbstractTypeParseConf{Bool}
+    refs::Vector{String}
+    trues::Union{Nothing, Vector{PtrLen}}
+    falses::Union{Nothing, Vector{PtrLen}}
+    # TODO: kwargs + validate inputs like Options does
+    BoolConf(::Type{T}=Bool, args...; kwargs...) where {T} = BoolConf{T}(args...; kwargs...)
+    BoolConf{Bool}(options::Options=OPTIONS, refs=options.refs, trues=options.trues, falses=options.falses) = new{Bool}(refs, trues, falses)
+    BoolConf{Bool}(refs, trues, falses) = new{Bool}(refs, trues, falses)
+end
+struct DateTimeConf{T<:Union{DateTime,Date,Time}} <: AbstractDateTimeParseConf{T}
+    dateformat::Union{Nothing, Format}
+    # TODO: kwargs + validate inputs like Options does
+    DateTimeConf(::Type{T}, args...; kwargs...) where {T} = DateTimeConf{T}(args...; kwargs...)
+    DateTimeConf{T}(options::Options=OPTIONS, fmt=options.dateformat) where{T} = new{T}(fmt)
+    DateTimeConf{T}(fmt) where{T} = new{T}(fmt)
+end
+struct FloatConf{T<:Real} <: AbstractFloatParseConf{T}
+    decimal::UInt8
+    groupmark::Union{Nothing,UInt8}
+    # TODO: kwargs + validate inputs like Options does
+    FloatConf(::Type{T}, args...; kwargs...) where {T} = FloatConf{T}(args...; kwargs...)
+    FloatConf{T}(options::Options=OPTIONS, decimal=options.decimal, groupmark=options.groupmark) where {T} = new{T}(decimal, groupmark)
+    FloatConf{T}(decimal, groupmark) where {T} = new{T}(decimal, groupmark)
+end
+struct IntConf{T<:Integer} <: AbstractIntParseConf{T}
+    groupmark::Union{Nothing,UInt8}
+    # TODO: kwargs + validate inputs like Options does
+    IntConf(::Type{T}, args...; kwargs...) where {T} = IntConf{T}(args...; kwargs...)
+    IntConf{T}(options::Options=OPTIONS, groupmark=options.groupmark) where {T} = new{T}(groupmark)
+    IntConf{T}(groupmark) where {T} = new{T}(groupmark)
+end
+struct StringConf{T<:Union{AbstractString,Char,Symbol}} <: AbstractStringParseConf{T}
+    stripwhitespace::Bool
+    stripquoted::Bool
+    # TODO: kwargs + validate inputs like Options does
+    StringConf(::Type{T}, args...; kwargs...) where {T} = StringConf{T}(args...; kwargs...)
+    StringConf{T}(options::Options=OPTIONS, stripwhitespace=options.stripwhitespace, stripquoted=options.stripquoted) where {T} = new{T}(stripwhitespace, stripquoted)
+    StringConf{T}(stripwhitespace, stripquoted) where {T} = new{T}(stripwhitespace, stripquoted)
+end
+
+struct UnknownTypeConf{T} <: AbstractTypeParseConf{T} end
+
+conf(::Type{T},    opt_or_conf) where {T<:Integer}                           = IntConf{T}(opt_or_conf.groupmark)
+conf(::Type{T},    opt_or_conf) where {T<:Real}                              = FloatConf{T}(opt_or_conf.decimal, opt_or_conf.groupmark)
+conf(::Type{T},    opt_or_conf) where {T<:Union{DateTime,Date,Time}}         = DateTimeConf{T}(opt_or_conf.dateformat)
+conf(::Type{T},    opt_or_conf) where {T<:Union{AbstractString,Symbol,Char}} = StringConf{T}(opt_or_conf.stripwhitespace, opt_or_conf.stripquoted)
+conf(::Type{Bool}, opt_or_conf)                                              = BoolConf{Bool}(opt_or_conf.refs, opt_or_conf.trues, opt_or_conf.falses)
+conf(::Type{T},    opt_or_conf) where T                                      = UnknownTypeConf{T}()
+
+
 # high-level convenience functions like in Base
 """
     Parsers.parse(T, source[, options, pos, len]) => T
@@ -180,7 +236,10 @@ buffer `source`. If parsing fails for any reason, either invalid value or non-va
 instead of throwing an error, use [`Parsers.tryparse`](@ref).
 """
 function parse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS, pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
-    res = xparse2(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
+    parse(conf(T, options), buf, options, pos, len)
+end
+function parse(c::AbstractTypeParseConf{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS, pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
+    res = xparse2(c, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
     code = res.code
     tlen = res.tlen
     fin = buf isa IO || (tlen == (len - pos + 1))
@@ -196,7 +255,10 @@ buffer `source`. If parsing fails for any reason, either invalid value or non-va
 an error, use [`Parsers.parse`](@ref).
 """
 function tryparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS, pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
-    res = xparse2(T, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
+    tryparse(conf(T, options), buf, options, pos, len)
+end
+function tryparse(c::AbstractTypeParseConf{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}, options=OPTIONS, pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf)) where {T}
+    res = xparse2(c, buf isa AbstractString ? codeunits(buf) : buf, pos, len, options)
     fin = buf isa IO || (res.tlen == (len - pos + 1))
     return ok(res.code) && fin ? (res.val::T) : nothing
 end
@@ -218,15 +280,12 @@ function xparse end
 # for testing purposes only, it's much too slow to dynamically create Options for every xparse call
 function xparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf), sentinel=nothing, wh1::Union{UInt8, Char}=UInt8(' '), wh2::Union{UInt8, Char}=UInt8('\t'), quoted::Bool=true, openquotechar::Union{UInt8, Char}=UInt8('"'), closequotechar::Union{UInt8, Char}=UInt8('"'), escapechar::Union{UInt8, Char}=UInt8('"'), ignorerepeated::Bool=false, ignoreemptylines::Bool=false, delim::Union{UInt8, Char, PtrLen, AbstractString, Nothing}=UInt8(','), decimal::Union{UInt8, Char}=UInt8('.'), comment=nothing, trues=nothing, falses=nothing, dateformat::Union{Nothing, String, Dates.DateFormat}=nothing, stripwhitespace::Bool=false, stripquoted::Bool=false, groupmark=nothing) where {T}
     options = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, stripwhitespace, stripquoted, groupmark)
-    return xparse(T, buf, pos, len, options)
+    return xparse(conf(T, options), buf, pos, len, options)
 end
 
-xparse(::Type{T}, buf::AbstractString, pos, len, options=Parsers.XOPTIONS) where {T} =
-    xparse(T, codeunits(buf), pos, len, options)
-
 # generic fallback calls Base.tryparse
-function xparse(::Type{T}, source, pos, len, options, ::Type{S}=T) where {T, S}
-    res = xparse(String, source, pos, len, options)
+function xparse(::AbstractTypeParseConf{T}, source, pos, len, options, ::Type{S}=T) where {T, S}
+    res = xparse(conf(String, options), source, pos, len, options)
     code = res.code
     poslen = res.val
     if !Parsers.invalid(code) && !Parsers.sentinel(code)
@@ -242,10 +301,22 @@ function xparse(::Type{T}, source, pos, len, options, ::Type{S}=T) where {T, S}
     end
 end
 
-xparse(::Type{Char}, buf::AbstractString, pos, len, options, ::Type{S}=Char) where {S} =
-    xparse(Char, codeunits(buf), pos, len, options, S)
-function xparse(::Type{Char}, source, pos, len, options, ::Type{S}=Char) where {S}
-    res = xparse(String, source, pos, len, options)
+# conversionf from type to conf and from string to bytes
+xparse(t::AbstractTypeParseConf{T}, buf::AbstractString, pos, len, options::Options=XOPTIONS, ::Type{S}=T) where {T,S} =
+    xparse(t, codeunits(buf), pos, len, options, S)
+xparse(::Type{T}, source, pos, len, options::Options=XOPTIONS, ::Type{S}=T) where {T,S} =
+    xparse(conf(T, options), source, pos, len, options, S)
+xparse(::Type{T}, buf::AbstractString, pos, len, options::Options=XOPTIONS, ::Type{S}=T) where {T,S} =
+    xparse(conf(T, options), codeunits(buf), pos, len, options, S)
+
+# resolving method ambiguities
+xparse(c::StringConf{Char}, buf::AbstractString, pos, len, options::Options=XOPTIONS, ::Type{S}=PosLen) where {S} =
+    xparse(c, codeunits(buf), pos, len, options, S)
+xparse(c::StringConf{Symbol}, buf::AbstractString, pos, len, options::Options=XOPTIONS, ::Type{S}=PosLen) where {S} =
+    xparse(c, codeunits(buf), pos, len, options, S)
+
+function xparse(c::StringConf{Char}, source, pos, len, options, ::Type{S}=Char) where {S}
+    res = xparse(conf(String, c), source, pos, len, options)
     code = res.code
     poslen = res.val
     if !Parsers.invalid(code) && !Parsers.sentinel(code)
@@ -255,10 +326,8 @@ function xparse(::Type{Char}, source, pos, len, options, ::Type{S}=Char) where {
     end
 end
 
-xparse(::Type{Symbol}, buf::AbstractString, pos, len, options, ::Type{S}=Symbol) where {S} =
-    xparse(Symbol, codeunits(buf), pos, len, options, S)
-function xparse(::Type{Symbol}, source, pos, len, options, ::Type{S}=Symbol) where {S}
-    res = xparse(String, source, pos, len, options, PosLen)
+function xparse(c::StringConf{Symbol}, source, pos, len, options, ::Type{S}=Symbol) where {S}
+    res = xparse(conf(String, c), source, pos, len, options, PosLen)
     code = res.code
     poslen = res.val
     if !Parsers.invalid(code) && !Parsers.sentinel(code)
@@ -273,7 +342,7 @@ function xparse(::Type{Symbol}, source, pos, len, options, ::Type{S}=Symbol) whe
     end
 end
 
-function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=T) where {T <: SupportedTypes, S}
+function xparse(c::AbstractTypeParseConf{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=T) where {T <: SupportedTypes, S}
     startpos = vstartpos = pos
     sentinel = options.sentinel
     wh1 = options.wh1; wh2 = options.wh2
@@ -324,7 +393,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
     if sentinel !== nothing && sentinel !== missing
         sentinelpos = checksentinel(source, pos, len, sentinel)
     end
-    x, code, pos = typeparser(T, source, pos, len, b, code, options)
+    x, code, pos = typeparser(c, source, pos, len, b, code, options)
     if sentinel !== nothing && sentinel !== missing && sentinelpos >= pos
         # if we matched a sentinel value that was as long or longer than our type value
         code &= ~(OK | INVALID | OVERFLOW)
@@ -684,7 +753,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
 end
 
 # condensed version of xparse that doesn't worry about quoting or delimiters; called from Parsers.parse/Parsers.tryparse
-@inline function xparse2(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=T) where {T <: SupportedTypes, S}
+@inline function xparse2(c::AbstractTypeParseConf{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=T) where {T <: SupportedTypes, S}
     startpos = pos
     sentinel = options.sentinel
     wh1 = options.wh1; wh2 = options.wh2
@@ -705,7 +774,7 @@ end
         end
         b = peekbyte(source, pos)
     end
-    x, code, pos = typeparser(T, source, pos, len, b, code, options)
+    x, code, pos = typeparser(c, source, pos, len, b, code, options)
     if (code & EOF) == EOF
         @goto donedone
     end
@@ -732,7 +801,7 @@ end
     return valueok(code) ? Result{S}(code, tlen, x) : Result{S}(code, tlen)
 end
 
-@inline function xparse2(::Type{T}, source, pos, len, options, ::Type{S}=T) where {T, S}
+@inline function xparse2(::AbstractTypeParseConf{T}, source, pos, len, options, ::Type{S}=T) where {T, S}
     res = xparse(String, source, pos, len, options)
     code = res.code
     poslen = res.val
@@ -749,8 +818,8 @@ end
     end
 end
 
-@inline function xparse2(::Type{Char}, source, pos, len, options, ::Type{S}=Char) where {S}
-    res = xparse(String, source, pos, len, options)
+@inline function xparse2(c::StringConf{Char}, source, pos, len, options, ::Type{S}=Char) where {S}
+    res = xparse(conf(String, c), source, pos, len, options)
     code = res.code
     poslen = res.val
     if !Parsers.invalid(code) && !Parsers.sentinel(code)
@@ -760,8 +829,8 @@ end
     end
 end
 
-@inline function xparse2(::Type{Symbol}, source, pos, len, options, ::Type{S}=Symbol) where {S}
-    res = xparse(String, source, pos, len, options)
+@inline function xparse2(c::StringConf{Symbol}, source, pos, len, options, ::Type{S}=Symbol) where {S}
+    res = xparse(conf(String, c), source, pos, len, options)
     code = res.code
     poslen = res.val::PosLen
     if !Parsers.invalid(code) && !Parsers.sentinel(code)

@@ -1,7 +1,13 @@
 # this is mostly copy-pasta from Parsers.jl main xparse function
-xparse(::Type{T}, buf::AbstractString, pos, len, options, ::Type{S}=PosLen) where {T <: AbstractString, S} =
-    xparse(String, codeunits(buf), pos, len, options, S)
-function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options, ::Type{S}=PosLen) where {T <: AbstractString, S}
+xparse(t::AbstractStringParseConf{T}, buf::AbstractString, pos, len, options::Options=XOPTIONS, ::Type{S}=PosLen) where {T <: AbstractString,S} =
+    xparse(t, codeunits(buf), pos, len, options, S)
+xparse(::Type{T}, buf::AbstractString, pos, len, options::Options=XOPTIONS, ::Type{S}=PosLen) where {T <: AbstractString,S} =
+    xparse(conf(T, options), codeunits(buf), pos, len, options, S)
+xparse(::Type{T}, source, pos, len, options::Options=XOPTIONS, ::Type{S}=PosLen) where {T<:AbstractString,S} =
+    xparse(conf(T, options), source, pos, len, options, S)
+
+
+function xparse(c::StringConf{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options, ::Type{S}=PosLen) where {T <: AbstractString, S}
     startpos = vstartpos = vpos = lastnonwhitespacepos = pos
     sentstart = sentinelpos = 0
     code = SUCCESS
@@ -17,7 +23,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
         pos += 1
         incr!(source)
         vpos = pos
-        if options.stripwhitespace
+        if c.stripwhitespace
             vstartpos = pos
         end
         if eof(source, pos, len)
@@ -45,7 +51,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                 pos += 1
                 incr!(source)
                 vpos = pos
-                if options.stripquoted
+                if c.stripquoted
                     vstartpos = pos
                 end
                 if eof(source, pos, len)
@@ -100,7 +106,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
                     @goto donedone
                 end
                 # Always treat space ' ' and tab '\t' as whitespace when quoted
-                if options.stripquoted && b != options.wh1 && b != options.wh2 && b != UInt8(' ') && b != UInt8('\t')
+                if c.stripquoted && b != options.wh1 && b != options.wh2 && b != UInt8(' ') && b != UInt8('\t')
                     lastnonwhitespacepos = pos
                 end
                 b = peekbyte(source, pos)
@@ -243,7 +249,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
             if quoted
                 code |= INVALID_DELIMITER
             end
-            if options.stripwhitespace
+            if c.stripwhitespace
                 if !quoted && b != options.wh1 && b != options.wh2
                     lastnonwhitespacepos = vpos
                 end
@@ -260,7 +266,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
         while !eof(source, pos, len)
             pos += 1
             incr!(source)
-            if options.stripwhitespace
+            if c.stripwhitespace
                 b = peekbyte(source, pos)
                 if !quoted && b != options.wh1 && b != options.wh2
                     lastnonwhitespacepos = vpos
@@ -285,7 +291,7 @@ function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, o
     if eof(source, pos, len)
         code |= EOF
     end
-    if options.stripquoted || (options.stripwhitespace && !quoted)
+    if c.stripquoted || (c.stripwhitespace && !quoted)
         vpos = lastnonwhitespacepos
     end
     poslen = PosLen(vstartpos, vpos - vstartpos, ismissing, escapedstring(code))
