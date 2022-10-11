@@ -3,19 +3,25 @@ isgreedy(T) = false
 
 function typeparser(::Type{T}, source, pos, len, b, code, pl, opts) where {T <: AbstractString}
     if quoted(code)
+        code |= OK
         return findendquoted(T, source, pos, len, b, code, pl, true, opts.cq, opts.e, opts.stripquoted)
     elseif opts.checkdelim
+        code |= OK
         return finddelimiter(T, source, pos, len, b, code, pl, opts.delim, opts.ignorerepeated, opts.cmt, opts.ignoreemptylines, opts.stripwhitespace)
     else
+        code |= OK
         # no delimiter, so read until EOF
+        # if stripwhitespace, then we need to keep track of the last non-whitespace character
+        # in order to strip trailing whitespace
+        lastnonwhitepos = pos
         while !eof(source, pos, len)
             b = peekbyte(source, pos)
-            if !opts.stripwhitespace || (b != UInt8(' ') && b != UInt8('\t'))
-                pl = poslen(pl.pos, (pos - pl.pos) + 1)
-            end
+            wh = iswh(b)
+            lastnonwhitepos = something(opts.stripwhitespace, false) ? (wh ? lastnonwhitepos : pos) : pos
             pos += 1
             incr!(source)
         end
+        pl = poslen(pl.pos, (lastnonwhitepos - pl.pos) + 1)
         return pos, code, pl, pl
     end
 end

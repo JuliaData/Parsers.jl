@@ -93,5 +93,5 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
     end
 
 @label done
-    return pos, code, pl, x
+    return pos, code, PosLen(pl.pos, pos - pl.pos), x
 end

@@ -1,165 +1,54 @@
+const DEFAULT_TRUE = "true"
+const DEFAULT_FALSE = "false"
+
 @inline function typeparser(::Type{Bool}, source, pos, len, b, code, pl, options::Options)
     x = false
     trues = options.trues
     falses = options.falses
     if trues === nothing
-        if b == UInt8('t')
-            pos += 1
-            incr!(source)
-            if eof(source, pos, len)
-                code |= INVALID | EOF
-                @goto done
-            end
-            b = peekbyte(source, pos)
-            if b == UInt8('r')
-                pos += 1
-                incr!(source)
-                if eof(source, pos, len)
-                    code |= INVALID | EOF
-                    @goto done
-                end
-                b = peekbyte(source, pos)
-                if b == UInt8('u')
-                    pos += 1
-                    incr!(source)
-                    if eof(source, pos, len)
-                        code |= INVALID | EOF
-                        @goto done
-                    end
-                    b = peekbyte(source, pos)
-                    if b == UInt8('e')
-                        pos += 1
-                        incr!(source)
-                        x = true
-                        code |= OK
-                        if eof(source, pos, len)
-                            code |= EOF
-                        end
-                        @goto done
-                    end
-                end
-            end
+        check, pos = checktoken(source, pos, len, b, DEFAULT_TRUE)
+        if check
+            x = true
+            code |= OK
+            eof(source, pos, len) && (code |= EOF)
+            @goto done
         else
-            intx, intcode, intpos = typeparser(UInt8, source, pos, len, b, code, options)
+            intpos, intcode, intpl, intx = typeparser(UInt8, source, pos, len, b, code, pl, options)
             if ok(intcode) && intx < 0x02
-                x = intx == 0x01 ? true : false
+                x = intx == 0x01
                 code = intcode
                 pos = intpos
+                pl = intpl
                 @goto done
             end
         end
     else
-        if source isa AbstractVector{UInt8}
-            startptr = pointer(source, pos)
-            for (i, (ptr, ptrlen)) in enumerate(trues)
-                if pos + ptrlen - 1 <= len
-                    match = memcmp(startptr, ptr, ptrlen)
-                    if match
-                        x = true
-                        code |= OK
-                        pos = pos + ptrlen
-                        if eof(source, pos, len)
-                            code |= EOF
-                        end
-                        @goto done
-                    end
-                end
-            end
-        else # source isa IO
-            for (i, (ptr, ptrlen)) in enumerate(trues)
-                matched = match!(source, ptr, ptrlen)
-                if matched
-                    x = true
-                    code |= OK
-                    pos = pos + ptrlen
-                    if eof(source, pos, len)
-                        code |= EOF
-                    end
-                    @goto done
-                end
-            end
+        check, pos = checktokens(source, pos, len, b, trues, true)
+        if check
+            x = true
+            code |= OK
+            eof(source, pos, len) && (code |= EOF)
+            @goto done
         end
     end
     if falses === nothing
-        if b == UInt8('f')
-            pos += 1
-            incr!(source)
-            if eof(source, pos, len)
-                code |= INVALID | EOF
-                @goto done
-            end
-            b = peekbyte(source, pos)
-            if b == UInt8('a')
-                pos += 1
-                incr!(source)
-                if eof(source, pos, len)
-                    code |= INVALID | EOF
-                    @goto done
-                end
-                b = peekbyte(source, pos)
-                if b == UInt8('l')
-                    pos += 1
-                    incr!(source)
-                    if eof(source, pos, len)
-                        code |= INVALID | EOF
-                        @goto done
-                    end
-                    b = peekbyte(source, pos)
-                    if b == UInt8('s')
-                        pos += 1
-                        incr!(source)
-                        if eof(source, pos, len)
-                            code |= INVALID | EOF
-                            @goto done
-                        end
-                        b = peekbyte(source, pos)
-                        if b == UInt8('e')
-                            pos += 1
-                            incr!(source)
-                            code |= OK
-                            if eof(source, pos, len)
-                                code |= EOF
-                            end
-                            @goto done
-                        end
-                    end
-                end
-            end
+        check, pos = checktoken(source, pos, len, b, DEFAULT_FALSE)
+        if check
+            x = false
+            code |= OK
+            eof(source, pos, len) && (code |= EOF)
+            @goto done
         end
     else
-        if source isa AbstractVector{UInt8}
-            startptr = pointer(source, pos)
-            for (i, (ptr, ptrlen)) in enumerate(falses)
-                if pos + ptrlen - 1 <= len
-                    match = memcmp(startptr, ptr, ptrlen)
-                    if match
-                        x = false
-                        code |= OK
-                        pos = pos + ptrlen
-                        if eof(source, pos, len)
-                            code |= EOF
-                        end
-                        @goto done
-                    end
-                end
-            end
-        else # source isa IO
-            for (i, (ptr, ptrlen)) in enumerate(falses)
-                matched = match!(source, ptr, ptrlen)
-                if matched
-                    x = false
-                    code |= OK
-                    pos = pos + ptrlen
-                    if eof(source, pos, len)
-                        code |= EOF
-                    end
-                    @goto done
-                end
-            end
+        check, pos = checktokens(source, pos, len, b, falses, true)
+        if check
+            x = false
+            code |= OK
+            eof(source, pos, len) && (code |= EOF)
+            @goto done
         end
     end
-    fastseek!(source, pos - 1)
-    code |= INVALID
+    code |= INVALID | (eof(source, pos, len) ? EOF : SUCCESS)
 
 @label done
     return pos, code, pl, x

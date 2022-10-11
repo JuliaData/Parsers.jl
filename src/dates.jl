@@ -331,7 +331,7 @@ function tryparsenext(tok, source, pos, len, b, code)::Tuple{Any, Int, UInt8, Re
     return val, pos, b, code
 end
 
-@inline function typeparser(::Type{T}, source, pos, len, b, code, options) where {T <: Dates.TimeType}
+@inline function typeparser(::Type{T}, source, pos, len, b, code, pl, options) where {T <: Dates.TimeType}
     fmt = options.dateformat
     df = fmt === nothing ? default_format(T) : fmt
     tokens = df.tokens
@@ -467,5 +467,5 @@ end
     if eof(source, pos, len)
         code |= EOF
     end
-    return x, code, pos
+    return pos, code, pl, x
 end

@@ -87,7 +87,7 @@ struct RegexAndMatchData
     data::Ptr{Cvoid}
 end
 
-function RegexAndMatchData(re::Regex)
+function mkregex(re::Regex)
     Base.compile(re)
     return RegexAndMatchData(re, Base.PCRE.create_match_data(re.regex))
 end
@@ -99,6 +99,11 @@ struct Token
 end
 import Base: ==
 ==(a::Token, b::Token) = a.token == b.token
+_contains(a::Token, str::String) = _contains(a.token, str)
+_contains(a::UInt8, str::String) = a == UInt8(str[1])
+_contains(a::Char, str::String) = a == str[1]
+_contains(a::String, str::String) = contains(a, str)
+_contains(a::RegexAndMatchData, str::String) = contains(a.re.pattern, str)
 Base.isempty(x::Token) = x.token isa String && isempty(x.token)
 
 @noinline notsupported(source) = error("Regex matching not supported on this source type: $(typeof(source))")
@@ -151,14 +156,14 @@ function checktoken(source::IO, pos, len, b, tok::String)
     for i = 1:blen
         @inbounds b2 = bytes[i]
         if b2 != b
-            fastseek!(source, startpos)
+            fastseek!(source, startpos - 1)
             return false, startpos
         end
         pos += 1
         incr!(source)
         i == blen && break
         if eof(source, pos, len)
-            fastseek!(source, startpos)
+            fastseek!(source, startpos - 1)
             return false, startpos
         end
         b = peekbyte(source, pos)
@@ -166,11 +171,18 @@ function checktoken(source::IO, pos, len, b, tok::String)
     return true, pos
 end
 
-function checksentinel(source, pos, len, sentinels::Vector{String})
-    for s in sentinels
-        check, pos = checktoken(source, pos, len, 0x00, s)
-        check && return true, pos
+function checktokens(source, pos, len, b, tokens::Union{Vector{String}, Vector{Token}}, consume=false)
+    if source isa IO && !consume
+        origpos = position(source)
     end
+    for token in tokens
+        check, pos = checktoken(source, pos, len, b, token)
+        if check
+            source isa IO && !consume && fastseek!(source, origpos)
+            return true, pos
+        end
+    end
+    source isa IO && !consume && fastseek!(source, origpos)
     return false, pos
 end
 
@@ -195,7 +207,8 @@ function checkcmtemptylines(source, pos, len, cmt, ignoreemptylines)
         end
         matched = false
         if !isempty(cmt) && !eof(source, pos, len)
-            matched, pos = checktoken(source, pos, len, 0x00, cmt)
+            b = peekbyte(source, pos)
+            matched, pos = checktoken(source, pos, len, b, cmt)
             if matched
                 eof(source, pos, len) && break
                 b = peekbyte(source, pos)
@@ -413,6 +426,8 @@ function Base.getproperty(x::PosLen, nm::Symbol)
     invalidproperty(nm)
 end
 Base.propertynames(::PosLen) = (:pos, :len, :missingvalue, :escapedvalue)
+
+Base.show(io::IO, x::PosLen) = print(io, "PosLen(pos=$(x.pos), len=$(x.len), missingvalue=$(x.missingvalue), escapedvalue=$(x.escapedvalue))")
 
 """
     Parsers.getstring(buf_or_io, poslen::PosLen, e::UInt8) => String
