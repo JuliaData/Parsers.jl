@@ -56,7 +56,7 @@ function whitespace(stripwh, stripquoted)
         function stripwhitespace(::Type{T}, source, pos, len, b, code, pl) where {T}
             Base.@_inline_meta
             # strip leading whitespace
-            if stripwh !== false && (!isgreedy(T) || !quoted(code)) && !eof(source, pos, len)
+            if stripwh !== KEEP && (!isgreedy(T) || !quoted(code)) && !eof(source, pos, len)
                 while iswh(b)
                     pos += 1
                     incr!(source)
@@ -67,13 +67,13 @@ function whitespace(stripwh, stripquoted)
                     b = peekbyte(source, pos)
                 end
                 # for greedy, we only want to reset pos if stripwh was explicitly requested
-                if isgreedy(T) && stripwh === true && !quoted(code)
+                if isgreedy(T) && stripwh === STRIP && !quoted(code)
                     pl = poslen(pos, 0)
                 end
             end
             pos, code, pl, x = parser(T, source, pos, len, b, code, pl)
             # strip trailing whitespace
-            if !isgreedy(T) && something(stripwh, true) && !eof(source, pos, len)
+            if !isgreedy(T) && (stripwh == STRIP || stripwh == DEFAULT) && !eof(source, pos, len)
                 b = peekbyte(source, pos)
                 while iswh(b)
                     pos += 1
@@ -338,7 +338,7 @@ function finddelimiter(::Type{T}, source, pos, len, b, code, pl, delim, ignorere
         pos += 1
         incr!(source)
         if isgreedy(T) && !quoted(code)
-            lastnonwhitepos = something(stripwhitespace, false) ? (iswh(b) ? lastnonwhitepos : pos) : pos
+            lastnonwhitepos = stripwhitespace == STRIP ? (iswh(b) ? lastnonwhitepos : pos) : pos
         end
         if eof(source, pos, len)
             code |= EOF

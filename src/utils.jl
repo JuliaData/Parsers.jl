@@ -98,13 +98,28 @@ struct Token
     token::ByteStringRegex
 end
 import Base: ==
-==(a::Token, b::Token) = a.token == b.token
+function ==(a::Token, b::Token)
+    t1 = a.token
+    t2 = b.token
+    if t1 isa UInt8 && t2 isa UInt8
+        return t1 == t2
+    elseif t1 isa String && t2 isa String
+        return t1 == t2
+    elseif t1 isa RegexAndMatchData && t2 isa RegexAndMatchData
+        return t1.re == t2.re
+    else
+        return false
+    end
+end
 _contains(a::Token, str::String) = _contains(a.token, str)
 _contains(a::UInt8, str::String) = a == UInt8(str[1])
 _contains(a::Char, str::String) = a == str[1]
 _contains(a::String, str::String) = contains(a, str)
 _contains(a::RegexAndMatchData, str::String) = contains(a.re.pattern, str)
-Base.isempty(x::Token) = x.token isa String && isempty(x.token)
+function Base.isempty(x::Token)
+    t = x.token
+    return t isa String && isempty(t)
+end
 
 @noinline notsupported(source) = error("Regex matching not supported on this source type: $(typeof(source))")
 
@@ -446,7 +461,7 @@ function getstring end
 _unsafe_string(p, len) = ccall(:jl_pchar_to_string, Ref{String}, (Ptr{UInt8}, Int), p, len)
 
 getstring(source::Union{IO, AbstractVector{UInt8}}, x::PosLen, e::Token) =
-    getstring(source, x, e.token)
+    getstring(source, x, e.token::UInt8)
 
 @inline function getstring(source::Union{IO, AbstractVector{UInt8}}, x::PosLen, e::UInt8)
     x.escapedvalue && return unescape(source, x, e)

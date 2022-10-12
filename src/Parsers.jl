@@ -33,6 +33,9 @@ end
 
 Base.show(io::IO, x::Result{T}) where {T} = print(io, "Parsers.Result{$T}(code=`", codes(x.code), "`, tlen=", x.tlen, ", val=", isdefined(x, :val) ? x.val : "#undefined", ")")
 
+@enum StripWhitespace STRIP DEFAULT KEEP
+StripWhitespace(x::Union{Nothing, Bool}) = x === nothing ? DEFAULT : x ? STRIP : KEEP
+
 """
     `Parsers.Options` is a structure for holding various parsing settings when calling `Parsers.parse`, `Parsers.tryparse`, and `Parsers.xparse`. They include:
 
@@ -54,7 +57,7 @@ Base.show(io::IO, x::Result{T}) where {T} = print(io, "Parsers.Result{$T}(code=`
   * `groupmark=nothing`: optionally specify a single-byte character denoting the number grouping mark, this allows parsing of numbers that have, e.g., thousand separators (`1,000.00`).
 """
 struct Options
-    stripwhitespace::Union{Bool, Nothing}
+    stripwhitespace::StripWhitespace
     stripquoted::Bool
     checkquoted::Bool
     checksentinel::Bool
@@ -74,10 +77,10 @@ struct Options
     groupmark::Union{Nothing,UInt8}
 end
 
-const OPTIONS = Options(true, false, false, false, false, false, false, UInt8('.'),
+const OPTIONS = Options(STRIP, false, false, false, false, false, false, UInt8('.'),
     Token(UInt8('"')), Token(UInt8('"')), Token(UInt8('"')), Token[], Token(""), Token(""),
-    nothing, nothing, nothing)
-const XOPTIONS = Options(nothing, false, true, true, true, false, false, UInt8('.'),
+    nothing, nothing, nothing, nothing)
+const XOPTIONS = Options(DEFAULT, false, true, true, true, false, false, UInt8('.'),
     Token(UInt8('"')), Token(UInt8('"')), Token(UInt8('"')), Token[], Token(UInt8(',')), Token(""),
     nothing, nothing, nothing, nothing)
 
@@ -99,7 +102,7 @@ function Options(
             trues::Union{Nothing, Vector{String}},
             falses::Union{Nothing, Vector{String}},
             dateformat::Union{Nothing, String, Dates.DateFormat, Format},
-            ignorerepeated, ignoreemptylines, comment, quoted, debug, stripwhitespace=nothing, stripquoted=false, groupmark::Union{Nothing,Char,UInt8}=nothing)
+            ignorerepeated, ignoreemptylines, comment, quoted, stripwhitespace=nothing, stripquoted=false, groupmark::Union{Nothing,Char,UInt8}=nothing)
 
     if sentinel isa Vector{String}
         for sent in sentinel
@@ -129,6 +132,7 @@ function Options(
     quoted && (isempty(oq) || isempty(cq) || isempty(e)) && throw(ArgumentError("quoted=true requires openquotechar, closequotechar, and escapechar to be specified"))
     sent = (sentinel === nothing || sentinel === missing) ? Token[] : map(x -> token(x, "sentinel"), prepare!(sentinel))
     checksentinel = sentinel !== nothing
+    del = delim
     delim = token(delim, "delim")
     checkdelim = delim !== nothing && !isempty(delim)
     if checkdelim && (_contains(delim, " ") || _contains(delim, "\t"))
@@ -140,11 +144,11 @@ function Options(
     if falses !== nothing
         falses = prepare!(falses)
     end
-    if groupmark !== nothing && (groupmark == decimal || isnumeric(groupmark) || (delim == groupmark && !quoted) || (openquotechar == groupmark) || (closequotechar == groupmark))
+    if groupmark !== nothing && (groupmark == decimal || isnumeric(groupmark) || (del == groupmark && !quoted) || (openquotechar == groupmark) || (closequotechar == groupmark))
         throw(ArgumentError("`groupmark` cannot be a number, a quoting char, coincide with `decimal` and `delim` unless `quoted=true`."))
     end
     df = dateformat === nothing ? nothing : dateformat isa String ? Format(dateformat) : dateformat isa Dates.DateFormat ? Format(dateformat) : dateformat
-    return Options(stripwhitespace === true || stripquoted ? true : stripwhitespace === false ? false : nothing, stripquoted, quoted, checksentinel, checkdelim, ignorerepeated, ignoreemptylines, decimal, oq, cq, e, sent, delim, token(comment, "comment"), trues, falses, df, groupmark === nothing ? nothing : UInt8(groupmark))
+    return Options(StripWhitespace(stripwhitespace === true || stripquoted ? true : stripwhitespace), stripquoted, quoted, checksentinel, checkdelim, ignorerepeated, ignoreemptylines, decimal, oq, cq, e, sent, delim, token(comment, "comment"), trues, falses, df, groupmark === nothing ? nothing : UInt8(groupmark))
 end
 
 function token(x::MaybeToken, arg)
@@ -236,8 +240,8 @@ function xparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}
     return xparse(T, buf, pos, len, options)
 end
 
-xparse(::Type{T}, buf::AbstractString, pos, len, options=XOPTIONS) where {T} =
-    xparse(T, codeunits(buf), pos, len, options)
+xparse(::Type{T}, buf::AbstractString, pos, len, options=XOPTIONS, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T <: SupportedTypes, S} =
+    xparse(T, codeunits(buf), pos, len, options, S)
 
 xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T <: SupportedTypes, S} =
     Result(delimiter(options)(emptysentinel(options)(whitespace(options)(
@@ -245,7 +249,7 @@ xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::O
     )))))))(T, source, pos, len, S)
 
 # generic fallback calls Base.tryparse
-function xparse(::Type{T}, source, pos, len, options, ::Type{S}=T) where {T, S}
+function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options, ::Type{S}=T) where {T, S}
     res = xparse(String, source, pos, len, options)
     code = res.code
     poslen = res.val
@@ -264,7 +268,7 @@ end
 
 # condensed version of xparse that doesn't worry about quoting or delimiters; called from Parsers.parse/Parsers.tryparse
 @inline xparse2(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, opts::Options=XOPTIONS2, ::Type{S}=T) where {T <: SupportedTypes, S} =
-    Result(whitespace(true, false)(typeparser(opts)))(T, source, pos, len, S)
+    Result(whitespace(STRIP, false)(typeparser(opts)))(T, source, pos, len, S)
 
 @inline function xparse2(::Type{T}, source, pos, len, options, ::Type{S}=T) where {T, S}
     res = xparse(String, source, pos, len, options)

@@ -17,7 +17,7 @@ function typeparser(::Type{T}, source, pos, len, b, code, pl, opts) where {T <: 
         while !eof(source, pos, len)
             b = peekbyte(source, pos)
             wh = iswh(b)
-            lastnonwhitepos = something(opts.stripwhitespace, false) ? (wh ? lastnonwhitepos : pos) : pos
+            lastnonwhitepos = opts.stripwhitespace == STRIP ? (wh ? lastnonwhitepos : pos) : pos
             pos += 1
             incr!(source)
         end
@@ -27,7 +27,12 @@ function typeparser(::Type{T}, source, pos, len, b, code, pl, opts) where {T <: 
     end
 end
 
-function xparse(::Type{Char}, source, pos, len, options, ::Type{S}=Char) where {S}
+xparse(::Type{Char}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options, ::Type{S}=Char) where {S} =
+    parsechar(source, pos, len, options, S)
+xparse(::Type{Char}, source::AbstractString, pos, len, options, ::Type{Char}=Char) =
+    parsechar(codeunits(source), pos, len, options, Char)
+
+function parsechar(source::Union{AbstractVector{UInt8}, IO}, pos, len, options, ::Type{S}=Char) where {S}
     res = xparse(String, source, pos, len, options)
     code = res.code
     poslen = res.val
@@ -38,7 +43,12 @@ function xparse(::Type{Char}, source, pos, len, options, ::Type{S}=Char) where {
     end
 end
 
-function xparse(::Type{Symbol}, source, pos, len, options, ::Type{S}=Symbol) where {S}
+xparse(::Type{Symbol}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options, ::Type{S}=Symbol) where {S} =
+    parsesymbol(source, pos, len, options, S)
+xparse(::Type{Symbol}, source::AbstractString, pos, len, options, ::Type{Symbol}=Symbol) =
+    parsesymbol(codeunits(source), pos, len, options, Symbol)
+
+function parsesymbol(source::Union{AbstractVector{UInt8}, IO}, pos, len, options, ::Type{S}=Symbol) where {S}
     res = xparse(String, source, pos, len, options)
     code = res.code
     poslen = res.val
