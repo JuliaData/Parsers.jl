@@ -1,6 +1,4 @@
 # this is mostly copy-pasta from Parsers.jl main xparse function
-xparse(::Type{T}, buf::AbstractString, pos, len, options, ::Type{S}=PosLen) where {T <: AbstractString, S} =
-    xparse(String, codeunits(buf), pos, len, options, S)
 function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options, ::Type{S}=PosLen) where {T <: AbstractString, S}
     startpos = vstartpos = vpos = lastnonwhitespacepos = pos
     sentstart = sentinelpos = 0

@@ -242,8 +242,6 @@ function xparse(::Type{T}, source, pos, len, options, ::Type{S}=T) where {T, S}
     end
 end
 
-xparse(::Type{Char}, buf::AbstractString, pos, len, options, ::Type{S}=Char) where {S} =
-    xparse(Char, codeunits(buf), pos, len, options, S)
 function xparse(::Type{Char}, source, pos, len, options, ::Type{S}=Char) where {S}
     res = xparse(String, source, pos, len, options)
     code = res.code
@@ -255,10 +253,8 @@ function xparse(::Type{Char}, source, pos, len, options, ::Type{S}=Char) where {
     end
 end
 
-xparse(::Type{Symbol}, buf::AbstractString, pos, len, options, ::Type{S}=Symbol) where {S} =
-    xparse(Symbol, codeunits(buf), pos, len, options, S)
 function xparse(::Type{Symbol}, source, pos, len, options, ::Type{S}=Symbol) where {S}
-    res = xparse(String, source, pos, len, options, PosLen)
+    res = xparse(String, source, pos, len, options)
     code = res.code
     poslen = res.val
     if !Parsers.invalid(code) && !Parsers.sentinel(code)

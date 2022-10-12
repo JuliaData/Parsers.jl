@@ -206,7 +206,7 @@ end
             end
             if has_groupmark
                 b, nb = dpeekbyte(source, pos) .- UInt8('0')
-                if (options.groupmark)::UInt8 - UInt8('0') == b && nb <= 0x09
+                if options.groupmark - UInt8('0') == b && nb <= 0x09
                     incr!(source)
                     pos += 1
                     b = nb
