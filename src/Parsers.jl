@@ -127,6 +127,7 @@ function Options(
     oq = token(openquotechar, "openquotechar")
     cq = token(closequotechar, "closequotechar")
     e = token(escapechar, "escapechar")
+    e.token isa UInt8 || throw(ArgumentError("escapechar must be a single ascii character"))
     quoted && (isempty(oq) || isempty(cq) || isempty(e)) && throw(ArgumentError("quoted=true requires openquotechar, closequotechar, and escapechar to be specified"))
     sent = (sentinel === nothing || sentinel === missing) ? Token[] : map(x -> token(x, "sentinel"), prepare!(sentinel))
     checksentinel = sentinel !== nothing
@@ -240,7 +241,7 @@ end
 xparse(::Type{T}, buf::AbstractString, pos, len, options=Parsers.XOPTIONS) where {T} =
     xparse(T, codeunits(buf), pos, len, options)
 
-xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS2, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T <: SupportedTypes, S} =
+xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=Options(), ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T <: SupportedTypes, S} =
     Result(delimiter(options)(emptysentinel(options)(whitespace(options)(
         quoted(options)(whitespace(options)(sentinel(options)(typeparser(options)
     )))))))(T, source, pos, len, S)

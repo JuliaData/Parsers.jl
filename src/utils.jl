@@ -319,6 +319,7 @@ end
 
 eof(::AbstractVector{UInt8}, pos::Integer, len::Integer) = pos > len
 eof(source::IO, pos::Integer, len::Integer) = Base.eof(source)
+eof(io::Base.GenericIOBuffer, pos::Integer, len::Integer) = (io.ptr - 1) >= io.size
 
 function text(r)
     str = ""
@@ -443,6 +444,9 @@ to get the actual parsed `String` value.
 function getstring end
 
 _unsafe_string(p, len) = ccall(:jl_pchar_to_string, Ref{String}, (Ptr{UInt8}, Int), p, len)
+
+getstring(source::Union{IO, AbstractVector{UInt8}}, x::PosLen, e::Token) =
+    getstring(source, x, e.token)
 
 @inline function getstring(source::Union{IO, AbstractVector{UInt8}}, x::PosLen, e::UInt8)
     x.escapedvalue && return unescape(source, x, e)

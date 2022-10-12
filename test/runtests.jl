@@ -209,7 +209,7 @@ testcases = [
 for useio in (false, true)
     for (oq, cq, e) in ((UInt8('"'), UInt8('"'), UInt8('"')), (UInt8('"'), UInt8('"'), UInt8('\\')), (UInt8('{'), UInt8('}'), UInt8('\\')))
         for (i, case) in enumerate(testcases)
-            println("testing int case i = $i, case = $case, useio = $useio, oq = `$(Char(oq))`, cq = `$(Char(cq))`, e = `$(Char(e))`")
+            # println("testing int case i = $i, case = $case, useio = $useio, oq = `$(Char(oq))`, cq = `$(Char(cq))`, e = `$(Char(e))`")
             str = replace(replace(replace(case.str, '{'=>Char(oq)), '}'=>Char(cq)), '\\'=>Char(e))
             source = useio ? IOBuffer(str) : str
             res = Parsers.xparse(Int64, source; openquotechar=oq, closequotechar=cq, escapechar=e, case.kwargs...)
@@ -227,7 +227,7 @@ end
 for useio in (false, true)
     for (oq, cq, e) in ((UInt8('"'), UInt8('"'), UInt8('"')), (UInt8('"'), UInt8('"'), UInt8('\\')), (UInt8('{'), UInt8('}'), UInt8('\\')))
         for (i, case) in enumerate(testcases)
-            println("testing string case i = $i, case = $case, useio = $useio, oq = `$(Char(oq))`, cq = `$(Char(cq))`, e = `$(Char(e))`")
+            # println("testing string case i = $i, case = $case, useio = $useio, oq = `$(Char(oq))`, cq = `$(Char(cq))`, e = `$(Char(e))`")
             str = replace(replace(replace(case.str, '{'=>Char(oq)), '}'=>Char(cq)), '\\'=>Char(e))
             source = useio ? IOBuffer(str) : str
             res = Parsers.xparse(String, source; openquotechar=oq, closequotechar=cq, escapechar=e, case.kwargs...)
@@ -514,8 +514,6 @@ res = Parsers.xparse(Float64, "\"\"", 1, 2)
 res = Parsers.xparse(String, "\"\"", 1, 2)
 @test Parsers.sentinel(res.code)
 
-@test_throws ArgumentError Parsers.Options(delim=' ')
-
 # #38
 @test Parsers.parse(Date, "25JUL1985", Parsers.Options(dateformat="dduuuyyyy")) == Date(1985, 7, 25)
 
@@ -525,10 +523,8 @@ res = Parsers.xparse(String, "\"\"", 1, 2)
 # Int8 -1 parsed as UInt8 0xff
 @test Parsers.parse(Int8, "-1") === Int8(-1)
 
-# parsing am/pm issue for > Julia 1.3
-@static if VERSION >= v"1.3-DEV"
+# parsing am/pm issue
 @test Parsers.parse(DateTime, "7/22/1998 4:37:01.500 PM", Parsers.Options(dateformat="m/d/yyyy I:M:S.s p")) == DateTime(1998, 7, 22, 16, 37, 1, 500)
-end
 
 # #55
 # Parsers.parse must consume entire string
@@ -561,7 +557,8 @@ opts = Parsers.Options(sentinel=missings, trues=["true"])
 @test missings == ["na"]
 
 # reported from Slack via CSV.jl
-@test Parsers.xparse(String, ""; sentinel=["NULL"]) == Parsers.Result{PosLen}(Int16(33), 0, Base.bitcast(PosLen, 0x0000000000100000))
+res = Parsers.xparse(String, ""; sentinel=["NULL"])
+@test res == Parsers.Result{PosLen}(OK | EOF, 0, Base.bitcast(PosLen, 0x0000000000100000))
 
 # Parsers.getstring
 @test Parsers.getstring(b"hey there", Parsers.PosLen(5, 5), 0x00) == "there"
@@ -595,7 +592,7 @@ end
 
 # test `getstring` does not change the position of a stream
 source = IOBuffer("\"str1\" \"str2\"")
-opt = Parsers.Options(; quoted=true)
+opt = Parsers.Options(; delim=nothing, quoted=true)
 res = Parsers.xparse(String, source, 1, 0, opt)
 @test Parsers.getstring(source, res.val, opt.e) == "str1"
 res = Parsers.xparse(String, source, 1 + res.tlen, 0, opt)

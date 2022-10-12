@@ -21,6 +21,7 @@ function typeparser(::Type{T}, source, pos, len, b, code, pl, opts) where {T <: 
             pos += 1
             incr!(source)
         end
+        code |= EOF
         pl = poslen(pl.pos, (lastnonwhitepos - pl.pos) + 1)
         return pos, code, pl, pl
     end

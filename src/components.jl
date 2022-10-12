@@ -263,7 +263,11 @@ function finddelimiter(::Type{T}, source, pos, len, b, code, pl, delim, ignorere
     # for greedy strings, we need to keep track of the last non-whitespace character
     # if we're stripping whitespace, but note we've already skipped leading whitespace
     lastnonwhitepos = pos
-    while !eof(source, pos, len)
+    while true
+        if eof(source, pos, len)
+            code |= EOF
+            break
+        end
         if !ignorerepeated
             # we're checking for a single appearance of a delimiter
             match, pos = checktoken(source, pos, len, b, delim)
