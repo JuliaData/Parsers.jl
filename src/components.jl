@@ -32,7 +32,7 @@ end
     # allows passing Options-time/static parameters down to customize the ComponentFunction behavior
 
 emptysentinel(opts::Options) = emptysentinel(opts.checksentinel && isempty(opts.sentinel))
-function emptysentinel(checksent)
+function emptysentinel(checksent::Bool)
     function(parser)
         function checkemptysentinel(::Type{T}, source, pos, len, b, code, pl) where {T}
             Base.@_inline_meta
@@ -337,7 +337,7 @@ function finddelimiter(::Type{T}, source, pos, len, b, code, pl, delim, ignorere
         end
         pos += 1
         incr!(source)
-        if isgreedy(T) && !quoted(code)
+        if !quoted(code)
             lastnonwhitepos = stripwhitespace == STRIP ? (iswh(b) ? lastnonwhitepos : pos) : pos
         end
         if eof(source, pos, len)
@@ -346,7 +346,7 @@ function finddelimiter(::Type{T}, source, pos, len, b, code, pl, delim, ignorere
         end
         b = peekbyte(source, pos)
     end
-    if isgreedy(T) && !quoted(code)
+    if !quoted(code)
         pl = poslen(pl.pos, lastnonwhitepos - pl.pos)
     end
     return pos, code, pl, pl
@@ -368,7 +368,7 @@ function delimiter(checkdelim, delim, ignorerepeated, cmt, ignoreemptylines, str
     end
 end
 
-function typeparser(opts)
+function typeparser(opts::Options)
     function(::Type{T}, source, pos, len, b, code, pl) where {T}
         Base.@_inline_meta
         return typeparser(T, source, pos, len, b, code, pl, opts)

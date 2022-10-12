@@ -244,7 +244,7 @@ xparse(::Type{T}, buf::AbstractString, pos, len, options=XOPTIONS, ::Type{S}=(T 
     xparse(T, codeunits(buf), pos, len, options, S)
 
 xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T <: SupportedTypes, S} =
-    Result(delimiter(options)(emptysentinel(options)(whitespace(options)(
+    Result(emptysentinel(options)(delimiter(options)(whitespace(options)(
         quoted(options)(whitespace(options)(sentinel(options)(typeparser(options)
     )))))))(T, source, pos, len, S)
 

@@ -28,6 +28,7 @@ testcases = [
     (str="{-,", kwargs=(sentinel=missing,), x=0, code=(QUOTED | EOF | INVALID_QUOTED_FIELD), vpos=2, vlen=1, tlen=3),
     (str="+,", kwargs=(sentinel=missing,), x=0, code=(INVALID | DELIMITED), vpos=1, vlen=1, tlen=2),
     (str="-,", kwargs=(sentinel=missing,), x=0, code=(INVALID | DELIMITED), vpos=1, vlen=1, tlen=2),
+    (str="t,", kwargs=(sentinel=missing,), x=0, code=(INVALID | INVALID_DELIMITER | DELIMITED), vpos=1, vlen=1, tlen=2),
     (str=" {-},", kwargs=(sentinel=missing,), x=0, code=(INVALID | QUOTED | DELIMITED), vpos=3, vlen=1, tlen=5),
     (str="{+} ,", kwargs=(sentinel=missing,), x=0, code=(INVALID | QUOTED | DELIMITED), vpos=2, vlen=1, tlen=5),
     (str="{}", kwargs=(sentinel=missing,), x=0, code=(SENTINEL | QUOTED | EOF), vpos=2, vlen=0, tlen=2),
@@ -404,12 +405,8 @@ res = Parsers.xparse(Bool, "\"\""; sentinel=missing)
 @test Parsers.sentinel(res.code)
 res = Parsers.xparse(Bool, "\"\","; sentinel=missing)
 @test Parsers.sentinel(res.code)
-# FIXME: hmmm, we actually don't want to match sentinel here
-# but we correctly mark as invalid, so not a show-stopper?
-# the core issue here is that on invalid characters, we don't consume
-# them in the Bool parser; maybe we should? but we don't really want to?
 res = Parsers.xparse(Bool, "t,"; sentinel=missing)
-@test Parsers.sentinel(res.code)
+@test !Parsers.sentinel(res.code)
 
 end # @testset "bools"
 
