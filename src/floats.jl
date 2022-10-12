@@ -179,7 +179,7 @@ end
     x, code, pos = parsedigits(T, source, pos, len, b, code, options, UInt64(0), neg, startpos)
 
 @label done
-    return pos, code, pl, x
+    return pos, code, PosLen(pl.pos, pos - pl.pos), x
 end
 
 # if we need to _widen the type due to `digits` overflow, we want a non-inlined version so base case compilation doesn't get out of control

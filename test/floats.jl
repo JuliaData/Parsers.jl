@@ -285,7 +285,7 @@ testcases = [
 
 for useio in (false, true)
     for (i, case) in enumerate(testcases)
-        println("testing case = $i, str = $(case.str)")
+        # println("testing case = $i, str = $(case.str)")
         res = Parsers.xparse(Float64, useio ? IOBuffer(case.str) : case.str)
         x, code, tlen = res.val, res.code, res.tlen
         if !Parsers.invalid(code)

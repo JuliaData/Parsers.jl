@@ -79,7 +79,7 @@ end
 const OPTIONS = Options(true, false, false, false, false, false, false, UInt8('.'),
     Token(UInt8('"')), Token(UInt8('"')), Token(UInt8('"')), Token[], Token(""), Token(""),
     nothing, nothing, nothing)
-const XOPTIONS = Options(true, false, true, true, true, false, true, UInt8('.'),
+const XOPTIONS = Options(nothing, false, true, true, true, false, false, UInt8('.'),
     Token(UInt8('"')), Token(UInt8('"')), Token(UInt8('"')), Token[], Token(UInt8(',')), Token(""),
     nothing, nothing, nothing, nothing)
 
@@ -238,10 +238,10 @@ function xparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}
     return xparse(T, buf, pos, len, options)
 end
 
-xparse(::Type{T}, buf::AbstractString, pos, len, options=Parsers.XOPTIONS) where {T} =
+xparse(::Type{T}, buf::AbstractString, pos, len, options=XOPTIONS) where {T} =
     xparse(T, codeunits(buf), pos, len, options)
 
-xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=Options(), ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T <: SupportedTypes, S} =
+xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T <: SupportedTypes, S} =
     Result(delimiter(options)(emptysentinel(options)(whitespace(options)(
         quoted(options)(whitespace(options)(sentinel(options)(typeparser(options)
     )))))))(T, source, pos, len, S)

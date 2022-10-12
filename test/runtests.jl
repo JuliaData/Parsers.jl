@@ -404,6 +404,12 @@ res = Parsers.xparse(Bool, "\"\""; sentinel=missing)
 @test Parsers.sentinel(res.code)
 res = Parsers.xparse(Bool, "\"\","; sentinel=missing)
 @test Parsers.sentinel(res.code)
+# FIXME: hmmm, we actually don't want to match sentinel here
+# but we correctly mark as invalid, so not a show-stopper?
+# the core issue here is that on invalid characters, we don't consume
+# them in the Bool parser; maybe we should? but we don't really want to?
+res = Parsers.xparse(Bool, "t,"; sentinel=missing)
+@test Parsers.sentinel(res.code)
 
 end # @testset "bools"
 

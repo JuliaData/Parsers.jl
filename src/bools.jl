@@ -51,5 +51,5 @@ const DEFAULT_FALSE = "false"
     code |= INVALID | (eof(source, pos, len) ? EOF : SUCCESS)
 
 @label done
-    return pos, code, pl, x
+    return pos, code, PosLen(pl.pos, pos - pl.pos), x
 end
