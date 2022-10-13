@@ -23,7 +23,7 @@ jobs:
         package:
           - {user: JuliaData, repo: CSV.jl}
           - {user: JuliaData, repo: WeakRefStrings.jl}
-          - {user: JuliaDatabases, repo: MySQL.jl}
+          # - {user: JuliaDatabases, repo: MySQL.jl}  # Tests requires a DB.
           - {user: JuliaIO, repo: JSON.jl}
           - {user: JuliaStrings, repo: InlineStrings.jl}
           - {user: nickrobinson251, repo: PowerFlowData.jl}
