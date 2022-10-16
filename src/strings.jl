@@ -27,20 +27,33 @@ function typeparser(::Type{T}, source, pos, len, b, code, pl, opts) where {T <: 
     end
 end
 
-xparse(::Type{Char}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options, ::Type{S}=Char) where {S} =
-    parsechar(source, pos, len, options, S)
-xparse(::Type{Char}, source::AbstractString, pos, len, options, ::Type{Char}=Char) =
-    parsechar(codeunits(source), pos, len, options, Char)
-
-function parsechar(source::Union{AbstractVector{UInt8}, IO}, pos, len, options, ::Type{S}=Char) where {S}
-    res = xparse(String, source, pos, len, options)
-    code = res.code
-    poslen = res.val
-    if !Parsers.invalid(code) && !Parsers.sentinel(code)
-        return Result{S}(code, res.tlen, first(getstring(source, poslen, options.e)))
-    else
-        return Result{S}(code, res.tlen)
+function typeparser(::Type{Char}, source, pos, len, b, code, pl, opts)
+    l = 8 * (4 - leading_ones(b))
+    c = UInt32(b) << 24
+    s = 16
+    while true
+        pos += 1
+        incr!(source)
+        if eof(source, pos, len)
+            code |= EOF
+            @goto done
+        end
+        b = peekbyte(source, pos)
+        if l >= 24 || s < l || (b & 0xc0) != 0x80
+            @goto done
+        end
+        c |= UInt32(b) << s
+        s -= 8
     end
+
+@label done
+    ch = reinterpret(Char, c)
+    if Base.isoverlong(ch) || Base.ismalformed(ch)
+        code |= INVALID
+    else
+        code |= OK
+    end
+    return pos, code, PosLen(pl.pos, pos - pl.pos), ch
 end
 
 xparse(::Type{Symbol}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options, ::Type{S}=Symbol) where {S} =

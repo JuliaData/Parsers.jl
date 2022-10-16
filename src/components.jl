@@ -73,7 +73,7 @@ function whitespace(stripwh, stripquoted)
             end
             pos, code, pl, x = parser(T, source, pos, len, b, code, pl)
             # strip trailing whitespace
-            if !isgreedy(T) && (stripwh == STRIP || stripwh == DEFAULT) && !eof(source, pos, len)
+            if stripwh !== KEEP && (!isgreedy(T) || !delimited(code)) && !eof(source, pos, len)
                 b = peekbyte(source, pos)
                 while iswh(b)
                     pos += 1

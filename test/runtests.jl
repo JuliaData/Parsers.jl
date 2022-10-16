@@ -254,7 +254,7 @@ res = Parsers.xparse(String, "{hey there } ,"; openquotechar='{', closequotechar
 res = Parsers.xparse(String, "{hey there } a,"; openquotechar='{', closequotechar='}', delim=',', stripwhitespace=true)
 @test res.val.pos == 2 && res.val.len == 10 && Parsers.invaliddelimiter(res.code)
 res = Parsers.xparse(String, "{hey there } a "; openquotechar='{', closequotechar='}', delim=nothing, stripwhitespace=true)
-@test res.val.pos == 2 && res.val.len == 10 && res.tlen == 12
+@test res.val.pos == 2 && res.val.len == 10 && res.tlen == 13
 res = Parsers.xparse(String, "hey there ,"; delim=',', stripwhitespace=true)
 @test res.val.pos == 1 && res.val.len == 9
 res = Parsers.xparse(String, " hey there "; stripwhitespace=true)
@@ -273,7 +273,7 @@ res = Parsers.xparse(String, "{hey there } ,"; openquotechar='{', closequotechar
 res = Parsers.xparse(String, "{hey there } a,"; openquotechar='{', closequotechar='}', delim=',', stripquoted=true)
 @test res.val.pos == 2 && res.val.len == 9 && Parsers.invaliddelimiter(res.code)
 res = Parsers.xparse(String, "{hey there } a "; openquotechar='{', closequotechar='}', delim=nothing, stripquoted=true)
-@test res.val.pos == 2 && res.val.len == 9 && res.tlen == 12
+@test res.val.pos == 2 && res.val.len == 9 && res.tlen == 13
 res = Parsers.xparse(String, "hey there ,"; delim=',', stripquoted=true)
 @test res.val.pos == 1 && res.val.len == 9
 res = Parsers.xparse(String, " hey there "; stripquoted=true)
@@ -544,6 +544,9 @@ res = Parsers.xparse(String, "\"\"", 1, 2)
 res = Parsers.xparse(Char, codeunits("a"), 1, 1, Parsers.XOPTIONS)
 @test res.code == (Parsers.EOF | Parsers.OK)
 @test res.val == 'a'
+res = Parsers.xparse(Char, codeunits("漢"))
+@test res.code == (Parsers.EOF | Parsers.OK)
+@test res.val == '漢'
 res = Parsers.xparse(Symbol, codeunits("a"), 1, 1, Parsers.XOPTIONS)
 @test res.code == (Parsers.EOF | Parsers.OK)
 @test res.val == :a

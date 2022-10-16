@@ -111,6 +111,7 @@ function ==(a::Token, b::Token)
         return false
     end
 end
+==(a::Token, b::UInt8) = a.token isa UInt8 && a.token == b
 _contains(a::Token, str::String) = _contains(a.token, str)
 _contains(a::UInt8, str::String) = a == UInt8(str[1])
 _contains(a::Char, str::String) = a == str[1]
@@ -127,9 +128,7 @@ function checktoken(source, pos, len, b, token::Token)
     tok = token.token
     if tok isa UInt8
         check = tok == b
-        if check
-            incr!(source)
-        end
+        check && incr!(source)
         return check, pos + check
     elseif tok isa String
         if source isa Vector{UInt8}
@@ -147,6 +146,12 @@ function checktoken(source, pos, len, b, token::Token)
     else
         error() # unreachable
     end
+end
+
+function checktoken(source, pos, len, b, tok::UInt8)
+    check = tok == b
+    check && incr!(source)
+    return check, pos + check
 end
 
 function checktoken(source::AbstractVector{UInt8}, pos, len, b, tok::RegexAndMatchData)

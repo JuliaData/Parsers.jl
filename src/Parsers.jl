@@ -12,7 +12,9 @@ struct Format
 end
 
 const SupportedFloats = Union{Float16, Float32, Float64, BigFloat}
-const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool, AbstractString}
+const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool, AbstractString, Char}
+
+supportedtype(::Type{T}) where {T} = T <: SupportedTypes
 
 """
     Parsers.Result{T}(code::Parsers.ReturnCode, tlen[, val])
@@ -67,7 +69,7 @@ struct Options
     decimal::UInt8
     oq::Token
     cq::Token
-    e::Token
+    e::UInt8
     sentinel::Vector{Token}
     delim::Token
     cmt::Token
@@ -78,10 +80,10 @@ struct Options
 end
 
 const OPTIONS = Options(STRIP, false, false, false, false, false, false, UInt8('.'),
-    Token(UInt8('"')), Token(UInt8('"')), Token(UInt8('"')), Token[], Token(""), Token(""),
+    Token(UInt8('"')), Token(UInt8('"')), UInt8('"'), Token[], Token(""), Token(""),
     nothing, nothing, nothing, nothing)
 const XOPTIONS = Options(DEFAULT, false, true, true, true, false, false, UInt8('.'),
-    Token(UInt8('"')), Token(UInt8('"')), Token(UInt8('"')), Token[], Token(UInt8(',')), Token(""),
+    Token(UInt8('"')), Token(UInt8('"')), UInt8('"'), Token[], Token(UInt8(',')), Token(""),
     nothing, nothing, nothing, nothing)
 
 prepare!(x::Vector) = sort!(x, by=x->sizeof(x), rev=true)
@@ -129,6 +131,7 @@ function Options(
     cq = token(closequotechar, "closequotechar")
     e = token(escapechar, "escapechar")
     e.token isa UInt8 || throw(ArgumentError("escapechar must be a single ascii character"))
+    e = e.token
     quoted && (isempty(oq) || isempty(cq) || isempty(e)) && throw(ArgumentError("quoted=true requires openquotechar, closequotechar, and escapechar to be specified"))
     sent = (sentinel === nothing || sentinel === missing) ? Token[] : map(x -> token(x, "sentinel"), prepare!(sentinel))
     checksentinel = sentinel !== nothing
@@ -234,71 +237,68 @@ A [`Parsers.Result`](@ref) struct is returned, with the following fields:
 """
 function xparse end
 
+const SourceType = Union{AbstractVector{UInt8}, AbstractString, IO}
+
 # for testing purposes only, it's much too slow to dynamically create Options for every xparse call
-function xparse(::Type{T}, buf::Union{AbstractVector{UInt8}, AbstractString, IO}; pos::Integer=1, len::Integer=buf isa IO ? 0 : sizeof(buf), kw...) where {T}
-    options = Options(; kw...)
-    return xparse(T, buf, pos, len, options)
-end
+xparse(::Type{T}, source::SourceType; pos::Integer=1, len::Integer=source isa IO ? 0 : sizeof(source), kw...) where {T} =
+    xparse(T, source, pos, len, Options(; kw...))
 
-xparse(::Type{T}, buf::AbstractString, pos, len, options=XOPTIONS, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T <: SupportedTypes, S} =
-    xparse(T, codeunits(buf), pos, len, options, S)
-
-xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T <: SupportedTypes, S} =
+_xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T <: SupportedTypes, S} =
     Result(emptysentinel(options)(delimiter(options)(whitespace(options)(
         quoted(options)(whitespace(options)(sentinel(options)(typeparser(options)
     )))))))(T, source, pos, len, S)
 
-# generic fallback calls Base.tryparse
-function xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options, ::Type{S}=T) where {T, S}
-    res = xparse(String, source, pos, len, options)
-    code = res.code
-    poslen = res.val
-    if !Parsers.invalid(code) && !Parsers.sentinel(code)
-        str = getstring(source, poslen, options.e)
-        x = Base.tryparse(T, str)
-        if x === nothing
-            return Result{S}(code | INVALID, res.tlen)
-        else
-            return Result{S}(code, res.tlen, x)
-        end
+function xparse(::Type{T}, source::SourceType, pos, len, options=XOPTIONS, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T, S}
+    buf = source isa AbstractString ? codeunits(source) : source
+    if supportedtype(T)
+        return _xparse(T, buf, pos, len, options, S)
     else
-        return Result{S}(code, res.tlen)
+        # generic fallback calls Base.tryparse
+        res = _xparse(String, source, pos, len, options)
+        code = res.code
+        poslen = res.val
+        if !Parsers.invalid(code) && !Parsers.sentinel(code)
+            str = getstring(source, poslen, options.e)
+            x = Base.tryparse(T, str)
+            if x === nothing
+                return Result{S}(code | INVALID, res.tlen)
+            else
+                return Result{S}(code, res.tlen, x)
+            end
+        else
+            return Result{S}(code, res.tlen)
+        end
     end
 end
 
 # condensed version of xparse that doesn't worry about quoting or delimiters; called from Parsers.parse/Parsers.tryparse
-@inline xparse2(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, opts::Options=XOPTIONS2, ::Type{S}=T) where {T <: SupportedTypes, S} =
+@inline _xparse2(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, opts::Options=OPTIONS, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T <: SupportedTypes, S} =
     Result(whitespace(STRIP, false)(typeparser(opts)))(T, source, pos, len, S)
 
-@inline function xparse2(::Type{T}, source, pos, len, options, ::Type{S}=T) where {T, S}
-    res = xparse(String, source, pos, len, options)
-    code = res.code
-    poslen = res.val
-    if !Parsers.invalid(code) && !Parsers.sentinel(code)
-        str = getstring(source, poslen, options.e)
-        x = Base.tryparse(T, str)
-        if x === nothing
-            return Result{S}(code | INVALID, res.tlen)
+@inline function xparse2(::Type{T}, source::SourceType, pos, len, options=OPTIONS, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T, S}
+    buf = source isa AbstractString ? codeunits(source) : source
+    if supportedtype(T)
+        return _xparse2(T, buf, pos, len, options, S)
+    else
+        # generic fallback calls Base.tryparse
+        res = _xparse2(String, source, pos, len, options)
+        code = res.code
+        poslen = res.val
+        if !Parsers.invalid(code) && !Parsers.sentinel(code)
+            str = getstring(source, poslen, options.e)
+            x = Base.tryparse(T, str)
+            if x === nothing
+                return Result{S}(code | INVALID, res.tlen)
+            else
+                return Result{S}(code, res.tlen, x)
+            end
         else
-            return Result{S}(code, res.tlen, x)
+            return Result{S}(code, res.tlen)
         end
-    else
-        return Result{S}(code, res.tlen)
     end
 end
 
-@inline function xparse2(::Type{Char}, source, pos, len, options, ::Type{S}=Char) where {S}
-    res = xparse(String, source, pos, len, options)
-    code = res.code
-    poslen = res.val
-    if !Parsers.invalid(code) && !Parsers.sentinel(code)
-        return Result{S}(code, res.tlen, first(getstring(source, poslen, options.e)))
-    else
-        return Result{S}(code, res.tlen)
-    end
-end
-
-@inline function xparse2(::Type{Symbol}, source, pos, len, options, ::Type{S}=Symbol) where {S}
+@inline function xparse2(::Type{Symbol}, source::SourceType, pos, len, options, ::Type{S}=Symbol) where {S}
     res = xparse(String, source, pos, len, options)
     code = res.code
     poslen = res.val::PosLen
