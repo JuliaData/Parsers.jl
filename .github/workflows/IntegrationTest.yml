@@ -27,7 +27,6 @@ jobs:
           - {user: JuliaIO, repo: JSON.jl}
           - {user: JuliaStrings, repo: InlineStrings.jl}
           - {user: nickrobinson251, repo: PowerFlowData.jl}
-          - {user: quinnj, repo: JSON2.jl}
           - {user: quinnj, repo: JSON3.jl}
 
     steps:
