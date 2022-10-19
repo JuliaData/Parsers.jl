@@ -35,8 +35,53 @@ end
 
 Base.show(io::IO, x::Result{T}) where {T} = print(io, "Parsers.Result{$T}(code=`", codes(x.code), "`, tlen=", x.tlen, ", val=", isdefined(x, :val) ? x.val : "#undefined", ")")
 
-@enum StripWhitespace STRIP DEFAULT KEEP
-StripWhitespace(x::Union{Nothing, Bool}) = x === nothing ? DEFAULT : x ? STRIP : KEEP
+# bit flags to hold several Bool options for Options
+primitive type Flags 8 end
+
+const WHDELIM         = 0b00000001
+const STRIPQUOTED     = 0b00000010
+const STRIPWHITESPACE = 0b00000100
+const CHECKQUOTED     = 0b00001000
+const CHECKSENTINEL   = 0b00010000
+const CHECKDELIM      = 0b00100000
+const IGNOREREPEATED  = 0b01000000
+const IGNOREEMPTY     = 0b10000000
+
+function Flags(whitespacedelim, stripquoted, stripwhitespace, checkquoted, checksentinel, checkdelim, ignorerepeated, ignoreemptylines)
+    x = 0x00
+    whitespacedelim && (x |= WHDELIM)
+    stripquoted && (x |= STRIPQUOTED)
+    # stripquoted implies stripwhitespace
+    (stripwhitespace || stripquoted) && (x |= STRIPWHITESPACE)
+    checkquoted && (x |= CHECKQUOTED)
+    checksentinel && (x |= CHECKSENTINEL)
+    checkdelim && (x |= CHECKDELIM)
+    ignorerepeated && (x |= IGNOREREPEATED)
+    ignoreemptylines && (x |= IGNOREEMPTY)
+    return Base.bitcast(Flags, x)
+end
+
+function Base.getproperty(x::Flags, nm::Symbol)
+    if nm == :whitespacedelim
+        return Base.bitcast(UInt8, x) & WHDELIM != 0x00
+    elseif nm == :stripquoted
+        return Base.bitcast(UInt8, x) & STRIPQUOTED != 0x00
+    elseif nm == :stripwhitespace
+        return Base.bitcast(UInt8, x) & STRIPWHITESPACE != 0x00
+    elseif nm == :checkquoted
+        return Base.bitcast(UInt8, x) & CHECKQUOTED != 0x00
+    elseif nm == :checksentinel
+        return Base.bitcast(UInt8, x) & CHECKSENTINEL != 0x00
+    elseif nm == :checkdelim
+        return Base.bitcast(UInt8, x) & CHECKDELIM != 0x00
+    elseif nm == :ignorerepeated
+        return Base.bitcast(UInt8, x) & IGNOREREPEATED != 0x00
+    elseif nm == :ignoreemptylines
+        return Base.bitcast(UInt8, x) & IGNOREEMPTY != 0x00
+    else
+        throw(ArgumentError("unknown Flags property: `$nm`"))
+    end
+end
 
 """
     `Parsers.Options` is a structure for holding various parsing settings when calling `Parsers.parse`, `Parsers.tryparse`, and `Parsers.xparse`. They include:
@@ -59,13 +104,7 @@ StripWhitespace(x::Union{Nothing, Bool}) = x === nothing ? DEFAULT : x ? STRIP :
   * `groupmark=nothing`: optionally specify a single-byte character denoting the number grouping mark, this allows parsing of numbers that have, e.g., thousand separators (`1,000.00`).
 """
 struct Options
-    stripwhitespace::StripWhitespace
-    stripquoted::Bool
-    checkquoted::Bool
-    checksentinel::Bool
-    checkdelim::Bool
-    ignorerepeated::Bool
-    ignoreemptylines::Bool
+    flags::Flags
     decimal::UInt8
     oq::Token
     cq::Token
@@ -79,10 +118,10 @@ struct Options
     groupmark::Union{Nothing,UInt8}
 end
 
-const OPTIONS = Options(STRIP, false, false, false, false, false, false, UInt8('.'),
+const OPTIONS = Options(Flags(false, false, false, false, false, false, false, false), UInt8('.'),
     Token(UInt8('"')), Token(UInt8('"')), UInt8('"'), Token[], Token(""), Token(""),
     nothing, nothing, nothing, nothing)
-const XOPTIONS = Options(DEFAULT, false, true, true, true, false, false, UInt8('.'),
+const XOPTIONS = Options(Flags(false, false, false, true, true, true, false, false), UInt8('.'),
     Token(UInt8('"')), Token(UInt8('"')), UInt8('"'), Token[], Token(UInt8(',')), Token(""),
     nothing, nothing, nothing, nothing)
 
@@ -104,12 +143,19 @@ function Options(
             trues::Union{Nothing, Vector{String}},
             falses::Union{Nothing, Vector{String}},
             dateformat::Union{Nothing, String, Dates.DateFormat, Format},
-            ignorerepeated, ignoreemptylines, comment, quoted, stripwhitespace=nothing, stripquoted=false, groupmark::Union{Nothing,Char,UInt8}=nothing)
+            ignorerepeated::Bool,
+            ignoreemptylines::Bool,
+            comment::MaybeToken,
+            quoted::Bool,
+            debug::Bool=false,
+            stripwhitespace::Union{Nothing, Bool}=nothing,
+            stripquoted::Bool=false,
+            groupmark::Union{Nothing,Char,UInt8}=nothing)
 
     if sentinel isa Vector{String}
         for sent in sentinel
-            if stripwhitespace !== true && (startswith(sent, string(Char(wh1))) || startswith(sent, string(Char(wh2))))
-                throw(ArgumentError("sentinel value isn't allowed to start with wh1 or wh2 characters"))
+            if stripwhitespace !== true && (startswith(sent, " ") || startswith(sent, "\t"))
+                throw(ArgumentError("sentinel value isn't allowed to start with ' ' or '\t' characters if `stripwhitespace=true`"))
             end
             if quoted && (startswith(sent, string(Char(openquotechar))) || startswith(sent, string(Char(closequotechar))))
                 throw(ArgumentError("sentinel value isn't allowed to start with openquotechar, closequotechar, or escapechar characters"))
@@ -122,11 +168,6 @@ function Options(
         end
     end
 
-    wh1 = token(wh1, "wh1")
-    wh2 = token(wh2, "wh2")
-    if wh1.token != UInt8(' ') || wh2.token != UInt8('\t')
-        stripwhitespace = false
-    end
     oq = token(openquotechar, "openquotechar")
     cq = token(closequotechar, "closequotechar")
     e = token(escapechar, "escapechar")
@@ -138,8 +179,13 @@ function Options(
     del = delim
     delim = token(delim, "delim")
     checkdelim = delim !== nothing && !isempty(delim)
-    if checkdelim && (_contains(delim, " ") || _contains(delim, "\t"))
+    whitespacedelim = checkdelim && (_contains(delim, " ") || _contains(delim, "\t"))
+    if whitespacedelim && stripwhitespace === true
+        throw(ArgumentError("whitespace stripping (`stripwhitespace=true`) not allowed when `delim` is a whitespace character (' ' or '\t')"))
+    elseif whitespacedelim
         stripwhitespace = false
+    else
+        stripwhitespace = stripwhitespace === true
     end
     if trues !== nothing
         trues = prepare!(trues)
@@ -151,7 +197,8 @@ function Options(
         throw(ArgumentError("`groupmark` cannot be a number, a quoting char, coincide with `decimal` and `delim` unless `quoted=true`."))
     end
     df = dateformat === nothing ? nothing : dateformat isa String ? Format(dateformat) : dateformat isa Dates.DateFormat ? Format(dateformat) : dateformat
-    return Options(StripWhitespace(stripwhitespace === true || stripquoted ? true : stripwhitespace), stripquoted, quoted, checksentinel, checkdelim, ignorerepeated, ignoreemptylines, decimal, oq, cq, e, sent, delim, token(comment, "comment"), trues, falses, df, groupmark === nothing ? nothing : UInt8(groupmark))
+    flags = Flags(whitespacedelim, stripquoted, stripwhitespace, quoted, checksentinel, checkdelim, ignorerepeated, ignoreemptylines)
+    return Options(flags, decimal, oq, cq, e, sent, delim, token(comment, "comment"), trues, falses, df, groupmark === nothing ? nothing : UInt8(groupmark))
 end
 
 function token(x::MaybeToken, arg)
@@ -188,7 +235,7 @@ Options(;
     stripwhitespace::Union{Bool, Nothing}=nothing,
     stripquoted::Bool=false,
     groupmark::Union{Nothing,Char,UInt8}=nothing,
-) = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, stripwhitespace, stripquoted, groupmark)
+) = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, debug, stripwhitespace, stripquoted, groupmark)
 
 include("components.jl")
 
@@ -273,7 +320,7 @@ end
 
 # condensed version of xparse that doesn't worry about quoting or delimiters; called from Parsers.parse/Parsers.tryparse
 @inline _xparse2(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, opts::Options=OPTIONS, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T <: SupportedTypes, S} =
-    Result(whitespace(STRIP, false)(typeparser(opts)))(T, source, pos, len, S)
+    Result(whitespace(false, false, true)(typeparser(opts)))(T, source, pos, len, S)
 
 @inline function xparse2(::Type{T}, source::SourceType, pos, len, options=OPTIONS, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T, S}
     buf = source isa AbstractString ? codeunits(source) : source
@@ -318,7 +365,7 @@ function checkdelim!(source::AbstractVector{UInt8}, pos, len, options::Options)
     eof(source, pos, len) && return pos
     delim = options.delim
     b = peekbyte(source, pos)
-    if !options.ignorerepeated
+    if !options.flags.ignorerepeated
         # we're checking for a single appearance of a delimiter
         match, pos = checktoken(source, pos, len, b, delim)
     else

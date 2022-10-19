@@ -31,7 +31,7 @@ end
   # ParserModifyingFunction: outermost layer; f(args...) -> ParserFunction
     # allows passing Options-time/static parameters down to customize the ComponentFunction behavior
 
-emptysentinel(opts::Options) = emptysentinel(opts.checksentinel && isempty(opts.sentinel))
+emptysentinel(opts::Options) = emptysentinel(opts.flags.checksentinel && isempty(opts.sentinel))
 function emptysentinel(checksent::Bool)
     function(parser)
         function checkemptysentinel(::Type{T}, source, pos, len, b, code, pl) where {T}
@@ -50,13 +50,21 @@ end
 # just ' ' and '\t'
 iswh(b) = b == UInt8(' ') || b == UInt8('\t')
 
-whitespace(opts::Options) = whitespace(opts.stripwhitespace, opts.stripquoted)
-function whitespace(stripwh, stripquoted)
+whitespace(opts::Options) = whitespace(opts.flags.whitespacedelim, opts.flags.stripquoted, opts.flags.stripwhitespace)
+function whitespace(whitespacedelim, stripquoted, stripwh)
     function(parser)
         function stripwhitespace(::Type{T}, source, pos, len, b, code, pl) where {T}
             Base.@_inline_meta
             # strip leading whitespace
-            if stripwh !== KEEP && (!isgreedy(T) || !quoted(code)) && !eof(source, pos, len)
+            if !eof(source, pos, len) && (
+                # pre-quotes, if delim is not whitespace
+                # note that we strip even if user didn't ask in order to consume any whitespace
+                # that might be present before the oq; we just need to take care when resetting
+                # the pl to account for whether the user actually asked to strip or not
+                (!quoted(code) && !whitespacedelim) ||
+                # within quotes, if non-string or user asked to strip quoted
+                (quoted(code) && (!isgreedy(T) || stripquoted))
+            )
                 while iswh(b)
                     pos += 1
                     incr!(source)
@@ -66,14 +74,25 @@ function whitespace(stripwh, stripquoted)
                     end
                     b = peekbyte(source, pos)
                 end
-                # for greedy, we only want to reset pos if stripwh was explicitly requested
-                if isgreedy(T) && stripwh === STRIP && !quoted(code)
+                # for greedy, reset poslen if we're stripping whitespace
+                if isgreedy(T) && (
+                    # pre-quotes, if user asked to strip
+                    (!quoted(code) && stripwh) ||
+                    # within quotes, if user asked to strip quoted
+                    (quoted(code) && stripquoted)
+                )
                     pl = poslen(pos, 0)
                 end
             end
             pos, code, pl, x = parser(T, source, pos, len, b, code, pl)
             # strip trailing whitespace
-            if stripwh !== KEEP && (!isgreedy(T) || !delimited(code)) && !eof(source, pos, len)
+            if !eof(source, pos, len) && (
+                # post non-quoted value, if delim is not whitespace, and non-string
+                # (string already stripped in finddelimiter or findeof)
+                (!quoted(code) && !whitespacedelim && !isgreedy(T)) ||
+                # post-quoted value, if delim is not whitespace
+                (quoted(code) && !whitespacedelim)
+            )
                 b = peekbyte(source, pos)
                 while iswh(b)
                     pos += 1
@@ -95,9 +114,8 @@ function findendquoted(::Type{T}, source, pos, len, b, code, pl, isquoted, cq, e
     # we should be positioned at the correct place to find the closing quote character if everything is as it should be
     # if we don't find the quote character immediately, something's wrong, so mark INVALID
     # for greedy (strings), we're positioned at the first byte after opening quote token.
-    # we need to account for stripquoted and bump pl.pos up to 1st non-whitespace char
+    # we need to account for stripquoted by keeping track of lastnonwhitepos
     if isquoted
-        foundnonwh = false
         lastnonwhitepos = pos
         same = cq == e
         first = true
@@ -167,13 +185,6 @@ function findendquoted(::Type{T}, source, pos, len, b, code, pl, isquoted, cq, e
                     end
                 end
                 # we didn't match e or cq, so we're not done
-                if isgreedy(T) && stripquoted && !foundnonwh && !iswh(b)
-                    # we're in a quoted string and user has requested
-                    # to strip whitespace inside and we haven't found
-                    # a nonwhitespace char yet, so bump up pos
-                    pl = poslen(pos, 0)
-                    foundnonwh = true
-                end
                 pos += 1
                 incr!(source)
             end
@@ -195,7 +206,7 @@ function findendquoted(::Type{T}, source, pos, len, b, code, pl, isquoted, cq, e
     return pos, code, pl, pl
 end
 
-quoted(opts::Options) = quoted(opts.checkquoted, opts.oq, opts.cq, opts.e, opts.stripquoted)
+quoted(opts::Options) = quoted(opts.flags.checkquoted, opts.oq, opts.cq, opts.e, opts.flags.stripquoted)
 function quoted(checkquoted, oq, cq, e, stripquoted)
     function(parser)
         function findquoted(::Type{T}, source, pos, len, b, code, pl) where {T}
@@ -232,7 +243,7 @@ function quoted(checkquoted, oq, cq, e, stripquoted)
     end
 end
 
-sentinel(opts::Options) = sentinel(opts.checksentinel, opts.sentinel)
+sentinel(opts::Options) = sentinel(opts.flags.checksentinel, opts.sentinel)
 function sentinel(chcksentinel, sentinel)
     function(parser)
         function checkforsentinel(::Type{T}, source, pos, len, b, code, pl) where {T}
@@ -338,7 +349,7 @@ function finddelimiter(::Type{T}, source, pos, len, b, code, pl, delim, ignorere
         pos += 1
         incr!(source)
         if !quoted(code)
-            lastnonwhitepos = stripwhitespace == STRIP ? (iswh(b) ? lastnonwhitepos : pos) : pos
+            lastnonwhitepos = stripwhitespace ? (iswh(b) ? lastnonwhitepos : pos) : pos
         end
         if eof(source, pos, len)
             code |= EOF
@@ -352,7 +363,7 @@ function finddelimiter(::Type{T}, source, pos, len, b, code, pl, delim, ignorere
     return pos, code, pl, pl
 end
 
-delimiter(opts::Options) = delimiter(opts.checkdelim, opts.delim, opts.ignorerepeated, opts.cmt, opts.ignoreemptylines, opts.stripwhitespace)
+delimiter(opts::Options) = delimiter(opts.flags.checkdelim, opts.delim, opts.flags.ignorerepeated, opts.cmt, opts.flags.ignoreemptylines, opts.flags.stripwhitespace)
 function delimiter(checkdelim, delim, ignorerepeated, cmt, ignoreemptylines, stripwhitespace)
     function(parser)
         function findelimiter(::Type{T}, source, pos, len, b, code, pl) where {T}

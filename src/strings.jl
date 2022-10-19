@@ -4,27 +4,31 @@ isgreedy(T) = false
 function typeparser(::Type{T}, source, pos, len, b, code, pl, opts) where {T <: AbstractString}
     if quoted(code)
         code |= OK
-        return findendquoted(T, source, pos, len, b, code, pl, true, opts.cq, opts.e, opts.stripquoted)
-    elseif opts.checkdelim
+        return findendquoted(T, source, pos, len, b, code, pl, true, opts.cq, opts.e, opts.flags.stripquoted)
+    elseif opts.flags.checkdelim
         code |= OK
-        return finddelimiter(T, source, pos, len, b, code, pl, opts.delim, opts.ignorerepeated, opts.cmt, opts.ignoreemptylines, opts.stripwhitespace)
+        return finddelimiter(T, source, pos, len, b, code, pl, opts.delim, opts.flags.ignorerepeated, opts.cmt, opts.flags.ignoreemptylines, opts.flags.stripwhitespace)
     else
         code |= OK
-        # no delimiter, so read until EOF
-        # if stripwhitespace, then we need to keep track of the last non-whitespace character
-        # in order to strip trailing whitespace
-        lastnonwhitepos = pos
-        while !eof(source, pos, len)
-            b = peekbyte(source, pos)
-            wh = iswh(b)
-            lastnonwhitepos = opts.stripwhitespace == STRIP ? (wh ? lastnonwhitepos : pos) : pos
-            pos += 1
-            incr!(source)
-        end
-        code |= EOF
-        pl = poslen(pl.pos, (lastnonwhitepos - pl.pos) + 1)
-        return pos, code, pl, pl
+        return findeof(source, pos, len, b, code, pl, opts)
     end
+end
+
+function findeof(source, pos, len, b, code, pl, opts)
+    # no delimiter, so read until EOF
+    # if stripwhitespace, then we need to keep track of the last non-whitespace character
+    # in order to strip trailing whitespace
+    lastnonwhitepos = pos
+    while !eof(source, pos, len)
+        b = peekbyte(source, pos)
+        wh = iswh(b)
+        lastnonwhitepos = opts.flags.stripwhitespace ? (wh ? lastnonwhitepos : pos) : pos
+        pos += 1
+        incr!(source)
+    end
+    code |= EOF
+    pl = poslen(pl.pos, (lastnonwhitepos - pl.pos) + 1)
+    return pos, code, pl, pl
 end
 
 function typeparser(::Type{Char}, source, pos, len, b, code, pl, opts)
@@ -77,29 +81,16 @@ function parsesymbol(source::Union{AbstractVector{UInt8}, IO}, pos, len, options
     end
 end
 
-
 function typeparser(::Type{Symbol}, source, pos, len, b, code, pl, opts)
     if quoted(code)
         code |= OK
         pos, code, pl, pl = findendquoted(Symbol, source, pos, len, b, code, pl, true, opts.cq, opts.e, opts.stripquoted)
-    elseif opts.checkdelim
+    elseif opts.flags.checkdelim
         code |= OK
-        pos, code, pl, pl = finddelimiter(Symbol, source, pos, len, b, code, pl, opts.delim, opts.ignorerepeated, opts.cmt, opts.ignoreemptylines, opts.stripwhitespace)
+        pos, code, pl, pl = finddelimiter(Symbol, source, pos, len, b, code, pl, opts.delim, opts.flags.ignorerepeated, opts.cmt, opts.ignoreemptylines, opts.flags.stripwhitespace)
     else
         code |= OK
-        # no delimiter, so read until EOF
-        # if stripwhitespace, then we need to keep track of the last non-whitespace character
-        # in order to strip trailing whitespace
-        lastnonwhitepos = pos
-        while !eof(source, pos, len)
-            b = peekbyte(source, pos)
-            wh = iswh(b)
-            lastnonwhitepos = opts.stripwhitespace == STRIP ? (wh ? lastnonwhitepos : pos) : pos
-            pos += 1
-            incr!(source)
-        end
-        code |= EOF
-        pl = poslen(pl.pos, (lastnonwhitepos - pl.pos) + 1)
+        pos, code, pl, pl = findeof(source, pos, len, b, code, pl, opts)
     end
     if source isa AbstractVector{UInt8}
         sym = ccall(:jl_symbol_n, Ref{Symbol}, (Ptr{UInt8}, Int), pointer(source, poslen.pos), poslen.len)

@@ -285,8 +285,10 @@ res = Parsers.xparse(String, " hey there "; delim=nothing, stripquoted=true, str
 @test res.val.pos == 2 && res.val.len == 9
 
 # https://github.com/JuliaData/Parsers.jl/issues/115
-res = Parsers.xparse(String, "{hey there } "; openquotechar='{', closequotechar='}', stripquoted=true, delim=' ', wh1=0x00)
+res = Parsers.xparse(String, "{hey there } "; openquotechar='{', closequotechar='}', stripquoted=true, delim=' ')
 @test res.val.pos == 2 && res.val.len == 9
+@test Parsers.delimited(res.code)
+@test res.tlen == 13
 
 end # @testset "Core Parsers.xparse"
 
