@@ -148,7 +148,7 @@ function Options(
             comment::MaybeToken,
             quoted::Bool,
             debug::Bool=false,
-            stripwhitespace::Union{Nothing, Bool}=nothing,
+            stripwhitespace::Bool=false,
             stripquoted::Bool=false,
             groupmark::Union{Nothing,Char,UInt8}=nothing)
 
@@ -184,8 +184,6 @@ function Options(
         throw(ArgumentError("whitespace stripping (`stripwhitespace=true`) not allowed when `delim` is a whitespace character (' ' or '\t')"))
     elseif whitespacedelim
         stripwhitespace = false
-    else
-        stripwhitespace = stripwhitespace === true
     end
     if trues !== nothing
         trues = prepare!(trues)
@@ -232,7 +230,7 @@ Options(;
     comment::MaybeToken=nothing,
     quoted::Bool=true,
     debug::Bool=false,
-    stripwhitespace::Union{Bool, Nothing}=nothing,
+    stripwhitespace::Bool=false,
     stripquoted::Bool=false,
     groupmark::Union{Nothing,Char,UInt8}=nothing,
 ) = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, debug, stripwhitespace, stripquoted, groupmark)
