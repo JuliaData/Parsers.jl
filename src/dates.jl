@@ -467,5 +467,5 @@ end
     if eof(source, pos, len)
         code |= EOF
     end
-    return pos, code, pl, x
+    return pos, code, PosLen(pl.pos, pos - pl.pos), x
 end

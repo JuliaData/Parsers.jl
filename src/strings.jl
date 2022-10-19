@@ -1,4 +1,5 @@
 isgreedy(::Type{T}) where {T <: AbstractString} = true
+isgreedy(::Type{Symbol}) = true
 isgreedy(T) = false
 
 function typeparser(::Type{T}, source, pos, len, b, code, pl, opts) where {T <: AbstractString}
@@ -60,42 +61,21 @@ function typeparser(::Type{Char}, source, pos, len, b, code, pl, opts)
     return pos, code, PosLen(pl.pos, pos - pl.pos), ch
 end
 
-xparse(::Type{Symbol}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options, ::Type{S}=Symbol) where {S} =
-    parsesymbol(source, pos, len, options, S)
-xparse(::Type{Symbol}, source::AbstractString, pos, len, options, ::Type{Symbol}=Symbol) =
-    parsesymbol(codeunits(source), pos, len, options, Symbol)
-
-function parsesymbol(source::Union{AbstractVector{UInt8}, IO}, pos, len, options, ::Type{S}=Symbol) where {S}
-    res = xparse(String, source, pos, len, options)
-    code = res.code
-    poslen = res.val
-    if !Parsers.invalid(code) && !Parsers.sentinel(code)
-        if source isa AbstractVector{UInt8}
-            sym = ccall(:jl_symbol_n, Ref{Symbol}, (Ptr{UInt8}, Int), pointer(source, poslen.pos), poslen.len)
-        else
-            sym = Symbol(getstring(source, poslen, options.e))
-        end
-        return Result{S}(code, res.tlen, sym)
-    else
-        return Result{S}(code, res.tlen)
-    end
-end
-
 function typeparser(::Type{Symbol}, source, pos, len, b, code, pl, opts)
     if quoted(code)
         code |= OK
-        pos, code, pl, pl = findendquoted(Symbol, source, pos, len, b, code, pl, true, opts.cq, opts.e, opts.stripquoted)
+        pos, code, pl, _ = findendquoted(Symbol, source, pos, len, b, code, pl, true, opts.cq, opts.e, opts.stripquoted)
     elseif opts.flags.checkdelim
         code |= OK
-        pos, code, pl, pl = finddelimiter(Symbol, source, pos, len, b, code, pl, opts.delim, opts.flags.ignorerepeated, opts.cmt, opts.ignoreemptylines, opts.flags.stripwhitespace)
+        pos, code, pl, _ = finddelimiter(Symbol, source, pos, len, b, code, pl, opts.delim, opts.flags.ignorerepeated, opts.cmt, opts.ignoreemptylines, opts.flags.stripwhitespace)
     else
         code |= OK
-        pos, code, pl, pl = findeof(source, pos, len, b, code, pl, opts)
+        pos, code, pl, _ = findeof(source, pos, len, b, code, pl, opts)
     end
     if source isa AbstractVector{UInt8}
-        sym = ccall(:jl_symbol_n, Ref{Symbol}, (Ptr{UInt8}, Int), pointer(source, poslen.pos), poslen.len)
+        sym = ccall(:jl_symbol_n, Ref{Symbol}, (Ptr{UInt8}, Int), pointer(source, pl.pos), pl.len)
     else
-        sym = Symbol(getstring(source, poslen, options.e))
+        sym = Symbol(getstring(source, pl, opts.e))
     end
     return pos, code, pl, sym
 end

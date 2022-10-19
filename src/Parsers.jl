@@ -12,7 +12,7 @@ struct Format
 end
 
 const SupportedFloats = Union{Float16, Float32, Float64, BigFloat}
-const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool, AbstractString, Char}
+const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool, AbstractString, Symbol, Char}
 
 supportedtype(::Type{T}) where {T} = T <: SupportedTypes
 
@@ -60,6 +60,8 @@ function Flags(whitespacedelim, stripquoted, stripwhitespace, checkquoted, check
     ignoreemptylines && (x |= IGNOREEMPTY)
     return Base.bitcast(Flags, x)
 end
+
+Base.show(io::IO, x::Flags) = print(io, "Parsers.Flags(whitespacedelim=", x.whitespacedelim, ", stripquoted=", x.stripquoted, ", stripwhitespace=", x.stripwhitespace, ", checkquoted=", x.checkquoted, ", checksentinel=", x.checksentinel, ", checkdelim=", x.checkdelim, ", ignorerepeated=", x.ignorerepeated, ", ignoreemptylines=", x.ignoreemptylines, ")")
 
 function Base.getproperty(x::Flags, nm::Symbol)
     if nm == :whitespacedelim
@@ -118,6 +120,17 @@ struct Options
     groupmark::Union{Nothing,UInt8}
 end
 
+# backwards compat
+function Base.getproperty(x::Options, nm::Symbol)
+    if nm == :ignorerepeated
+        return x.flags.ignorerepeated
+    elseif nm == :ignoreemptylines
+        return x.flags.ignoreemptylines
+    else
+        return getfield(x, nm)
+    end
+end
+
 const OPTIONS = Options(Flags(false, false, false, false, false, false, false, false), UInt8('.'),
     Token(UInt8('"')), Token(UInt8('"')), UInt8('"'), Token[], Token(""), Token(""),
     nothing, nothing, nothing, nothing)
@@ -152,9 +165,13 @@ function Options(
             stripquoted::Bool=false,
             groupmark::Union{Nothing,Char,UInt8}=nothing)
 
+    # backwards compat; users previously had to pass wh1/wh2 as non-wh to avoid stripping
+    if wh1 != UInt8(' ') || wh2 != UInt8('\t')
+        stripwhitespace = false
+    end
     if sentinel isa Vector{String}
         for sent in sentinel
-            if stripwhitespace !== true && (startswith(sent, " ") || startswith(sent, "\t"))
+            if stripwhitespace && (startswith(sent, " ") || startswith(sent, "\t"))
                 throw(ArgumentError("sentinel value isn't allowed to start with ' ' or '\t' characters if `stripwhitespace=true`"))
             end
             if quoted && (startswith(sent, string(Char(openquotechar))) || startswith(sent, string(Char(closequotechar))))
@@ -180,10 +197,8 @@ function Options(
     delim = token(delim, "delim")
     checkdelim = delim !== nothing && !isempty(delim)
     whitespacedelim = checkdelim && (_contains(delim, " ") || _contains(delim, "\t"))
-    if whitespacedelim && stripwhitespace === true
+    if whitespacedelim && stripwhitespace
         throw(ArgumentError("whitespace stripping (`stripwhitespace=true`) not allowed when `delim` is a whitespace character (' ' or '\t')"))
-    elseif whitespacedelim
-        stripwhitespace = false
     end
     if trues !== nothing
         trues = prepare!(trues)
@@ -371,6 +386,7 @@ function checkdelim!(source::AbstractVector{UInt8}, pos, len, options::Options)
         while !eof(source, pos, len)
             match, pos = checktoken(source, pos, len, b, delim)
             match || break
+            b = peekbyte(source, pos)
         end
     end
     return pos

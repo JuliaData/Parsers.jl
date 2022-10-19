@@ -33,6 +33,7 @@ testcases = [
     (str="{+} ,", kwargs=(sentinel=missing,), x=0, code=(INVALID | QUOTED | DELIMITED), vpos=2, vlen=1, tlen=5),
     (str="{}", kwargs=(sentinel=missing,), x=0, code=(SENTINEL | QUOTED | EOF), vpos=2, vlen=0, tlen=2),
     (str="{},", kwargs=(sentinel=missing,), x=0, code=(SENTINEL | QUOTED | DELIMITED), vpos=2, vlen=0, tlen=3),
+    (str="{a},", kwargs=(sentinel=missing,), x=0, code=(INVALID | QUOTED | DELIMITED), vpos=2, vlen=1, tlen=4),
     (str="{", kwargs=(), x=0, code=(QUOTED | INVALID_QUOTED_FIELD | EOF), vpos=2, vlen=-1, tlen=1),
     (str="{}", kwargs=(), x=0, code=(INVALID | QUOTED | EOF), vpos=2, vlen=0, tlen=2),
     (str=" {", kwargs=(), x=0, code=(QUOTED | INVALID_QUOTED_FIELD | EOF), vpos=3, vlen=-2, tlen=2),
@@ -150,19 +151,19 @@ testcases = [
 
     (str="1,,,2,null,4", kwargs=(), x=1, code=(OK | DELIMITED), vpos=1, vlen=1, tlen=2),
     (str="1,,,2,null,4", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED), vpos=1, vlen=1, tlen=4),
-    (str="1,", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED | EOF), vpos=1, vlen=1, tlen=2),
-    (str="1,,", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED | EOF), vpos=1, vlen=1, tlen=3),
-    (str="1,,,", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED | EOF), vpos=1, vlen=1, tlen=4),
+    (str="1,", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED), vpos=1, vlen=1, tlen=2),
+    (str="1,,", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED), vpos=1, vlen=1, tlen=3),
+    (str="1,,,", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED), vpos=1, vlen=1, tlen=4),
     (str="1::2", kwargs=(delim="::",), x=1, code=(OK | DELIMITED), vpos=1, vlen=1, tlen=3),
     (str="1::::2", kwargs=(ignorerepeated=true, delim="::"), x=1, code=(OK | DELIMITED), vpos=1, vlen=1, tlen=5),
     (str="1a::::2", kwargs=(ignorerepeated=true, delim="::"), x=1, code=(OK | DELIMITED | INVALID_DELIMITER), vpos=1, vlen=2, tlen=6),
-    (str="1[][]", kwargs=(delim="[]", ignorerepeated = true), x = 1, code=(OK | DELIMITED | EOF), vpos=1, vlen=1, tlen=5),
-    (str="1a[][]", kwargs=(delim="[]", ignorerepeated = true), x = 1, code=(OK | DELIMITED | EOF | INVALID_DELIMITER), vpos=1, vlen=2, tlen=6),
+    (str="1[][]", kwargs=(delim="[]", ignorerepeated = true), x = 1, code=(OK | DELIMITED), vpos=1, vlen=1, tlen=5),
+    (str="1a[][]", kwargs=(delim="[]", ignorerepeated = true), x = 1, code=(OK | DELIMITED | INVALID_DELIMITER), vpos=1, vlen=2, tlen=6),
     (str="1a[][]", kwargs=(delim="[]",), x = 1, code=(OK | DELIMITED | INVALID_DELIMITER), vpos=1, vlen=2, tlen=4),
     # ignorerepeated
     (str="1a,,", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED | EOF | INVALID_DELIMITER), vpos=1, vlen=2, tlen=4),
     (str="1a,,2", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED | INVALID_DELIMITER), vpos=1, vlen=2, tlen=4),
-    (str="1,\n", kwargs=(ignorerepeated=true, delim=UInt8(',')), x=1, code=(OK | DELIMITED | NEWLINE | EOF), vpos=1, vlen=1, tlen=3),
+    (str="1,\n", kwargs=(ignorerepeated=true, delim=UInt8(',')), x=1, code=(OK | DELIMITED | NEWLINE), vpos=1, vlen=1, tlen=3),
     (str="1,\n,", kwargs=(ignorerepeated=true, delim=UInt8(',')), x=1, code=(OK | DELIMITED | NEWLINE), vpos=1, vlen=1, tlen=4),
     (str="1,\n,\n", kwargs=(ignorerepeated=true, delim=UInt8(',')), x=1, code=(OK | DELIMITED | NEWLINE), vpos=1, vlen=1, tlen=4),
     (str="1::\n::", kwargs=(ignorerepeated=true, delim="::"), x=1, code=(OK | DELIMITED | NEWLINE), vpos=1, vlen=1, tlen=6),
@@ -241,6 +242,11 @@ for useio in (false, true)
         end
     end
 end
+
+# escaped value
+res = Parsers.xparse(String, "\"123 \\\\ 456\""; escapechar=UInt8('\\'))
+@test res.val.pos == 2
+@test res.val.escapedvalue
 
 # stripwhitespace
 res = Parsers.xparse(String, "{hey there}"; openquotechar='{', closequotechar='}', stripwhitespace=true)
@@ -473,7 +479,7 @@ pos += tlen
 
 @test Parsers.asciival(' ')
 
-@test_throws ArgumentError Parsers.Options(sentinel=[" "])
+@test_throws ArgumentError Parsers.Options(sentinel=[" "], stripwhitespace=true)
 @test_throws ArgumentError Parsers.Options(sentinel=["\""])
 @test_throws ArgumentError Parsers.Options(sentinel=[","], delim=',')
 @test_throws ArgumentError Parsers.Options(sentinel=[","], delim=",")
@@ -552,7 +558,13 @@ res = Parsers.xparse(Char, codeunits("漢"))
 res = Parsers.xparse(Symbol, codeunits("a"), 1, 1, Parsers.XOPTIONS)
 @test res.code == (Parsers.EOF | Parsers.OK)
 @test res.val == :a
+res = Parsers.xparse(Symbol, IOBuffer("a"), 1, 1, Parsers.XOPTIONS)
+@test res.code == (Parsers.EOF | Parsers.OK)
+@test res.val == :a
 res = Parsers.xparse(CustomType, codeunits("a"), 1, 1, Parsers.XOPTIONS)
+@test res.code == (Parsers.EOF | Parsers.OK)
+@test res.val == CustomType("a")
+res = Parsers.xparse(CustomType, IOBuffer("a"), 1, 1, Parsers.XOPTIONS)
 @test res.code == (Parsers.EOF | Parsers.OK)
 @test res.val == CustomType("a")
 

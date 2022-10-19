@@ -7,9 +7,6 @@ function Result(parser)
         b = eof(source, pos, len) ? 0x00 : peekbyte(source, pos)
         pl = poslen(pos, 0)
         pos, code, pl, x = parser(T, source, pos, len, b, code, pl)
-        if isgreedy(T)
-            x = pl
-        end
         tlen = pos - startpos
         if valueok(code)
             y = x::RT
@@ -134,9 +131,7 @@ function findendquoted(::Type{T}, source, pos, len, b, code, pl, isquoted, cq, e
                         # character, but didn't (!first), so something's wrong
                         code |= INVALID
                     end
-                    if isgreedy(T)
-                        pl = poslen(pl.pos, lastnonwhitepos - pl.pos)
-                    end
+                    pl = withlen(pl, lastnonwhitepos - pl.pos)
                     break
                 end
                 # check if next byte is cq
@@ -147,9 +142,7 @@ function findendquoted(::Type{T}, source, pos, len, b, code, pl, isquoted, cq, e
                     if !first && !isgreedy(T)
                         code |= INVALID
                     end
-                    if isgreedy(T)
-                        pl = poslen(pl.pos, lastnonwhitepos - pl.pos)
-                    end
+                    pl = withlen(pl, lastnonwhitepos - pl.pos)
                     break
                 end
                 # this means we had e followed by cq
@@ -178,9 +171,7 @@ function findendquoted(::Type{T}, source, pos, len, b, code, pl, isquoted, cq, e
                         if !first && !isgreedy(T)
                             code |= INVALID
                         end
-                        if isgreedy(T)
-                            pl = poslen(pl.pos, lastnonwhitepos - pl.pos)
-                        end
+                        pl = withlen(pl, lastnonwhitepos - pl.pos)
                         break
                     end
                 end
@@ -188,15 +179,11 @@ function findendquoted(::Type{T}, source, pos, len, b, code, pl, isquoted, cq, e
                 pos += 1
                 incr!(source)
             end
-            if isgreedy(T)
-                wh = iswh(b)
-                lastnonwhitepos = stripquoted ? (wh ? lastnonwhitepos : pos) : pos
-            end
+            wh = iswh(b)
+            lastnonwhitepos = stripquoted ? (wh ? lastnonwhitepos : pos) : pos
             if eof(source, pos, len)
                 code |= EOF | INVALID_QUOTED_FIELD
-                if isgreedy(T)
-                    pl = poslen(pl.pos, lastnonwhitepos - pl.pos)
-                end
+                pl = withlen(pl, lastnonwhitepos - pl.pos)
                 break
             end
             first = false
@@ -261,7 +248,7 @@ function sentinel(chcksentinel, sentinel)
                     code |= EOF
                 end
                 if isgreedy(T)
-                    pl = poslen(pl.pos, sentinelpos - pl.pos)
+                    pl = withlen(pl, sentinelpos - pl.pos)
                 end
             end
             return pos, code, pl, x
@@ -292,7 +279,7 @@ function finddelimiter(::Type{T}, source, pos, len, b, code, pl, delim, ignorere
             matchednewline = false
             while true
                 match, pos = checktoken(source, pos, len, b, delim)
-                if !matchednewline && match
+                if match
                     matched = true
                     code |= DELIMITED
                 elseif !matchednewline && b == UInt8('\n')
@@ -358,7 +345,7 @@ function finddelimiter(::Type{T}, source, pos, len, b, code, pl, delim, ignorere
         b = peekbyte(source, pos)
     end
     if !quoted(code)
-        pl = poslen(pl.pos, lastnonwhitepos - pl.pos)
+        pl = withlen(pl, lastnonwhitepos - pl.pos)
     end
     return pos, code, pl, pl
 end

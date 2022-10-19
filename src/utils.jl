@@ -20,6 +20,11 @@ function Base.showerror(io::IO, e::Error)
     println(io, "attempted to parse $(e.T) from: \"$(escape_string(e.str))\"")
 end
 
+# backwards compat
+neededdigits(::Type{Float64}) = 309 + 17
+neededdigits(::Type{Float32}) = 39 + 9 + 2
+neededdigits(::Type{Float16}) = 9 + 5 + 9
+
 """
 A bitmask value, with various bits corresponding to different parsing signals and scenarios.
 
@@ -428,6 +433,7 @@ const MAX_LEN = 1048575
 end
 
 poslen(pos::Integer, len::Integer) = Base.bitcast(PosLen, (Int64(pos) << 20) | Int64(len))
+withlen(poslen::PosLen, len::Integer) = Base.bitcast(PosLen, (Base.bitcast(Int64, poslen) & ~MAX_LEN) | Int64(len))
 withmissing(pl::PosLen) = Base.or_int(pl, Base.bitcast(PosLen, MISSING_BIT))
 withescaped(pl::PosLen) = Base.or_int(pl, Base.bitcast(PosLen, ESCAPE_BIT))
 
