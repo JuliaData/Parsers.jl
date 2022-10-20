@@ -18,6 +18,11 @@ x, code = res.val, res.code
 @test x === Time(1, 2, 3)
 @test code == OK | EOF
 
+res = Parsers.xparse(Time, codeunits("01:02:03"), 1, 8, Parsers.XOPTIONS)
+x, code = res.val, res.code
+@test x === Time(1, 2, 3)
+@test code == OK | EOF
+
 res = Parsers.xparse(Date, "")
 x, code = res.val, res.code
 @test code == INVALID | EOF
@@ -64,6 +69,13 @@ res = Parsers.xparse(Date, "1,")
 x, code = res.val, res.code
 @test x === Date(1)
 @test code === OK | DELIMITED
+
+res = Parsers.xparse(Date, "\"\""; sentinel=missing)
+@test Parsers.sentinel(res.code)
+res = Parsers.xparse(Date, "\"\","; sentinel=missing)
+@test Parsers.sentinel(res.code)
+res = Parsers.xparse(Date, "abc,"; sentinel=missing)
+@test !Parsers.sentinel(res.code)
 
 @test Parsers.parse(DateTime, "1996/Feb/15", Parsers.Options(dateformat="yy/uuu/dd")) === DateTime(1996, 2, 15)
 @test Parsers.parse(DateTime, "1996, Jan, 15", Parsers.Options(dateformat="yyyy, uuu, dd")) === DateTime(1996, 1, 15)

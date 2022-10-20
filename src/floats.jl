@@ -44,12 +44,12 @@ function _muladd(ten, digits::BigInt, b)
 end
 
 # for non SupportedFloat Reals, parse as Float64, then convert
-@inline function typeparser(::Type{T}, source, pos, len, b, code, options) where {T <: Real}
-    x, code, pos = typeparser(Float64, source, pos, len, b, code, options)
-    return T(x), code, pos
+@inline function typeparser(::Type{T}, source, pos, len, b, code, pl, options) where {T <: Real}
+    pos, code, pl, x = typeparser(Float64, source, pos, len, b, code, pl, options)
+    return pos, code, pl, T(x)
 end
 
-@inline function typeparser(::Type{T}, source, pos, len, b, code, options) where {T <: SupportedFloats}
+@inline function typeparser(::Type{T}, source, pos, len, b, code, pl, options) where {T <: SupportedFloats}
     # keep track of starting pos in case of invalid, we can rewind to start of parsing
     startpos = pos
     x = zero(T)
@@ -179,7 +179,7 @@ end
     x, code, pos = parsedigits(T, source, pos, len, b, code, options, UInt64(0), neg, startpos)
 
 @label done
-    return x, code, pos
+    return pos, code, PosLen(pl.pos, pos - pl.pos), x
 end
 
 # if we need to _widen the type due to `digits` overflow, we want a non-inlined version so base case compilation doesn't get out of control

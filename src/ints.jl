@@ -4,10 +4,10 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
 # if we eventually support non-base 10
 # overflowval(::Type{T}, base) where {T <: Integer} = div(typemax(T) - base + 1, base)
 
-@inline function typeparser(::Type{T}, source, pos, len, b, code, options) where {T <: Integer}
+@inline function typeparser(::Type{T}, source, pos, len, b, code, pl, opts) where {T <: Integer}
     x = zero(T)
     neg = false
-    has_groupmark = options.groupmark !== nothing
+    has_groupmark = opts.groupmark !== nothing
     # start actual int parsing
     neg = b == UInt8('-')
     if neg || b == UInt8('+')
@@ -35,7 +35,7 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
         end
         if has_groupmark
             b, nb = dpeekbyte(source, pos) .- UInt8('0')
-            if (options.groupmark)::UInt8 - UInt8('0') == b && nb <= 0x09
+            if (opts.groupmark)::UInt8 - UInt8('0') == b && nb <= 0x09
                 incr!(source)
                 pos += 1
                 b = nb
@@ -78,7 +78,7 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
         end
         if has_groupmark
             b, nb = dpeekbyte(source, pos) .- UInt8('0')
-            if (options.groupmark)::UInt8 - UInt8('0') == b && nb <= 0x09
+            if (opts.groupmark)::UInt8 - UInt8('0') == b && nb <= 0x09
                 incr!(source)
                 pos += 1
                 b = nb
@@ -93,5 +93,5 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
     end
 
 @label done
-    return x, code, pos
+    return pos, code, PosLen(pl.pos, pos - pl.pos), x
 end

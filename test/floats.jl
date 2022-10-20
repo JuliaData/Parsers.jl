@@ -61,9 +61,9 @@ testcases = [
     (str="-0e348", x=-0.0, code=(OK | EOF), len=0, tot=0),
 
     # Infs/invalid NaNs
-    (str="n", x=0.0, code=(INVALID | EOF), len=1, tot=1),
-    (str="na", x=0.0, code=(INVALID | EOF), len=2, tot=2),
-    (str="n", x=0.0, code=(INVALID | EOF), len=1, tot=1),
+    (str="n", x=0.0, code=(INVALID | INVALID_DELIMITER | EOF), len=1, tot=1),
+    (str="na", x=0.0, code=(INVALID | INVALID_DELIMITER | EOF), len=2, tot=2),
+    (str="n", x=0.0, code=(INVALID | INVALID_DELIMITER | EOF), len=1, tot=1),
     (str="inf", x=Inf, code=(OK | EOF), len=0, tot=0),
     (str="infinity", x=Inf, code=(OK | EOF), len=0, tot=0),
     (str="-inf", x=-Inf, code=(OK | EOF), len=0, tot=0),
@@ -71,8 +71,8 @@ testcases = [
     (str="-infinity", x=-Inf, code=(OK | EOF), len=0, tot=0),
     (str="-INFINITY", x=-Inf, code=(OK | EOF), len=0, tot=0),
     (str="+inf", x=Inf, code=(OK | EOF), len=0, tot=0),
-    (str="i", x=0.0, code=(INVALID | EOF), len=1, tot=1),
-    (str="in", x=0.0, code=(INVALID | EOF), len=2, tot=2),
+    (str="i", x=0.0, code=(INVALID | INVALID_DELIMITER | EOF), len=1, tot=1),
+    (str="in", x=0.0, code=(INVALID | INVALID_DELIMITER | EOF), len=2, tot=2),
     (str="infi", x=Inf, code=(OK | EOF), len=1, tot=1),
     (str="infin", x=Inf, code=(OK | EOF), len=1, tot=1),
     (str="infini", x=Inf, code=(OK | EOF), len=1, tot=1),

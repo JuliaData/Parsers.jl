@@ -20,6 +20,11 @@ function Base.showerror(io::IO, e::Error)
     println(io, "attempted to parse $(e.T) from: \"$(escape_string(e.str))\"")
 end
 
+# backwards compat
+neededdigits(::Type{Float64}) = 309 + 17
+neededdigits(::Type{Float32}) = 39 + 9 + 2
+neededdigits(::Type{Float16}) = 9 + 5 + 9
+
 """
 A bitmask value, with various bits corresponding to different parsing signals and scenarios.
 
@@ -82,86 +87,181 @@ eof(x::ReturnCode) = (x & EOF) == EOF
 
 memcmp(a::Ptr{UInt8}, b::Ptr{UInt8}, len::Int) = ccall(:memcmp, Cint, (Ptr{UInt8}, Ptr{UInt8}, Csize_t), a, b, len) == 0
 
-function checksentinel(source::AbstractVector{UInt8}, pos, len, sentinel)
-    sentinelpos = 0
-    startptr = pointer(source, pos)
-    # sentinel is an iterable of Tuple{Ptr{UInt8}, Int}, sorted from longest sentinel string to shortest
-    for (ptr, ptrlen) in sentinel
-        if pos + ptrlen - 1 <= len
-            match = memcmp(startptr, ptr, ptrlen)
-            if match
-                sentinelpos = pos + ptrlen
-                break
+struct RegexAndMatchData
+    re::Regex
+    data::Ptr{Cvoid}
+end
+
+function mkregex(re::Regex)
+    Base.compile(re)
+    return RegexAndMatchData(re, Base.PCRE.create_match_data(re.regex))
+end
+
+const ByteStringRegex = Union{UInt8, String, RegexAndMatchData}
+
+struct Token
+    token::ByteStringRegex
+end
+import Base: ==
+function ==(a::Token, b::Token)
+    t1 = a.token
+    t2 = b.token
+    if t1 isa UInt8 && t2 isa UInt8
+        return t1 == t2
+    elseif t1 isa String && t2 isa String
+        return t1 == t2
+    elseif t1 isa RegexAndMatchData && t2 isa RegexAndMatchData
+        return t1.re == t2.re
+    else
+        return false
+    end
+end
+==(a::Token, b::UInt8) = a.token isa UInt8 && a.token == b
+_contains(a::Token, str::String) = _contains(a.token, str)
+_contains(a::UInt8, str::String) = a == UInt8(str[1])
+_contains(a::Char, str::String) = a == str[1]
+_contains(a::String, str::String) = contains(a, str)
+_contains(a::RegexAndMatchData, str::String) = contains(a.re.pattern, str)
+function Base.isempty(x::Token)
+    t = x.token
+    return t isa String && isempty(t)
+end
+
+@noinline notsupported() = throw(ArgumentError("Regex matching not supported on this input type"))
+
+function checktoken(source, pos, len, b, token::Token)
+    tok = token.token
+    if tok isa UInt8
+        check = tok == b
+        check && incr!(source)
+        return check, pos + check
+    elseif tok isa String
+        if source isa Vector{UInt8}
+            # specialize common case
+            return checktoken(source, pos, len, b, tok)
+        else
+            return checktoken(source, pos, len, b, tok)
+        end
+    elseif tok isa RegexAndMatchData
+        if source isa Vector{UInt8} || source isa Base.CodeUnits{UInt8, String} || source isa AbstractVector{UInt8}
+            return checktoken(source, pos, len, b, tok)
+        else
+            notsupported()
+        end
+    else
+        error() # unreachable
+    end
+end
+
+function checktoken(source, pos, len, b, tok::UInt8)
+    check = tok == b
+    check && incr!(source)
+    return check, pos + check
+end
+
+function checktoken(source::AbstractVector{UInt8}, pos, len, b, tok::RegexAndMatchData)
+    rc = ccall((:pcre2_match_8, Base.PCRE.PCRE_LIB), Cint,
+        (Ptr{Cvoid}, Ptr{UInt8}, Csize_t, Csize_t, UInt32, Ptr{Cvoid}, Ptr{Cvoid}),
+        tok.re.regex, source, len, pos - 1, tok.re.match_options, tok.data, Base.PCRE.get_local_match_context())
+    rc < -2 && error("PCRE.exec error: $(Base.PCRE.err_message(rc))")
+    check = rc >= 0
+    return check, pos + (!check ? 0 : Base.PCRE.substring_length_bynumber(tok.data, 0))
+end
+
+function checktoken(source::AbstractVector{UInt8}, pos, len, b, tok::String)
+    sz = sizeof(tok)
+    check = (pos + sz - 1) <= len && memcmp(pointer(source, pos), pointer(tok), sz)
+    return check, pos + (check * sz)
+end
+
+function checktoken(source::IO, pos, len, b, tok::String)
+    bytes = codeunits(tok)
+    startpos = pos
+    blen = length(bytes)
+    for i = 1:blen
+        @inbounds b2 = bytes[i]
+        if b2 != b
+            fastseek!(source, startpos - 1)
+            return false, startpos
+        end
+        pos += 1
+        incr!(source)
+        i == blen && break
+        if eof(source, pos, len)
+            fastseek!(source, startpos - 1)
+            return false, startpos
+        end
+        b = peekbyte(source, pos)
+    end
+    return true, pos
+end
+
+function checktokens(source, pos, len, b, tokens::Union{Vector{String}, Vector{Token}}, consume=false)
+    if source isa IO && !consume
+        origpos = position(source)
+    end
+    for token in tokens
+        check, pos = checktoken(source, pos, len, b, token)
+        if check
+            source isa IO && !consume && fastseek!(source, origpos)
+            return true, pos
+        end
+    end
+    source isa IO && !consume && fastseek!(source, origpos)
+    return false, pos
+end
+
+function checkcmtemptylines(source, pos, len, cmt, ignoreemptylines)
+    while !eof(source, pos, len)
+        skipped = false
+        if ignoreemptylines
+            b = peekbyte(source, pos)
+            if b == UInt8('\n')
+                pos += 1
+                incr!(source)
+                skipped = true
+            elseif b == UInt8('\r')
+                pos += 1
+                incr!(source)
+                if !eof(source, pos, len) && peekbyte(source, pos) == UInt8('\n')
+                    pos += 1
+                    incr!(source)
+                end
+                skipped = true
             end
         end
-    end
-    return sentinelpos
-end
-
-function checksentinel(source::IO, pos, len, sentinel)
-    sentinelpos = 0
-    origpos = position(source)
-    for (ptr, ptrlen) in sentinel
-        matched = match!(source, ptr, ptrlen)
-        if matched
-            sentinelpos = pos + ptrlen
-            break
+        matched = false
+        if !isempty(cmt) && !eof(source, pos, len)
+            b = peekbyte(source, pos)
+            matched, pos = checktoken(source, pos, len, b, cmt)
+            if matched
+                eof(source, pos, len) && break
+                b = peekbyte(source, pos)
+                while true
+                    # consume the rest of the line/row until we hit the newline
+                    if b == UInt8('\n')
+                        pos += 1
+                        incr!(source)
+                        break
+                    elseif b == UInt8('\r')
+                        pos += 1
+                        incr!(source)
+                        if !eof(source, pos, len) && peekbyte(source, pos) == UInt8('\n')
+                            pos += 1
+                            incr!(source)
+                        end
+                        break
+                    end
+                    pos += 1
+                    incr!(source)
+                    eof(source, pos, len) && break
+                    b = peekbyte(source, pos)
+                end
+            end
         end
+        (skipped | matched) || break
     end
-    fastseek!(source, origpos)
-    return sentinelpos
-end
-
-function checkdelim(source::AbstractVector{UInt8}, pos, len, (ptr, ptrlen))
-    startptr = pointer(source, pos)
-    delimpos = pos
-    if pos + ptrlen - 1 <= len
-        match = memcmp(startptr, ptr, ptrlen)
-        if match
-            delimpos = pos + ptrlen
-        end
-    end
-    return delimpos
-end
-
-function checkdelim(source::IO, pos, len, (ptr, ptrlen))
-    delimpos = pos
-    matched = match!(source, ptr, ptrlen)
-    if matched
-        delimpos = pos + ptrlen
-    end
-    return delimpos
-end
-
-@inline function match!(source::IO, ptr, ptrlen)
-    b = peekbyte(source)
-    c = unsafe_load(ptr)
-    if b != c
-        return false
-    elseif ptrlen == 1
-        incr!(source)
-        return true
-    end
-    pos = position(source)
-    i = 1
-    while true
-        incr!(source)
-        if Base.eof(source)
-            fastseek!(source, pos)
-            return false
-        end
-        b = peekbyte(source)
-        c = unsafe_load(ptr + i)
-        if b != c
-            fastseek!(source, pos)
-            return false
-        elseif i == ptrlen - 1
-            break
-        end
-        i += 1
-    end
-    incr!(source)
-    return true
+    return pos
 end
 
 """
@@ -244,6 +344,7 @@ end
 
 eof(::AbstractVector{UInt8}, pos::Integer, len::Integer) = pos > len
 eof(source::IO, pos::Integer, len::Integer) = Base.eof(source)
+eof(io::Base.GenericIOBuffer, pos::Integer, len::Integer) = (io.ptr - 1) >= io.size
 
 function text(r)
     str = ""
@@ -298,8 +399,6 @@ codes(r) = chop(chop(string(
     ifelse(r & (~INVALID & OVERFLOW) > 0, "OVERFLOW | ", "")
 )))
 
-ptrlen(s::String) = (pointer(s), sizeof(s))
-
 """
     PosLen(pos, len, ismissing, escaped)
 
@@ -333,6 +432,11 @@ const MAX_LEN = 1048575
     return Base.bitcast(PosLen, pos | Int64(len))
 end
 
+poslen(pos::Integer, len::Integer) = Base.bitcast(PosLen, (Int64(pos) << 20) | Int64(len))
+withlen(poslen::PosLen, len::Integer) = Base.bitcast(PosLen, (Base.bitcast(Int64, poslen) & ~MAX_LEN) | Int64(len))
+withmissing(pl::PosLen) = Base.or_int(pl, Base.bitcast(PosLen, MISSING_BIT))
+withescaped(pl::PosLen) = Base.or_int(pl, Base.bitcast(PosLen, ESCAPE_BIT))
+
 const MISSING_BIT = Base.bitcast(Int64, 0x8000000000000000)
 const ESCAPE_BIT = Base.bitcast(Int64, 0x4000000000000000)
 const POS_BITS = Base.bitcast(Int64, 0x3ffffffffff00000)
@@ -350,6 +454,8 @@ function Base.getproperty(x::PosLen, nm::Symbol)
 end
 Base.propertynames(::PosLen) = (:pos, :len, :missingvalue, :escapedvalue)
 
+Base.show(io::IO, x::PosLen) = print(io, "PosLen(pos=$(x.pos), len=$(x.len), missingvalue=$(x.missingvalue), escapedvalue=$(x.escapedvalue))")
+
 """
     Parsers.getstring(buf_or_io, poslen::PosLen, e::UInt8) => String
 
@@ -364,6 +470,9 @@ to get the actual parsed `String` value.
 function getstring end
 
 _unsafe_string(p, len) = ccall(:jl_pchar_to_string, Ref{String}, (Ptr{UInt8}, Int), p, len)
+
+getstring(source::Union{IO, AbstractVector{UInt8}}, x::PosLen, e::Token) =
+    getstring(source, x, e.token::UInt8)
 
 @inline function getstring(source::Union{IO, AbstractVector{UInt8}}, x::PosLen, e::UInt8)
     x.escapedvalue && return unescape(source, x, e)
