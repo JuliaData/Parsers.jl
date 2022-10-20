@@ -127,7 +127,7 @@ function Base.isempty(x::Token)
     return t isa String && isempty(t)
 end
 
-@noinline notsupported(source) = error("Regex matching not supported on this source type: $(typeof(source))")
+@noinline notsupported(source::T) where {T} = throw(ArgumentError("Regex matching not supported on this source type: $(T)"))
 
 function checktoken(source, pos, len, b, token::Token)
     tok = token.token

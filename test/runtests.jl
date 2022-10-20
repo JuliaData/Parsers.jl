@@ -637,6 +637,9 @@ res = Parsers.xparse(String, source, 1, 0, opt)
 res = Parsers.xparse(String, source, 1 + res.tlen, 0, opt)
 @test Parsers.getstring(source, res.val, opt.e) == "str2"
 
+# checkdelim!
+buf = UInt8[0x20, 0x20, 0x41, 0x20, 0x20, 0x42, 0x0a, 0x20, 0x20, 0x31, 0x20, 0x20, 0x32, 0x0a, 0x20, 0x20, 0x31, 0x31, 0x20, 0x32, 0x32]
+@test Parsers.checkdelim!(buf, 1, 21, Parsers.Options(delim=' ', ignorerepeated=true)) == 3
 
 end # @testset "misc"
 
