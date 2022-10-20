@@ -82,7 +82,7 @@ testcases = [
     (str=" -a ", kwargs=(sentinel=["-1"],), x=0, code=(INVALID | EOF | INVALID_DELIMITER), vpos=1, vlen=4, tlen=4),
     (str="{a", kwargs=(sentinel=["1"],), x=0, code=(INVALID | EOF | QUOTED | INVALID_QUOTED_FIELD), vpos=2, vlen=0, tlen=2),
     (str="{-a}", kwargs=(sentinel=["-1"],), x=0, code=(INVALID | EOF | QUOTED), vpos=2, vlen=2, tlen=4),
-    (str=" {+1a", kwargs=(sentinel=["+1"],), x=1, code=(SENTINEL | QUOTED | EOF | INVALID_QUOTED_FIELD), vpos=3, vlen=2, tlen=5),
+    (str=" {+1a", kwargs=(sentinel=["+1"],), x=1, code=(SENTINEL | QUOTED | EOF | INVALID_QUOTED_FIELD), vpos=3, vlen=3, tlen=5),
     (str=" {-1a }", kwargs=(sentinel=["-1"],), x=-1, code=(SENTINEL | QUOTED | INVALID | EOF), vpos=3, vlen=4, tlen=7),
     (str=" {+a} ", kwargs=(sentinel=["+1"],), x=0, code=(INVALID | QUOTED | EOF), vpos=3, vlen=2, tlen=6),
     (str=" { a} ", kwargs=(sentinel=["1"],), x=0, code=(INVALID | QUOTED | EOF), vpos=3, vlen=2, tlen=6),
@@ -161,9 +161,9 @@ testcases = [
     (str="1a[][]", kwargs=(delim="[]", ignorerepeated = true), x = 1, code=(OK | DELIMITED | INVALID_DELIMITER), vpos=1, vlen=2, tlen=6),
     (str="1a[][]", kwargs=(delim="[]",), x = 1, code=(OK | DELIMITED | INVALID_DELIMITER), vpos=1, vlen=2, tlen=4),
     # ignorerepeated
-    (str="1a,,", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED | EOF | INVALID_DELIMITER), vpos=1, vlen=2, tlen=4),
+    (str="1a,,", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED | INVALID_DELIMITER), vpos=1, vlen=2, tlen=4),
     (str="1a,,2", kwargs=(ignorerepeated=true,), x=1, code=(OK | DELIMITED | INVALID_DELIMITER), vpos=1, vlen=2, tlen=4),
-    (str="1,\n", kwargs=(ignorerepeated=true, delim=UInt8(',')), x=1, code=(OK | DELIMITED | NEWLINE), vpos=1, vlen=1, tlen=3),
+    (str="1,\n", kwargs=(ignorerepeated=true, delim=UInt8(',')), x=1, code=(OK | DELIMITED | NEWLINE | EOF), vpos=1, vlen=1, tlen=3),
     (str="1,\n,", kwargs=(ignorerepeated=true, delim=UInt8(',')), x=1, code=(OK | DELIMITED | NEWLINE), vpos=1, vlen=1, tlen=4),
     (str="1,\n,\n", kwargs=(ignorerepeated=true, delim=UInt8(',')), x=1, code=(OK | DELIMITED | NEWLINE), vpos=1, vlen=1, tlen=4),
     (str="1::\n::", kwargs=(ignorerepeated=true, delim="::"), x=1, code=(OK | DELIMITED | NEWLINE), vpos=1, vlen=1, tlen=6),
@@ -247,6 +247,18 @@ end
 res = Parsers.xparse(String, "\"123 \\\\ 456\""; escapechar=UInt8('\\'))
 @test res.val.pos == 2
 @test res.val.escapedvalue
+
+# tab delim, still strip whitespace
+res = Parsers.xparse(Int64, " 123 \t 456 "; delim=UInt8('\t'))
+@test res.val == 123
+@test res.tlen == 6
+@test res.code == (OK | DELIMITED)
+
+# multiple space sentinels
+res = Parsers.xparse(Int64, "1\n"; sentinel=["", " ", "  "])
+@test res.val == 1
+@test res.tlen == 2
+@test res.code == (OK | EOF | NEWLINE)
 
 # stripwhitespace
 res = Parsers.xparse(String, "{hey there}"; openquotechar='{', closequotechar='}', stripwhitespace=true)
@@ -417,6 +429,13 @@ res = Parsers.xparse(Bool, "t,"; sentinel=missing)
 @test !Parsers.sentinel(res.code)
 
 end # @testset "bools"
+
+@testset "regex delim" begin
+    res = Parsers.xparse(Int, "123,456"; delim=r",")
+    @test res.val == 123
+    @test res.code == (OK | DELIMITED)
+    @test res.tlen == 4
+end
 
 @testset "misc" begin
 

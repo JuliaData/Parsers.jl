@@ -46,9 +46,10 @@ end
 
 # just ' ' and '\t'
 iswh(b) = b == UInt8(' ') || b == UInt8('\t')
+iswh(b, spacedelim, tabdelim) = (!spacedelim && b == UInt8(' ')) || (!tabdelim && b == UInt8('\t'))
 
-whitespace(opts::Options) = whitespace(opts.flags.whitespacedelim, opts.flags.stripquoted, opts.flags.stripwhitespace)
-function whitespace(whitespacedelim, stripquoted, stripwh)
+whitespace(opts::Options) = whitespace(opts.flags.spacedelim, opts.flags.tabdelim, opts.flags.stripquoted, opts.flags.stripwhitespace)
+function whitespace(spacedelim, tabdelim, stripquoted, stripwh)
     function(parser)
         function stripwhitespace(::Type{T}, source, pos, len, b, code, pl) where {T}
             Base.@_inline_meta
@@ -58,11 +59,11 @@ function whitespace(whitespacedelim, stripquoted, stripwh)
                 # note that we strip even if user didn't ask in order to consume any whitespace
                 # that might be present before the oq; we just need to take care when resetting
                 # the pl to account for whether the user actually asked to strip or not
-                (!quoted(code) && !whitespacedelim) ||
+                !quoted(code) ||
                 # within quotes, if non-string or user asked to strip quoted
                 (quoted(code) && (!isgreedy(T) || stripquoted))
             )
-                while iswh(b)
+                while iswh(b, spacedelim, tabdelim)
                     pos += 1
                     incr!(source)
                     if eof(source, pos, len)
@@ -86,12 +87,12 @@ function whitespace(whitespacedelim, stripquoted, stripwh)
             if !eof(source, pos, len) && (
                 # post non-quoted value, if delim is not whitespace, and non-string
                 # (string already stripped in finddelimiter or findeof)
-                (!quoted(code) && !whitespacedelim && !isgreedy(T)) ||
+                (!quoted(code) && !isgreedy(T)) ||
                 # post-quoted value, if delim is not whitespace
-                (quoted(code) && !whitespacedelim)
+                quoted(code)
             )
                 b = peekbyte(source, pos)
-                while iswh(b)
+                while iswh(b, spacedelim, tabdelim)
                     pos += 1
                     incr!(source)
                     if eof(source, pos, len)
@@ -237,18 +238,20 @@ function sentinel(chcksentinel, sentinel)
             Base.@_inline_meta
             match, sentinelpos = (!chcksentinel || isempty(sentinel) || eof(source, pos, len)) ? (false, 0) : checktokens(source, pos, len, b, sentinel)
             pos, code, pl, x = parser(T, source, pos, len, b, code, pl)
-            if match && sentinelpos >= pos
+            # @show match, sentinelpos, pos, pl
+            if match && sentinelpos > (pl.pos + pl.len - 1)
                 # if we matched a sentinel value that was as long or longer than our type value
-                code &= ~(OK | INVALID | EOF | OVERFLOW)
-                pos = sentinelpos
-                fastseek!(source, pos - 1)
+                if isgreedy(T)
+                    pl = withlen(pl, sentinelpos - pl.pos)
+                else
+                    code &= ~(OK | INVALID | EOF | OVERFLOW)
+                    pos = sentinelpos
+                    fastseek!(source, pos - 1)
+                end
                 code |= SENTINEL
                 pl = withmissing(pl)
                 if eof(source, pos, len)
                     code |= EOF
-                end
-                if isgreedy(T)
-                    pl = withlen(pl, sentinelpos - pl.pos)
                 end
             end
             return pos, code, pl, x
@@ -302,12 +305,11 @@ function finddelimiter(::Type{T}, source, pos, len, b, code, pl, delim, ignorere
                     break
                 end
                 if eof(source, pos, len)
-                    code |= EOF
                     break
                 end
                 b = peekbyte(source, pos)
             end
-            if matched || eof(code)
+            if matched || eof(source, pos, len)
                 break
             end
         end

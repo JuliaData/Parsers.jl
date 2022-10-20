@@ -142,8 +142,8 @@ function checktoken(source, pos, len, b, token::Token)
         else
             return checktoken(source, pos, len, b, tok)
         end
-    elseif tok isa Regex
-        if source isa Vector{UInt8}
+    elseif tok isa RegexAndMatchData
+        if source isa Vector{UInt8} || source isa Base.CodeUnits{UInt8, String} || source isa AbstractVector{UInt8}
             return checktoken(source, pos, len, b, tok)
         else
             notsupported(source)
