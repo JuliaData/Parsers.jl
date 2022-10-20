@@ -127,7 +127,7 @@ function Base.isempty(x::Token)
     return t isa String && isempty(t)
 end
 
-@noinline notsupported(source::T) where {T} = throw(ArgumentError("Regex matching not supported on this source type: $(T)"))
+@noinline notsupported() = throw(ArgumentError("Regex matching not supported on this input type"))
 
 function checktoken(source, pos, len, b, token::Token)
     tok = token.token
@@ -146,7 +146,7 @@ function checktoken(source, pos, len, b, token::Token)
         if source isa Vector{UInt8} || source isa Base.CodeUnits{UInt8, String} || source isa AbstractVector{UInt8}
             return checktoken(source, pos, len, b, tok)
         else
-            notsupported(source)
+            notsupported()
         end
     else
         error() # unreachable
