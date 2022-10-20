@@ -360,22 +360,6 @@ end
     end
 end
 
-@inline function xparse2(::Type{Symbol}, source::SourceType, pos, len, options, ::Type{S}=Symbol) where {S}
-    res = xparse(String, source, pos, len, options)
-    code = res.code
-    poslen = res.val::PosLen
-    if !Parsers.invalid(code) && !Parsers.sentinel(code)
-        if source isa AbstractVector{UInt8}
-            sym = ccall(:jl_symbol_n, Ref{Symbol}, (Ptr{UInt8}, Int), pointer(source, poslen.pos), poslen.len)
-        else
-            sym = Symbol(getstring(source, poslen, options.e))
-        end
-        return Result{S}(code, res.tlen, sym)
-    else
-        return Result{S}(code, res.tlen)
-    end
-end
-
 function checkdelim!(source::AbstractVector{UInt8}, pos, len, options::Options)
     eof(source, pos, len) && return pos
     delim = options.delim
