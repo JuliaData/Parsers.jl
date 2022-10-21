@@ -34,7 +34,7 @@ function emptysentinel(checksent::Bool)
         function checkemptysentinel(::Type{T}, source, pos, len, b, code, pl) where {T}
             Base.@_inline_meta
             pos, code, pl, x = parser(T, source, pos, len, b, code, pl)
-            if checksent && pl.len == 0
+            if checksent && pl.len == 0 && (!isgreedy(T) || !quoted(code))
                 code &= ~(OK | INVALID)
                 code |= SENTINEL
                 pl = withmissing(pl)
