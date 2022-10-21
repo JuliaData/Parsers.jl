@@ -541,6 +541,7 @@ showerror(io, e2)
 res = Parsers.xparse(Float64, "\"\"", 1, 2)
 @test Parsers.sentinel(res.code)
 
+# #138
 res = Parsers.xparse(String, "\"\"", 1, 2)
 @test !Parsers.sentinel(res.code)
 
