@@ -208,11 +208,18 @@ testcases = [
     (str="{1 } ,", kwargs=(stripquoted=true,delim=UInt8(',')), x=1, code=(OK | DELIMITED | QUOTED), vpos=2, vlen=1, tlen=6),
 ];
 
+chars(s) = Char(s)
+chars(s::AbstractString) = s
 for useio in (false, true)
-    for (oq, cq, e) in ((UInt8('"'), UInt8('"'), UInt8('"')), (UInt8('"'), UInt8('"'), UInt8('\\')), (UInt8('{'), UInt8('}'), UInt8('\\')))
+    for (oq, cq, e) in (
+        (UInt8('"'), UInt8('"'), UInt8('"')),
+        (UInt8('"'), UInt8('"'), UInt8('\\')),
+        (UInt8('{'), UInt8('}'), UInt8('\\')),
+        ("#=", "=#", UInt8('\\')),
+    )
         for (i, case) in enumerate(testcases)
-            # println("testing int case i = $i, case = $case, useio = $useio, oq = `$(Char(oq))`, cq = `$(Char(cq))`, e = `$(Char(e))`")
-            str = replace(replace(replace(case.str, '{'=>Char(oq)), '}'=>Char(cq)), '\\'=>Char(e))
+            # println("testing int case i = $i, case = $case, useio = $useio, oq = `$(chars(oq))`, cq = `$(chars(cq))`, e = `$(chars(e))`")
+            str = replace(replace(replace(case.str, '{'=>chars(oq)), '}'=>chars(cq)), '\\'=>chars(e))
             source = useio ? IOBuffer(str) : str
             res = Parsers.xparse(Int64, source; openquotechar=oq, closequotechar=cq, escapechar=e, case.kwargs...)
             x, code, tlen = res.val, res.code, res.tlen
@@ -220,7 +227,13 @@ for useio in (false, true)
                 @test x == case.x
             end
             @test code == case.code
-            @test tlen == case.tlen
+            if Parsers.quoted(code)
+                # Above we may have `replace`d quote chars, so original `case.tlen` may no longer hold.
+                # Assume `str` had no chars after delim, and whole input should have been consumed.
+                @test tlen == ncodeunits(str)
+            else
+                @test tlen == case.tlen
+            end
         end
     end
 end
@@ -265,8 +278,12 @@ res = Parsers.xparse(String, "NA"; sentinel=["NA"])
 @test res.code == (SENTINEL | EOF)
 
 # stripwhitespace
+res = Parsers.xparse(String, "{{hey there}}"; openquotechar="{{", closequotechar="}}", stripwhitespace=true)
+@test res.val.pos == 3 && res.val.len == 9
 res = Parsers.xparse(String, "{hey there}"; openquotechar='{', closequotechar='}', stripwhitespace=true)
 @test res.val.pos == 2 && res.val.len == 9
+res = Parsers.xparse(String, "{{hey there }}"; openquotechar="{{", closequotechar="}}", stripwhitespace=true)
+@test res.val.pos == 3 && res.val.len == 10
 res = Parsers.xparse(String, "{hey there }"; openquotechar='{', closequotechar='}', stripwhitespace=true)
 @test res.val.pos == 2 && res.val.len == 10
 res = Parsers.xparse(String, "{hey there },"; openquotechar='{', closequotechar='}', delim=',', stripwhitespace=true)
@@ -284,8 +301,12 @@ res = Parsers.xparse(String, " hey there "; stripwhitespace=true)
 res = Parsers.xparse(String, " hey there "; delim=nothing, stripwhitespace=true)
 @test res.val.pos == 2 && res.val.len == 9
 
+res = Parsers.xparse(String, "{{hey there}}"; openquotechar="{{", closequotechar="}}", stripquoted=true)
+@test res.val.pos == 3 && res.val.len == 9
 res = Parsers.xparse(String, "{hey there}"; openquotechar='{', closequotechar='}', stripquoted=true)
 @test res.val.pos == 2 && res.val.len == 9
+res = Parsers.xparse(String, "{{hey there }}"; openquotechar="{{", closequotechar="}}", stripquoted=true)
+@test res.val.pos == 3 && res.val.len == 9
 res = Parsers.xparse(String, "{hey there }"; openquotechar='{', closequotechar='}', stripquoted=true)
 @test res.val.pos == 2 && res.val.len == 9
 res = Parsers.xparse(String, "{hey there },"; openquotechar='{', closequotechar='}', delim=',', stripquoted=true)
