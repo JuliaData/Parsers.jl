@@ -132,6 +132,9 @@ _contains(a::Char, char::Char) = a == char
 _contains(a::String, char::Char) = length(a) == 1 && @inbounds(a[1]) == char
 _contains(a::RegexAndMatchData, char::Char) = contains(a.re.pattern, char)
 
+_contains(a, b::UInt8) = _contains(a, Char(b))
+_contains(a, b) = _contains(a, string(b))
+_contains(a, b::Nothing) = false
 function Base.isempty(x::Token)
     t = x.token
     return t isa String && isempty(t)
