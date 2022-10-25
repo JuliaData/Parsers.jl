@@ -355,7 +355,7 @@ end
 delimiter(opts::Options) = delimiter(opts.flags.checkdelim, opts.delim, opts.flags.ignorerepeated, opts.cmt, opts.flags.ignoreemptylines, opts.flags.stripwhitespace)
 function delimiter(checkdelim, delim, ignorerepeated, cmt, ignoreemptylines, stripwhitespace)
     function(parser)
-        function findelimiter(::Type{T}, source, pos, len, b, code, pl) where {T}
+        function _finddelimiter(::Type{T}, source, pos, len, b, code, pl) where {T}
             Base.@_inline_meta
             pos, code, pl, x = parser(T, source, pos, len, b, code, pl)
             if eof(source, pos, len) || !checkdelim || delimited(code) || newline(code) # greedy case
