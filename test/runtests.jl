@@ -260,6 +260,10 @@ res = Parsers.xparse(Int64, "1\n"; sentinel=["", " ", "  "])
 @test res.tlen == 2
 @test res.code == (OK | EOF | NEWLINE)
 
+# #140, #142 
+res = Parsers.xparse(String, "NA"; sentinel=["NA"])
+@test res.code == (SENTINEL | EOF)
+
 # stripwhitespace
 res = Parsers.xparse(String, "{hey there}"; openquotechar='{', closequotechar='}', stripwhitespace=true)
 @test res.val.pos == 2 && res.val.len == 9
