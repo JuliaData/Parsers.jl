@@ -241,10 +241,11 @@ function sentinel(chcksentinel, sentinel)
             # @show match, sentinelpos, pos, pl
             if match && sentinelpos > (pl.pos + pl.len - 1)
                 # if we matched a sentinel value that was as long or longer than our type value
+                code &= ~OK
                 if isgreedy(T)
                     pl = withlen(pl, sentinelpos - pl.pos)
                 else
-                    code &= ~(OK | INVALID | EOF | OVERFLOW)
+                    code &= ~(INVALID | EOF | OVERFLOW)
                     pos = sentinelpos
                     fastseek!(source, pos - 1)
                 end
