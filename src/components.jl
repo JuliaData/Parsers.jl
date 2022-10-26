@@ -306,6 +306,9 @@ function finddelimiter(::Type{T}, source, pos, len, b, code, pl, delim, ignorere
                     break
                 end
                 if eof(source, pos, len)
+                    if matched && !matchednewline
+                        code |= EOF
+                    end
                     break
                 end
                 b = peekbyte(source, pos)
