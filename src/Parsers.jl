@@ -305,7 +305,7 @@ const SourceType = Union{AbstractVector{UInt8}, AbstractString, IO}
 xparse(::Type{T}, source::SourceType; pos::Integer=1, len::Integer=source isa IO ? 0 : sizeof(source), kw...) where {T} =
     xparse(T, source, pos, len, Options(; kw...))
 
-_xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T <: SupportedTypes, S} =
+@inline _xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T <: SupportedTypes, S} =
     Result(emptysentinel(options)(delimiter(options)(whitespace(options)(
         quoted(options)(whitespace(options)(sentinel(options)(typeparser(options)
     )))))))(T, source, pos, len, S)

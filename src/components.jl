@@ -380,7 +380,7 @@ function typeparser(opts::Options)
 end
 
 # backwards compat
-function typeparser(T, source, pos, len, b, code, opts::Options)
+@inline function typeparser(T, source, pos, len, b, code, opts::Options)
     pos, code, pl, x = typeparser(T, source, pos, len, b, code, poslen(pos, 0), opts)
     return x, code, pos
 end
