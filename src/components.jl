@@ -107,7 +107,7 @@ function whitespace(spacedelim, tabdelim, stripquoted, stripwh)
     end
 end
 
-function findendquoted(::Type{T}, source, pos, len, b, code, pl, isquoted, cq, e, stripquoted) where {T}
+@inline function findendquoted(::Type{T}, source, pos, len, b, code, pl, isquoted, cq, e, stripquoted) where {T}
     # for quoted fields, find the closing quote character
     # we should be positioned at the correct place to find the closing quote character if everything is as it should be
     # if we don't find the quote character immediately, something's wrong, so mark INVALID
@@ -260,7 +260,7 @@ function sentinel(chcksentinel, sentinel)
     end
 end
 
-function finddelimiter(::Type{T}, source, pos, len, b, code, pl, delim, ignorerepeated, cmt, ignoreemptylines, stripwhitespace) where {T}
+@inline function finddelimiter(::Type{T}, source, pos, len, b, code, pl, delim, ignorerepeated, cmt, ignoreemptylines, stripwhitespace) where {T}
     # now we check for a delimiter; if we don't find it, keep parsing until we do
     # for greedy strings, we need to keep track of the last non-whitespace character
     # if we're stripping whitespace, but note we've already skipped leading whitespace
@@ -380,7 +380,7 @@ function typeparser(opts::Options)
 end
 
 # backwards compat
-function typeparser(T, source, pos, len, b, code, opts::Options)
+@inline function typeparser(T, source, pos, len, b, code, opts::Options)
     pos, code, pl, x = typeparser(T, source, pos, len, b, code, poslen(pos, 0), opts)
     return x, code, pos
 end

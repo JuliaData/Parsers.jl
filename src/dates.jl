@@ -339,11 +339,7 @@ end
     year = month = day = Int64(1)
     hour = minute = second = millisecond = Int64(0)
     tz = ""
-    @static if VERSION >= v"1.3-DEV"
-        ampm = Dates.TWENTYFOURHOUR
-    else
-        ampm = 0
-    end
+    ampm = Dates.TWENTYFOURHOUR
     extras = nothing
     for tok in tokens
         # @show pos, Char(b), code, typeof(tok)
