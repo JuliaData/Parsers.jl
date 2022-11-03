@@ -5,10 +5,10 @@ isgreedy(T) = false
 @inline function typeparser(::Type{T}, source, pos, len, b, code, pl, opts) where {T <: AbstractString}
     if quoted(code)
         code |= OK
-        return @inline findendquoted(T, source, pos, len, b, code, pl, true, opts.cq, opts.e, opts.flags.stripquoted)
+        return findendquoted(T, source, pos, len, b, code, pl, true, opts.cq, opts.e, opts.flags.stripquoted)
     elseif opts.flags.checkdelim
         code |= OK
-        return @inline finddelimiter(T, source, pos, len, b, code, pl, opts.delim, opts.flags.ignorerepeated, opts.cmt, opts.flags.ignoreemptylines, opts.flags.stripwhitespace)
+        return finddelimiter(T, source, pos, len, b, code, pl, opts.delim, opts.flags.ignorerepeated, opts.cmt, opts.flags.ignoreemptylines, opts.flags.stripwhitespace)
     else
         code |= OK
         return findeof(source, pos, len, b, code, pl, opts)
