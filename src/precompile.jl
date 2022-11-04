@@ -1,7 +1,30 @@
-function _precompile_()
-    ccall(:jl_generating_output, Cint, ()) == 1 || return nothing
-    precompile(Tuple{typeof(Parsers.parse), Type{Int64}, String})
-    precompile(Tuple{typeof(Parsers.parse), Type{Float64}, String})
-    precompile(Tuple{typeof(Parsers.parse), Type{Date}, String})
+using SnoopPrecompile
+
+@precompile_setup begin
+    # Putting some things in `setup` can reduce the size of the
+    # precompile file and potentially make loading faster.
+    options = Parsers.Options()
+    pos = 1
+    val = "123"
+    len = length(val)
+    @precompile_all_calls begin
+        # all calls in this block will be precompiled, regardless of whether
+        # they belong to your package or not (on Julia 1.8 and higher)
+        for T in (String, Int32, Int64, Float64, BigFloat, Dates.Date, Dates.DateTime, Dates.Time, Bool)
+            for buf in (codeunits(val), Vector(codeunits(val)))
+                Parsers.xparse(T, buf, pos, len, options)
+                Parsers.xparse(T, buf, pos, len, options, Any)
+            end
+        end
+
+        for T in (Int32, Int64, Float64, BigFloat, Dates.Date, Dates.DateTime, Dates.Time, Bool)
+            for buf in (val, SubString(val, 1:3), Vector(codeunits(val)), view(Vector(codeunits(val)), 1:3))
+                try
+                    Parsers.parse(T, buf, options)
+                catch
+                end
+                Parsers.tryparse(T, buf, options)
+            end
+        end
+    end
 end
-_precompile_()
