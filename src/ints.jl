@@ -95,3 +95,25 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
 @label done
     return pos, code, PosLen(pl.pos, pos - pl.pos), x
 end
+
+@inline function typeparser(::Type{Number}, source, pos, len, b, code, pl, opts)
+    startpos = pos
+    # begin parsing
+    neg = b == UInt8('-')
+    if neg || b == UInt8('+')
+        pos += 1
+        incr!(source)
+    end
+    if eof(source, pos, len)
+        code |= INVALID | EOF
+        @goto done
+    end
+    b = peekbyte(source, pos)
+    # parse rest of number
+    digits = Int64(0)
+    x, code, pos = parsedigits(Number, source, pos, len, b, code, opts, digits, neg, startpos)
+    return x, pos
+
+@label done
+    return pos, code, PosLen(pl.pos, pos - pl.pos), x
+end

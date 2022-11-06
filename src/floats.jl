@@ -29,7 +29,7 @@ end
 maxdigits(::Type{Float64}) = 1079
 maxdigits(::Type{Float32}) = 154
 maxdigits(::Type{Float16}) = 29
-maxdigits(::Type{BigFloat}) = typemax(Int64)
+maxdigits(T) = typemax(Int64)
 
 ten(::Type{T}) where {T} = T(10)
 const TEN = BigInt(10)
@@ -183,10 +183,10 @@ end
 end
 
 # if we need to _widen the type due to `digits` overflow, we want a non-inlined version so base case compilation doesn't get out of control
-@noinline _parsedigits(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos) where {T <: SupportedFloats, IntType} =
+@noinline _parsedigits(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos) where {T, IntType} =
     parsedigits(T, source, pos, len, b, code, options, digits, neg, startpos)
 
-@inline function parsedigits(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos) where {T <: SupportedFloats, IntType}
+@inline function parsedigits(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos) where {T, IntType}
     x = zero(T)
     ndigits = 0
     has_groupmark = options.groupmark !== nothing
