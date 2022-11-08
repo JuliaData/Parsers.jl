@@ -680,4 +680,17 @@ include("dates.jl")
     Aqua.test_all(Parsers)
 end
 
+@testset "parse(Number, x)" begin
+    @test Parsers.parse(Number, "1") === 1
+    @test Parsers.parse(Number, "1.0") === 1.0
+    @test Parsers.parse(Number, "1.0f0") === 1.0f0
+    @test Parsers.parse(Number, "1.0e0") === 1.0e0
+    # Int128 literal
+    @test Parsers.parse(Number, "9223372036854775808") === 9223372036854775808
+    # BigInt
+    @test Parsers.parse(Number, "170141183460469231731687303715884105728") == 170141183460469231731687303715884105728
+    # BigFloat promotion
+    @test Parsers.parse(Number, "1e310") == Base.parse(BigFloat, "1e310")
+end
+
 end # @testset "Parsers"

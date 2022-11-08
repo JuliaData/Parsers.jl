@@ -405,6 +405,30 @@ end
     @test res.val ≈ 100_000_000.99
 end
 
+@testset "BigFloats" begin
+    @test Parsers.parse(BigFloat, "1.7976931348623157e308") == Base.parse(BigFloat, "1.7976931348623157e308")
+    @test Parsers.parse(BigFloat, "-1.7976931348623157e308") == Base.parse(BigFloat, "-1.7976931348623157e308")
+    # next float64 - too large
+    @test Parsers.parse(BigFloat, "1.7976931348623159e308") == Base.parse(BigFloat, "1.7976931348623159e308")
+    @test Parsers.parse(BigFloat, "-1.7976931348623159e308") == Base.parse(BigFloat, "-1.7976931348623159e308")
+    # the border is ...158079
+    # borderline - okay
+    @test Parsers.parse(BigFloat, "1.7976931348623158e308") == Base.parse(BigFloat, "1.7976931348623158e308")
+    @test Parsers.parse(BigFloat, "-1.7976931348623158e308") == Base.parse(BigFloat, "-1.7976931348623158e308")
+    # borderline - too large
+    @test Parsers.parse(BigFloat, "1.797693134862315808e308") == Base.parse(BigFloat, "1.797693134862315808e308")
+    @test Parsers.parse(BigFloat, "-1.797693134862315808e308") == Base.parse(BigFloat, "-1.797693134862315808e308")
+
+    # a little too large
+    @test Parsers.parse(BigFloat, "1e308") == Base.parse(BigFloat, "1e308")
+    @test Parsers.parse(BigFloat, "2e308") == Base.parse(BigFloat, "2e308")
+    @test Parsers.parse(BigFloat, "1e309") == Base.parse(BigFloat, "1e309")
+
+    # way too large
+    @test Parsers.parse(BigFloat, "1e310") == Base.parse(BigFloat, "1e310")
+    @test Parsers.parse(BigFloat, "-1e310") == Base.parse(BigFloat, "-1e310")
+end
+
 # https://github.com/JuliaData/CSV.jl/issues/916
 @test  Parsers.parse(Float64, "0.44311945001372019574271437679879349172") === 0.4431194500137202
 @test Parsers.parse(BigFloat, "0.44311945001372019574271437679879349172") == BigFloat("0.44311945001372019574271437679879349172")

@@ -98,6 +98,7 @@ end
 
 @inline function typeparser(::Type{Number}, source, pos, len, b, code, pl, opts)
     startpos = pos
+    startcode = code
     # begin parsing
     neg = b == UInt8('-')
     if neg || b == UInt8('+')
@@ -112,7 +113,11 @@ end
     # parse rest of number
     digits = Int64(0)
     x, code, pos = parsedigits(Number, source, pos, len, b, code, opts, digits, neg, startpos)
-    return x, pos
+    if (x === Inf || x === -Inf) && !specialvalue(code)
+        # by default, parsedigits only has up to Float64 precision; if we overflow
+        # let's try BigFloat
+        return typeparser(BigFloat, source, startpos, len, b, startcode, pl, opts)
+    end
 
 @label done
     return pos, code, PosLen(pl.pos, pos - pl.pos), x
