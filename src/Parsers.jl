@@ -146,6 +146,33 @@ prepare!(x::Vector) = sort!(x, by=x->sizeof(x), rev=true)
 asciival(c::Char) = isascii(c)
 asciival(b::UInt8) = b < 0x80
 
+_match(a::T, b::T) where {T<:Union{String,UInt8,Char}} = a == b
+_match(a::T, b::S) where {T<:Union{String,UInt8,Char,Regex}, S<:Union{String,UInt8,Char}} = _match(b, a)
+_match(a::String, b::Regex) = (m = match(b, a); isnothing(m) ? false : m.match == a)
+_match(a::Char, b::Regex) = _match(string(a), b)
+_match(a::UInt8, b::Regex) = _match(Char(a), b)
+_match(a::UInt8, b::String) = ncodeunits(b) == 1 && Char(a) == first(b)
+_match(a::Char, b::String) = ncodeunits(a) == ncodeunits(b) && a == first(b)
+_match(a::UInt8, b::Char) = ncodeunits(b) == 1 && a == UInt8(b)
+_match(a::Nothing, b) = false
+_match(a, b::Nothing) = false
+_match(a::Nothing, b::Nothing) = false
+# TODO: this is not correct e.g. r"aa{1,1}a" is the same as r"aaa"
+# but we won't catch that.
+_match(a::Regex, b::Regex) = a == b
+
+_startswith(s::UInt8, prefix::Union{String,Char}) = ncodeunits(prefix) == 1 && Char(s) == first(prefix)
+_startswith(s::Char, prefix::Union{String,Char}) = ncodeunits(s) >= ncodeunits(prefix) && s == first(prefix)
+_startswith(s::String, prefix::Union{Char,String,Regex}) = startswith(s, prefix)
+_startswith(s::String, prefix::UInt8) = startswith(s, Char(prefix))
+_startswith(s::Char, prefix::Regex) = startswith(string(s), prefix)
+_startswith(s::UInt8, prefix::Regex) = startswith(Char(s), prefix)
+_startswith(s::UInt8, prefix::UInt8) = s == prefix
+_startswith(s::Char, prefix::UInt8) = first(codeunits(s)) == prefix
+_startswith(a::Nothing, b) = false
+_startswith(a, b::Nothing) = false
+_startswith(a::Nothing, b::Nothing) = false
+
 const MaybeToken = Union{Nothing, UInt8, Char, String, Regex}
 
 function Options(
@@ -175,16 +202,14 @@ function Options(
     end
     if sentinel isa Vector{String}
         for sent in sentinel
-            if stripwhitespace && (startswith(sent, " ") || startswith(sent, "\t"))
+            if stripwhitespace && (_startswith(sent, " ") || _startswith(sent, "\t"))
                 throw(ArgumentError("sentinel value isn't allowed to start with ' ' or '\t' characters if `stripwhitespace=true`"))
             end
-            if quoted && (startswith(sent, string(Char(openquotechar))) || startswith(sent, string(Char(closequotechar))))
+            if quoted && (_startswith(sent, openquotechar) || _startswith(sent, closequotechar))
                 throw(ArgumentError("sentinel value isn't allowed to start with openquotechar, closequotechar, or escapechar characters"))
             end
-            if (delim isa UInt8 || delim isa Char) && startswith(sent, string(Char(delim)))
-                throw(ArgumentError("sentinel value isn't allowed to start with a delimiter character"))
-            elseif delim isa String && startswith(sent, delim)
-                throw(ArgumentError("sentinel value isn't allowed to start with a delimiter string"))
+            if _startswith(sent, delim)
+                throw(ArgumentError("sentinel value isn't allowed to start with a delimiter $(isa(delim, String) ? "string" : "character")"))
             end
         end
     end
@@ -197,6 +222,8 @@ function Options(
     quoted && (isempty(oq) || isempty(cq) || isempty(e)) && throw(ArgumentError("quoted=true requires openquotechar, closequotechar, and escapechar to be specified"))
     sent = (sentinel === nothing || sentinel === missing) ? Token[] : map(x -> token(x, "sentinel"), prepare!(sentinel))
     checksentinel = sentinel !== nothing
+    quoted && ((_match(openquotechar, delim) || _match(closequotechar, delim)) || _match(escapechar, delim)) &&
+        throw(ArgumentError("delim argument must be different than openquotechar, closequotechar, and escapechar arguments"))
     del = delim
     delim = token(delim, "delim")
     checkdelim = delim !== nothing && !isempty(delim)
