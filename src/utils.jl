@@ -117,6 +117,7 @@ function ==(a::Token, b::Token)
     end
 end
 ==(a::Token, b::UInt8) = a.token isa UInt8 && a.token == b
+==(a::UInt8, b::Token) = (b == a)
 _contains(a::Token, str::String) = _contains(a.token, str)
 _contains(a::UInt8, str::String) = a == UInt8(str[1])
 _contains(a::Char, str::String) = a == str[1]

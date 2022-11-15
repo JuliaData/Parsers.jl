@@ -260,7 +260,7 @@ res = Parsers.xparse(Int64, "1\n"; sentinel=["", " ", "  "])
 @test res.tlen == 2
 @test res.code == (OK | EOF | NEWLINE)
 
-# #140, #142 
+# #140, #142
 res = Parsers.xparse(String, "NA"; sentinel=["NA"])
 @test res.code == (SENTINEL | EOF)
 
@@ -645,6 +645,12 @@ res = Parsers.xparse(String, source, 1 + res.tlen, 0, opt)
 # checkdelim!
 buf = UInt8[0x20, 0x20, 0x41, 0x20, 0x20, 0x42, 0x0a, 0x20, 0x20, 0x31, 0x20, 0x20, 0x32, 0x0a, 0x20, 0x20, 0x31, 0x31, 0x20, 0x32, 0x32]
 @test Parsers.checkdelim!(buf, 1, 21, Parsers.Options(delim=' ', ignorerepeated=true)) == 3
+
+# #150
+@test 0x22 == Parsers.Token(0x22)
+@test 0x22 != Parsers.Token(0x00)
+@test Parsers.Token(0x22) == 0x22
+@test Parsers.Token(0x22) != 0x00
 
 end # @testset "misc"
 
