@@ -33,6 +33,7 @@ function findeof(source, pos, len, b, code, pl, opts)
 end
 
 function typeparser(::Type{Char}, source, pos, len, b, code, pl, opts)
+    startpos = pos
     l = 8 * (4 - leading_ones(b))
     c = UInt32(b) << 24
     s = 16
@@ -52,9 +53,17 @@ function typeparser(::Type{Char}, source, pos, len, b, code, pl, opts)
     end
 
 @label done
+    # Char is *almost* not greedy; it's not greedy in that we know how much
+    # to parse, independent of parsing stream contents, but we still need
+    # to account for the possibility of the Options.delim being a Char
+    # and treating that as a delim instead of a successfully parsed Char
+    # hence the checkdelim + _contains check before setting OK
     ch = reinterpret(Char, c)
     if Base.isoverlong(ch) || Base.ismalformed(ch)
         code |= INVALID
+    elseif opts.flags.checkdelim && _contains(opts.delim, ch)
+        code |= INVALID
+        pos = startpos
     else
         code |= OK
     end
