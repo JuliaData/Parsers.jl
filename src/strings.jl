@@ -69,6 +69,7 @@ function typeparser(::Type{Char}, source, pos, len, b, code, pl, opts)
         code |= INVALID
         code &= ~EOF
         pos = startpos
+        fastseek!(source, startpos)
     else
         code |= OK
     end

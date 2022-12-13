@@ -656,6 +656,9 @@ buf = UInt8[0x20, 0x20, 0x41, 0x20, 0x20, 0x42, 0x0a, 0x20, 0x20, 0x31, 0x20, 0x
 res = Parsers.xparse(Char, ",,345", 1, 5, Parsers.Options(sentinel=missing, delim=','))
 @test res.code == Parsers.SENTINEL | Parsers.DELIMITED
 @test res.tlen == 1
+res = Parsers.xparse(Char, IOBuffer(",,345"), 1, 5, Parsers.Options(sentinel=missing, delim=','))
+@test res.code == Parsers.SENTINEL | Parsers.DELIMITED
+@test res.tlen == 1
 res = Parsers.xparse(Char, ",,", 2, 2, Parsers.Options(sentinel=missing, delim=','))
 @test !Parsers.eof(res.code)
 res = Parsers.xparse(Char, ",,", 3, 2, Parsers.Options(sentinel=missing, delim=','))
