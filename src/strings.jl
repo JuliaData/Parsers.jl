@@ -36,6 +36,10 @@ function typeparser(::Type{Char}, source, pos, len, b, code, pl, opts)
     startpos = pos
     l = 8 * (4 - leading_ones(b))
     c = UInt32(b) << 24
+    if eof(source, pos, len)
+        code |= INVALID | EOF
+        @goto done
+    end
     s = 16
     while true
         pos += 1
@@ -63,6 +67,7 @@ function typeparser(::Type{Char}, source, pos, len, b, code, pl, opts)
         code |= INVALID
     elseif opts.flags.checkdelim && _contains(opts.delim, ch)
         code |= INVALID
+        code &= ~EOF
         pos = startpos
     else
         code |= OK
