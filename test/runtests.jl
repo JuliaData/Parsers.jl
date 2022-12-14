@@ -653,7 +653,7 @@ buf = UInt8[0x20, 0x20, 0x41, 0x20, 0x20, 0x42, 0x0a, 0x20, 0x20, 0x31, 0x20, 0x
 @test Parsers.Token(0x22) != 0x00
 
 # Char doesn't match delim
-for delim in (',', ",")
+for delim in (',', ",", r",")
     res = Parsers.xparse(Char, ",,345", 1, 5, Parsers.Options(sentinel=missing, delim=delim))
     @test res.code == Parsers.SENTINEL | Parsers.DELIMITED
     @test res.tlen == 1
