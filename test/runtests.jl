@@ -657,9 +657,11 @@ for delim in (',', ",", r",")
     res = Parsers.xparse(Char, ",,345", 1, 5, Parsers.Options(sentinel=missing, delim=delim))
     @test res.code == Parsers.SENTINEL | Parsers.DELIMITED
     @test res.tlen == 1
-    res = Parsers.xparse(Char, IOBuffer(",,345"), 1, 5, Parsers.Options(sentinel=missing, delim=delim))
-    @test res.code == Parsers.SENTINEL | Parsers.DELIMITED
-    @test res.tlen == 1
+    if !isa(delim, Regex) # Regex matching not supported on IOBuffer
+        res = Parsers.xparse(Char, IOBuffer(",,345"), 1, 5, Parsers.Options(sentinel=missing, delim=delim))
+        @test res.code == Parsers.SENTINEL | Parsers.DELIMITED
+        @test res.tlen == 1
+    end
     res = Parsers.xparse(Char, ",,", 2, 2, Parsers.Options(sentinel=missing, delim=delim))
     @test res.code == Parsers.SENTINEL | Parsers.DELIMITED
     @test res.tlen == 1
