@@ -653,18 +653,20 @@ buf = UInt8[0x20, 0x20, 0x41, 0x20, 0x20, 0x42, 0x0a, 0x20, 0x20, 0x31, 0x20, 0x
 @test Parsers.Token(0x22) != 0x00
 
 # Char doesn't match delim
-res = Parsers.xparse(Char, ",,345", 1, 5, Parsers.Options(sentinel=missing, delim=','))
-@test res.code == Parsers.SENTINEL | Parsers.DELIMITED
-@test res.tlen == 1
-res = Parsers.xparse(Char, IOBuffer(",,345"), 1, 5, Parsers.Options(sentinel=missing, delim=','))
-@test res.code == Parsers.SENTINEL | Parsers.DELIMITED
-@test res.tlen == 1
-res = Parsers.xparse(Char, ",,", 2, 2, Parsers.Options(sentinel=missing, delim=','))
-@test res.code == Parsers.SENTINEL | Parsers.DELIMITED
-@test res.tlen == 1
-res = Parsers.xparse(Char, ",,", 3, 2, Parsers.Options(sentinel=missing, delim=','))
-@test res.code == Parsers.SENTINEL | Parsers.EOF
-@test res.tlen == 0
+for delim in (',', ",")
+    res = Parsers.xparse(Char, ",,345", 1, 5, Parsers.Options(sentinel=missing, delim=delim))
+    @test res.code == Parsers.SENTINEL | Parsers.DELIMITED
+    @test res.tlen == 1
+    res = Parsers.xparse(Char, IOBuffer(",,345"), 1, 5, Parsers.Options(sentinel=missing, delim=delim))
+    @test res.code == Parsers.SENTINEL | Parsers.DELIMITED
+    @test res.tlen == 1
+    res = Parsers.xparse(Char, ",,", 2, 2, Parsers.Options(sentinel=missing, delim=delim))
+    @test res.code == Parsers.SENTINEL | Parsers.DELIMITED
+    @test res.tlen == 1
+    res = Parsers.xparse(Char, ",,", 3, 2, Parsers.Options(sentinel=missing, delim=delim))
+    @test res.code == Parsers.SENTINEL | Parsers.EOF
+    @test res.tlen == 0
+end
 
 end # @testset "misc"
 
