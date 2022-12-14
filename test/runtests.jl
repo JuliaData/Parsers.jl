@@ -652,6 +652,24 @@ buf = UInt8[0x20, 0x20, 0x41, 0x20, 0x20, 0x42, 0x0a, 0x20, 0x20, 0x31, 0x20, 0x
 @test Parsers.Token(0x22) == 0x22
 @test Parsers.Token(0x22) != 0x00
 
+# Char doesn't match delim
+for delim in (',', ",", r",")
+    res = Parsers.xparse(Char, ",,345", 1, 5, Parsers.Options(sentinel=missing, delim=delim))
+    @test res.code == Parsers.SENTINEL | Parsers.DELIMITED
+    @test res.tlen == 1
+    if !isa(delim, Regex) # Regex matching not supported on IOBuffer
+        res = Parsers.xparse(Char, IOBuffer(",,345"), 1, 5, Parsers.Options(sentinel=missing, delim=delim))
+        @test res.code == Parsers.SENTINEL | Parsers.DELIMITED
+        @test res.tlen == 1
+    end
+    res = Parsers.xparse(Char, ",,", 2, 2, Parsers.Options(sentinel=missing, delim=delim))
+    @test res.code == Parsers.SENTINEL | Parsers.DELIMITED
+    @test res.tlen == 1
+    res = Parsers.xparse(Char, ",,", 3, 2, Parsers.Options(sentinel=missing, delim=delim))
+    @test res.code == Parsers.SENTINEL | Parsers.EOF
+    @test res.tlen == 0
+end
+
 end # @testset "misc"
 
 include("floats.jl")
@@ -660,30 +678,6 @@ include("dates.jl")
 
 @testset "Aqua.jl" begin
     Aqua.test_all(Parsers)
-end
-
-@static if Base.VERSION >= v"1.7"
-    import JET
-    @testset "JET.jl" begin
-        @testset "Optimization" begin
-            for S in (String, Vector{UInt8}, IOBuffer)
-                for T in (String, Symbol, Char, Int64, Int32, UInt64, UInt32, Float64, Float32, Bool)
-                    JET.test_opt(Parsers.xparse, Tuple{Type{T}, S, Int, Int, Parsers.Options, Type{T === String ? PosLen : T}})
-                end
-            end
-
-            for S in (Vector{UInt8}, IOBuffer)
-                for T in (Dates.Date, Dates.Time)
-                    JET.test_opt(Parsers.xparse, Tuple{Type{T}, S, Int, Int, Parsers.Options, Type{T}}, broken=true)
-                end
-            end
-        end
-        @testset "Typos" begin
-            res = JET.report_package(Parsers, mode=:typo, toplevel_logger=nothing);
-            @test isempty(res.res.toplevel_error_reports)
-            !isempty(res.res.toplevel_error_reports) && display(res)
-        end
-    end
 end
 
 end # @testset "Parsers"
