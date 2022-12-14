@@ -660,8 +660,11 @@ res = Parsers.xparse(Char, IOBuffer(",,345"), 1, 5, Parsers.Options(sentinel=mis
 @test res.code == Parsers.SENTINEL | Parsers.DELIMITED
 @test res.tlen == 1
 res = Parsers.xparse(Char, ",,", 2, 2, Parsers.Options(sentinel=missing, delim=','))
-@test !Parsers.eof(res.code)
+@test res.code == Parsers.SENTINEL | Parsers.DELIMITED
+@test res.tlen == 1
 res = Parsers.xparse(Char, ",,", 3, 2, Parsers.Options(sentinel=missing, delim=','))
+@test res.code == Parsers.SENTINEL | Parsers.EOF
+@test res.tlen == 0
 
 end # @testset "misc"
 
