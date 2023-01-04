@@ -681,7 +681,7 @@ include("dates.jl")
 end
 
 @testset "parse(Number, x)" begin
-    @test Parsers.parse(Number, "1") === 1
+    @test Parsers.parse(Number, "1") === Int64(1)
     @test Parsers.parse(Number, "1.0") === 1.0
     @test Parsers.parse(Number, "1.0f0") === 1.0f0
     @test Parsers.parse(Number, "1.0e0") === 1.0e0
