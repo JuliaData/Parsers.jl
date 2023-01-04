@@ -61,6 +61,7 @@ const DELIMITED            = 0b0000000000001000 % ReturnCode
 const NEWLINE              = 0b0000000000010000 % ReturnCode
 const EOF                  = 0b0000000000100000 % ReturnCode
 const ESCAPED_STRING       = 0b0000001000000000 % ReturnCode
+const SPECIAL_VALUE        = 0b0000010000000000 % ReturnCode
 
 # invalid flags
 const INVALID_QUOTED_FIELD = 0b1000000001000000 % ReturnCode
@@ -78,6 +79,7 @@ quoted(x::ReturnCode) = (x & QUOTED) == QUOTED
 delimited(x::ReturnCode) = (x & DELIMITED) == DELIMITED
 newline(x::ReturnCode) = (x & NEWLINE) == NEWLINE
 escapedstring(x::ReturnCode) = (x & ESCAPED_STRING) == ESCAPED_STRING
+specialvalue(x::ReturnCode) = (x & SPECIAL_VALUE) == SPECIAL_VALUE
 invalidquotedfield(x::ReturnCode) = (x & INVALID_QUOTED_FIELD) == INVALID_QUOTED_FIELD
 invaliddelimiter(x::ReturnCode) = (x & INVALID_DELIMITER) == INVALID_DELIMITER
 overflow(x::ReturnCode) = (x & OVERFLOW) == OVERFLOW
