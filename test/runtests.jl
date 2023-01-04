@@ -506,6 +506,11 @@ pos += tlen
 @test_throws ArgumentError Parsers.Options(sentinel=["\""])
 @test_throws ArgumentError Parsers.Options(sentinel=[","], delim=',')
 @test_throws ArgumentError Parsers.Options(sentinel=[","], delim=",")
+@test_throws ArgumentError Parsers.Options(delim=r"\"")
+@test_throws ArgumentError Parsers.Options(openquotechar="aaa", delim=r"a+")
+@test_throws ArgumentError Parsers.Options(openquotechar=r"a+", delim="aaa")
+@test_throws ArgumentError Parsers.Options(escapechar=UInt8('a'), delim="a")
+@test_throws ArgumentError Parsers.Options(escapechar='a', delim=r"a")
 
 @test Parsers.checkdelim!(UInt8[], 1, 0, Parsers.OPTIONS) == 1
 @test Parsers.checkdelim!(codeunits(","), 1, 1, Parsers.XOPTIONS) == 2
