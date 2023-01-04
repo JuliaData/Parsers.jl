@@ -369,9 +369,9 @@ function checkdelim!(source::AbstractVector{UInt8}, pos, len, options::Options)
         match, pos = checktoken(source, pos, len, b, delim)
     else
         # keep parsing as long as we keep matching delim
-        while !eof(source, pos, len)
+        while true
             match, pos = checktoken(source, pos, len, b, delim)
-            match || break
+            (match && !eof(source, pos, len)) || break
             b = peekbyte(source, pos)
         end
     end
