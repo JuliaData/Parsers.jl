@@ -64,25 +64,25 @@ testcases = [
     (str="n", x=0.0, code=(INVALID | INVALID_DELIMITER | EOF), len=1, tot=1),
     (str="na", x=0.0, code=(INVALID | INVALID_DELIMITER | EOF), len=2, tot=2),
     (str="n", x=0.0, code=(INVALID | INVALID_DELIMITER | EOF), len=1, tot=1),
-    (str="inf", x=Inf, code=(OK | EOF), len=0, tot=0),
-    (str="infinity", x=Inf, code=(OK | EOF), len=0, tot=0),
-    (str="-inf", x=-Inf, code=(OK | EOF), len=0, tot=0),
-    (str="-Inf", x=-Inf, code=(OK | EOF), len=0, tot=0),
-    (str="-infinity", x=-Inf, code=(OK | EOF), len=0, tot=0),
-    (str="-INFINITY", x=-Inf, code=(OK | EOF), len=0, tot=0),
-    (str="+inf", x=Inf, code=(OK | EOF), len=0, tot=0),
+    (str="inf", x=Inf, code=(OK | SPECIAL_VALUE | EOF), len=0, tot=0),
+    (str="infinity", x=Inf, code=(OK | SPECIAL_VALUE | EOF), len=0, tot=0),
+    (str="-inf", x=-Inf, code=(OK | SPECIAL_VALUE | EOF), len=0, tot=0),
+    (str="-Inf", x=-Inf, code=(OK | SPECIAL_VALUE | EOF), len=0, tot=0),
+    (str="-infinity", x=-Inf, code=(OK | SPECIAL_VALUE | EOF), len=0, tot=0),
+    (str="-INFINITY", x=-Inf, code=(OK | SPECIAL_VALUE | EOF), len=0, tot=0),
+    (str="+inf", x=Inf, code=(OK | SPECIAL_VALUE | EOF), len=0, tot=0),
     (str="i", x=0.0, code=(INVALID | INVALID_DELIMITER | EOF), len=1, tot=1),
     (str="in", x=0.0, code=(INVALID | INVALID_DELIMITER | EOF), len=2, tot=2),
-    (str="infi", x=Inf, code=(OK | EOF), len=1, tot=1),
-    (str="infin", x=Inf, code=(OK | EOF), len=1, tot=1),
-    (str="infini", x=Inf, code=(OK | EOF), len=1, tot=1),
-    (str="infinit", x=Inf, code=(OK | EOF), len=1, tot=1),
+    (str="infi", x=Inf, code=(OK | SPECIAL_VALUE | EOF), len=1, tot=1),
+    (str="infin", x=Inf, code=(OK | SPECIAL_VALUE | EOF), len=1, tot=1),
+    (str="infini", x=Inf, code=(OK | SPECIAL_VALUE | EOF), len=1, tot=1),
+    (str="infinit", x=Inf, code=(OK | SPECIAL_VALUE | EOF), len=1, tot=1),
     (str="i,", x=0.0, code=(INVALID | DELIMITED | INVALID_DELIMITER), len=1, tot=1),
     (str="in,", x=0.0, code=(INVALID | DELIMITED | INVALID_DELIMITER), len=2, tot=2),
-    (str="infi,", x=Inf, code=(OK | DELIMITED), len=1, tot=1),
-    (str="infin,", x=Inf, code=(OK | DELIMITED), len=1, tot=1),
-    (str="infini,", x=Inf, code=(OK | DELIMITED), len=1, tot=1),
-    (str="infinit,", x=Inf, code=(OK | DELIMITED), len=1, tot=1),
+    (str="infi,", x=Inf, code=(OK | SPECIAL_VALUE | DELIMITED), len=1, tot=1),
+    (str="infin,", x=Inf, code=(OK | SPECIAL_VALUE | DELIMITED), len=1, tot=1),
+    (str="infini,", x=Inf, code=(OK | SPECIAL_VALUE | DELIMITED), len=1, tot=1),
+    (str="infinit,", x=Inf, code=(OK | SPECIAL_VALUE | DELIMITED), len=1, tot=1),
 
     # largest float64
     (str="1.7976931348623157e308", x=1.7976931348623157e+308, code=(OK | EOF), len=0, tot=0),
@@ -296,31 +296,31 @@ for useio in (false, true)
 end
 
 # NaNs
-case = (str="nan", x=NaN, code=(OK | EOF), len=3, tot=3)
+case = (str="nan", x=NaN, code=(OK | SPECIAL_VALUE | EOF), len=3, tot=3)
 res = Parsers.xparse(Float64, case.str)
 x, code, tlen = res.val, res.code, res.tlen
 @test isnan(x)
 @test code == case.code
 @test tlen == 3
-case = (str="NaN", x=NaN, code=(OK | EOF), len=3, tot=3)
+case = (str="NaN", x=NaN, code=(OK | SPECIAL_VALUE | EOF), len=3, tot=3)
 res = Parsers.xparse(Float64, case.str)
 x, code, tlen = res.val, res.code, res.tlen
 @test isnan(x)
 @test code == case.code
 @test tlen == 3
-case = (str="NAN", x=NaN, code=(OK | EOF), len=3, tot=3)
+case = (str="NAN", x=NaN, code=(OK | SPECIAL_VALUE | EOF), len=3, tot=3)
 res = Parsers.xparse(Float64, case.str)
 x, code, tlen = res.val, res.code, res.tlen
 @test isnan(x)
 @test code == case.code
 @test tlen == 3
-case = (str="nAN", x=NaN, code=(OK | EOF), len=3, tot=3)
+case = (str="nAN", x=NaN, code=(OK | SPECIAL_VALUE | EOF), len=3, tot=3)
 res = Parsers.xparse(Float64, case.str)
 x, code, tlen = res.val, res.code, res.tlen
 @test isnan(x)
 @test code == case.code
 @test tlen == 3
-case = (str="nAN,", x=NaN, code=(OK | DELIMITED), len=4, tot=4)
+case = (str="nAN,", x=NaN, code=(OK | SPECIAL_VALUE | DELIMITED), len=4, tot=4)
 res = Parsers.xparse(Float64, case.str)
 x, code, tlen = res.val, res.code, res.tlen
 @test isnan(x)
