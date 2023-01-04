@@ -63,17 +63,19 @@ function typeparser(::Type{BigFloat}, source, pos, len, b, code, pl, options)
     z = BigFloat(precision=Base.MPFR.DEFAULT_PRECISION[])
     if source isa AbstractVector{UInt8}
         str = source
+        strpos = pos
     else
         _, _, _pl, _ = typeparser(String, source, pos, len, b, code, pl, options)
         _pos = position(source)
         vpos, vlen = _pl.pos, _pl.len
         fastseek!(source, vpos - 1)
         str = Base.StringVector(vlen)
+        strpos = 1
         readbytes!(source, str, vlen)
         fastseek!(source, _pos) # reset IO to earlier position
     end
     GC.@preserve str begin
-        ptr = pointer(str)
+        ptr = pointer(str, strpos)
         endptr = Ref{Ptr{UInt8}}()
         err = ccall((:mpfr_strtofr, :libmpfr), Int32, (Ref{BigFloat}, Ptr{UInt8}, Ref{Ptr{UInt8}}, Int32, Base.MPFR.MPFRRoundingMode), z, ptr, endptr, base, rounding)
         code |= endptr[] == ptr ? INVALID : OK
