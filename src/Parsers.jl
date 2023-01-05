@@ -202,14 +202,14 @@ function Options(
     end
     if sentinel isa Vector{String}
         for sent in sentinel
-            if stripwhitespace && (_startswith(sent, " ") || _startswith(sent, "\t"))
-                throw(ArgumentError("sentinel value isn't allowed to start with ' ' or '\t' characters if `stripwhitespace=true`"))
+            if stripwhitespace && (_contains(sent, " ") || _contains(sent, "\t"))
+                throw(ArgumentError("sentinel value isn't allowed to contain ' ' or '\t' characters if `stripwhitespace=true`"))
             end
-            if quoted && (_startswith(sent, openquotechar) || _startswith(sent, closequotechar))
-                throw(ArgumentError("sentinel value isn't allowed to start with openquotechar, closequotechar, or escapechar characters"))
+            if quoted && (_contains(sent, openquotechar) || _contains(sent, closequotechar) || _contains(sent, escapechar))
+                throw(ArgumentError("sentinel value isn't allowed to contain openquotechar, closequotechar, or escapechar characters"))
             end
-            if _startswith(sent, delim)
-                throw(ArgumentError("sentinel value isn't allowed to start with a delimiter $(isa(delim, String) ? "string" : "character")"))
+            if _contains(sent, delim)
+                throw(ArgumentError("sentinel value isn't allowed to contain a delimiter character"))
             end
         end
     end

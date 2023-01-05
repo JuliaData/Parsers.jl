@@ -121,16 +121,25 @@ end
 ==(a::Token, b::UInt8) = a.token isa UInt8 && a.token == b
 ==(a::UInt8, b::Token) = (b == a)
 
+# methods for `_contains(::Token, ::String)`:
 _contains(a::Token, str::String) = _contains(a.token, str)
 _contains(a::UInt8, str::String) = a == UInt8(str[1])
 _contains(a::Char, str::String) = a == str[1]
-_contains(a::String, str::String) = contains(a, str)
 _contains(a::RegexAndMatchData, str::String) = contains(a.re.pattern, str)
 _contains(a::Token, char::Char) = _contains(a.token, char)
 _contains(a::UInt8, char::Char) = ncodeunits(char) == 1 && (Base.zext_int(UInt32, a) << 24) == Base.bitcast(UInt32, char)
 _contains(a::Char, char::Char) = a == char
-_contains(a::String, char::Char) = length(a) == 1 && @inbounds(a[1]) == char
 _contains(a::RegexAndMatchData, char::Char) = contains(a.re.pattern, char)
+
+_contains(a, b::UInt8) = _contains(a, Char(b))
+_contains(a, b) = _contains(a, string(b))
+_contains(a, b::Nothing) = false
+_contains(a::String, str::String) = contains(a, str)
+# methods for `_contains(::String, ::MaybeToken)`:
+_contains(a::String, b::UInt8) = _contains(a, Char(b))
+_contains(a::String, b::Char) = _contains(a, string(b))
+_contains(a::String, b::Regex) = contains(a, b.pattern)
+_contains(a::String, b::Nothing) = false
 
 function Base.isempty(x::Token)
     t = x.token
