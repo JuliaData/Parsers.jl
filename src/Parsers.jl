@@ -65,6 +65,9 @@ end
 
 Base.show(io::IO, x::Flags) = print(io, "Parsers.Flags(spacedelim=", x.spacedelim, ", tabdelim=", x.tabdelim, ", stripquoted=", x.stripquoted, ", stripwhitespace=", x.stripwhitespace, ", checkquoted=", x.checkquoted, ", checksentinel=", x.checksentinel, ", checkdelim=", x.checkdelim, ", ignorerepeated=", x.ignorerepeated, ", ignoreemptylines=", x.ignoreemptylines, ")")
 
+Base.write(io::IO, flag::Flags) = write(io, reinterpret(UInt16, flag))
+Base.read(io::IO, ::Type{Flags}) = Base.bitcast(Flags, read(io, UInt16))
+
 function Base.getproperty(x::Flags, nm::Symbol)
     if nm == :spacedelim
         return Base.bitcast(UInt16, x) & SPACEDELIM != 0x00

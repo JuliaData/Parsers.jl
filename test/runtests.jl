@@ -2,6 +2,7 @@ using Parsers, Test, Dates
 
 import Parsers: INVALID, OK, SENTINEL, QUOTED, DELIMITED, NEWLINE, EOF, INVALID_QUOTED_FIELD, INVALID_DELIMITER, OVERFLOW, ESCAPED_STRING, SPECIAL_VALUE
 import Aqua
+import Serialization
 struct CustomType
     x::String
 end
@@ -717,6 +718,13 @@ end
     @test Parsers.parse(Number, "170141183460469231731687303715884105728") == 170141183460469231731687303715884105728
     # BigFloat promotion
     @test Parsers.parse(Number, "1e310") == Base.parse(BigFloat, "1e310")
+end
+
+# https://github.com/JuliaData/CSV.jl/issues/1063
+@testset "Serialization" begin
+    tempfile = tempname()
+    Serialization.serialize(tempfile, Parsers.Options())
+    @test Serialization.deserialize(tempfile).flags == Parsers.Options().flags
 end
 
 end # @testset "Parsers"
