@@ -98,11 +98,11 @@ end
 
 @inline function typeparser(::Type{Number}, source, pos, len, b, code, pl, opts)
     x = Ref{Number}()
-    pos, code = parsenumber(source, pos, len, b, y -> (x[] = y))
+    pos, code = parsenumber(source, pos, len, b, y -> (x[] = y), opts)
     return pos, code, PosLen(pl.pos, pos - pl.pos), x[]
 end
 
-@inline function parsenumber(source, pos, len, b, f::F) where {F}
+@inline function parsenumber(source, pos, len, b, f::F, opts=OPTIONS) where {F}
     startpos = pos
     code = startcode = SUCCESS
     # begin parsing
@@ -117,11 +117,11 @@ end
     end
     b = peekbyte(source, pos)
     # parse rest of number
-    _, code, pos = parsedigits(Number, source, pos, len, b, code, OPTIONS, Int64(0), neg, startpos, f)
-    if (x === Inf || x === -Inf) && !specialvalue(code)
+    _, code, pos = parsedigits(Number, source, pos, len, b, code, OPTIONS, Int64(0), neg, startpos, true, f)
+    if invalid(code)
         # by default, parsedigits only has up to Float64 precision; if we overflow
         # let's try BigFloat
-        pos, code, _, x = typeparser(BigFloat, source, startpos, len, b, startcode, pl, opts)
+        pos, code, _, x = typeparser(BigFloat, source, startpos, len, b, startcode, poslen(pos, 0), opts)
         if ok(code)
             f(x)
         end
