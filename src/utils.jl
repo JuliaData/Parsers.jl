@@ -296,7 +296,7 @@ function fastseek!(io::IOBuffer, n::Integer)
     io.ptr = n + 1
     return
 end
-fastseek!(io::AbstractVector{UInt8}, n::Integer) = nothing
+fastseek!(io::Union{AbstractVector{UInt8}, AbstractString}, n::Integer) = nothing
 
 """
     Parsers.readbyte(io::IO)::UInt8
@@ -349,7 +349,7 @@ function incr!(from::IOBuffer)
     return
 end
 
-incr!(::AbstractVector{UInt8}) = nothing
+incr!(::Union{AbstractVector{UInt8}, AbstractString}) = nothing
 peekbyte(from::IO, pos) = peekbyte(from)
 dpeekbyte(from::IO, pos) = dpeekbyte(from)
 function peekbyte(from::AbstractVector{UInt8}, pos)
@@ -361,7 +361,17 @@ function dpeekbyte(from::AbstractVector{UInt8}, pos)
     return b, get(from, pos+1, EOF_BYTE)
 end
 
+function peekbyte(from::AbstractString, pos)
+    @inbounds b = codeunit(from, pos)
+    return b
+end
+function dpeekbyte(from::AbstractString, pos)
+    @inbounds b = codeunit(from, pos)
+    return b, pos > sizeof(from) ? EOF_BYTE : peekbyte(from, pos+1)
+end
+
 eof(::AbstractVector{UInt8}, pos::Integer, len::Integer) = pos > len
+eof(::AbstractString, pos::Integer, len::Integer) = pos > len
 eof(source::IO, pos::Integer, len::Integer) = Base.eof(source)
 eof(io::Base.GenericIOBuffer, pos::Integer, len::Integer) = (io.ptr - 1) >= io.size
 
