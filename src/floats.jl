@@ -212,7 +212,7 @@ end
     return pos, code, PosLen(pl.pos, pos - pl.pos), x
 end
 
-@inbounds function handlef(x, f::F) where {F}
+@inline function handlef(x::T, f::F) where {T, F}
     if f === nothing
         return x
     else
@@ -262,6 +262,7 @@ end
                 fastseek!(source, startpos - 1)
                 pos = startpos
                 code |= INVALID
+                x = f === nothing ? x : nothing
                 @goto done
             end
         end
@@ -284,6 +285,7 @@ end
             # otherwise ok, like "1.a" (only "1." is parsed)
             if ndigits == 0
                 code |= INVALID
+                x = f === nothing ? x : nothing
                 @goto done
             else
                 x = handlef(ifelse(neg, -T(digits), T(digits)), f)
@@ -335,7 +337,7 @@ end
                 return _parsefrac(T, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos, frac, f)
             end
         end
-        b += UInt('0')
+        b += UInt8('0')
     end
     # check for exponent notation
     if b == UInt8('e') || b == UInt8('E') || b == UInt8('f') || b == UInt8('F')
@@ -347,6 +349,7 @@ end
         if eof(source, pos, len)
             # it's an error to have a "dangling" 'e', so input was something like "1.1e"
             code |= INVALID | EOF
+            x = f === nothing ? x : nothing
             @goto done
         end
         b = peekbyte(source, pos)
@@ -358,6 +361,7 @@ end
             if eof(source, pos, len)
                 # it's an error to have a "dangling" '-' or '+', so input was something like "1.1e-"
                 code |= INVALID | EOF
+                x = f === nothing ? x : nothing
                 @goto done
             end
         end
@@ -365,6 +369,7 @@ end
         if b > 0x09
             # invalid to have a "dangling" 'e'
             code |= INVALID
+            x = f === nothing ? x : nothing
             @goto done
         end
 
@@ -441,15 +446,21 @@ pow10(::Type{BigFloat}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
 _unsigned(x::BigInt) = x
 _unsigned(x) = unsigned(x)
 
-function scale(::Type{T}, FT::FloatType, v, exp, neg, f::F) where {T, F}
-    if T === Float16 || FT == FLOAT16
-        return handlef(__scale(Float16, _unsigned(v), exp, neg), f)
-    elseif T === Float32 || FT == FLOAT32
-        return handlef(__scale(Float32, _unsigned(v), exp, neg), f)
-    elseif T === Float64 || FT == FLOAT64
+@inline function scale(::Type{T}, FT::FloatType, v, exp, neg, f::F) where {T, F}
+    if T === Float64
         return handlef(__scale(Float64, _unsigned(v), exp, neg), f)
+    elseif T === Float32
+        return handlef(__scale(Float32, _unsigned(v), exp, neg), f)
+    elseif T === Float16
+        return handlef(__scale(Float16, _unsigned(v), exp, neg), f)
+    elseif FT == FLOAT64
+        return handlef(__scale(Float64, _unsigned(v), exp, neg), f)
+    elseif FT == FLOAT32
+        return handlef(__scale(Float32, _unsigned(v), exp, neg), f)
+    elseif FT == FLOAT16
+        return handlef(__scale(Float16, _unsigned(v), exp, neg), f)
     else
-        return handlef(__scale(BigFloat, _unsigned(v), exp, neg), f)
+        error("invalid float type for scale: `$T`")
     end
 end
 

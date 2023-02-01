@@ -97,9 +97,9 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
 end
 
 @inline function typeparser(::Type{Number}, source, pos, len, b, code, pl, opts)
-    local x
-    pos, code = parsenumber(source, pos, len, b, y -> (x = y))
-    return pos, code, PosLen(pl.pos, pos - pl.pos), x
+    x = Ref{Number}()
+    pos, code = parsenumber(source, pos, len, b, y -> (x[] = y))
+    return pos, code, PosLen(pl.pos, pos - pl.pos), x[]
 end
 
 @inline function parsenumber(source, pos, len, b, f::F) where {F}
@@ -118,7 +118,7 @@ end
     b = peekbyte(source, pos)
     # parse rest of number
     _, code, pos = parsedigits(Number, source, pos, len, b, code, OPTIONS, Int64(0), neg, startpos, f)
-    if invalid(code)
+    if (x === Inf || x === -Inf) && !specialvalue(code)
         # by default, parsedigits only has up to Float64 precision; if we overflow
         # let's try BigFloat
         pos, code, _, x = typeparser(BigFloat, source, startpos, len, b, startcode, pl, opts)
