@@ -97,8 +97,14 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
 end
 
 @inline function typeparser(::Type{Number}, source, pos, len, b, code, pl, opts)
+    x = Ref{Number}()
+    pos, code = parsenumber(source, pos, len, b, y -> (x[] = y), opts)
+    return pos, code, PosLen(pl.pos, pos - pl.pos), x[]
+end
+
+@inline function parsenumber(source, pos, len, b, f::F, opts=OPTIONS) where {F}
     startpos = pos
-    startcode = code
+    code = startcode = SUCCESS
     # begin parsing
     neg = b == UInt8('-')
     if neg || b == UInt8('+')
@@ -111,14 +117,16 @@ end
     end
     b = peekbyte(source, pos)
     # parse rest of number
-    digits = Int64(0)
-    x, code, pos = parsedigits(Number, source, pos, len, b, code, opts, digits, neg, startpos)
-    if (x === Inf || x === -Inf) && !specialvalue(code)
+    _, code, pos = parsedigits(Number, source, pos, len, b, code, OPTIONS, Int64(0), neg, startpos, true, f)
+    if invalid(code)
         # by default, parsedigits only has up to Float64 precision; if we overflow
         # let's try BigFloat
-        return typeparser(BigFloat, source, startpos, len, b, startcode, pl, opts)
+        pos, code, _, x = typeparser(BigFloat, source, startpos, len, b, startcode, poslen(pos, 0), opts)
+        if ok(code)
+            f(x)
+        end
     end
 
 @label done
-    return pos, code, PosLen(pl.pos, pos - pl.pos), x
+    return pos, code
 end

@@ -331,18 +331,22 @@ function xparse end
 
 const SourceType = Union{AbstractVector{UInt8}, AbstractString, IO}
 
+returntype(::Type{T}) where {T <: AbstractString} = PosLen
+returntype(::Type{Number}) = Union{Int64, Int128, BigInt, Float32, Float64, BigFloat}
+returntype(::Type{T}) where {T} = T
+
 # for testing purposes only, it's much too slow to dynamically create Options for every xparse call
 xparse(::Type{T}, source::SourceType; pos::Integer=1, len::Integer=source isa IO ? 0 : sizeof(source), kw...) where {T} =
     xparse(T, source, pos, len, Options(; kw...))
 
-@inline _xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T, S} =
+@inline _xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=returntype(T)) where {T, S} =
     Result(emptysentinel(options)(delimiter(options)(whitespace(options)(
         quoted(options)(whitespace(options)(sentinel(options)(typeparser(options)
     )))))))(T, source, pos, len, S)
 
-function xparse(::Type{T}, source::SourceType, pos, len, options=XOPTIONS, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T, S}
+function xparse(::Type{T}, source::SourceType, pos, len, options=XOPTIONS, ::Type{S}=returntype(T)) where {T, S}
     buf = source isa AbstractString ? codeunits(source) : source
-    if supportedtype(T) || T === Number
+    if T === Number || supportedtype(T)
         return _xparse(T, buf, pos, len, options, S)
     else
         # generic fallback calls Base.tryparse
@@ -364,12 +368,12 @@ function xparse(::Type{T}, source::SourceType, pos, len, options=XOPTIONS, ::Typ
 end
 
 # condensed version of xparse that doesn't worry about quoting or delimiters; called from Parsers.parse/Parsers.tryparse
-@inline _xparse2(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, opts::Options=OPTIONS, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T, S} =
+@inline _xparse2(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, opts::Options=OPTIONS, ::Type{S}=returntype(T)) where {T, S} =
     Result(whitespace(false, false, false, true)(typeparser(opts)))(T, source, pos, len, S)
 
-@inline function xparse2(::Type{T}, source::SourceType, pos, len, options=OPTIONS, ::Type{S}=(T <: AbstractString) ? PosLen : T) where {T, S}
+@inline function xparse2(::Type{T}, source::SourceType, pos, len, options=OPTIONS, ::Type{S}=returntype(T)) where {T, S}
     buf = source isa AbstractString ? codeunits(source) : source
-    if supportedtype(T) || T === Number
+    if T === Number || supportedtype(T)
         return _xparse2(T, buf, pos, len, options, S)
     else
         # generic fallback calls Base.tryparse
