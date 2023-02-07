@@ -336,8 +336,8 @@ returntype(::Type{Number}) = Union{Int64, Int128, BigInt, Float32, Float64, BigF
 returntype(::Type{T}) where {T} = T
 
 # for testing purposes only, it's much too slow to dynamically create Options for every xparse call
-xparse(::Type{T}, source::SourceType; pos::Integer=1, len::Integer=source isa IO ? 0 : sizeof(source), kw...) where {T} =
-    xparse(T, source, pos, len, Options(; kw...))
+xparse(::Type{T}, source::SourceType, S=nothing; pos::Integer=1, len::Integer=source isa IO ? 0 : sizeof(source), kw...) where {T} =
+    S === nothing ? xparse(T, source, pos, len, Options(; kw...)) : xparse(T, source, pos, len, Options(; kw...), S)
 
 @inline _xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=returntype(T)) where {T, S} =
     Result(emptysentinel(options)(delimiter(options)(whitespace(options)(
@@ -352,9 +352,9 @@ function xparse(::Type{T}, source::SourceType, pos, len, options=XOPTIONS, ::Typ
         # generic fallback calls Base.tryparse
         res = _xparse(String, source, pos, len, options)
         code = res.code
-        poslen = res.val
+        pl = res.val
         if !Parsers.invalid(code) && !Parsers.sentinel(code)
-            str = getstring(source, poslen, options.e)
+            str = getstring(source, pl, options.e)
             x = Base.tryparse(T, str)
             if x === nothing
                 return Result{S}(code | INVALID, res.tlen)
@@ -379,9 +379,9 @@ end
         # generic fallback calls Base.tryparse
         res = _xparse2(String, source, pos, len, options)
         code = res.code
-        poslen = res.val
+        pl = res.val
         if !Parsers.invalid(code) && !Parsers.sentinel(code)
-            str = getstring(source, poslen, options.e)
+            str = getstring(source, pl, options.e)
             x = Base.tryparse(T, str)
             if x === nothing
                 return Result{S}(code | INVALID, res.tlen)

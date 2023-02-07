@@ -440,50 +440,65 @@ Specifically, the use of 64-bits is:
   * 42 bits to note the byte position as an integer where a value is located in a byte array (max array size ~4.4TB)
   * 20 bits to note the length of a parsed value (max length of ~1MB)
 
-These individual "fields" can be retrieved via dot access, like `poslen.missingvalue`, `poslen.escapedvalue`,
-`poslen.pos`, `poslen.len`.
+These individual "fields" can be retrieved via dot access, like `PosLen.missingvalue`, `PosLen.escapedvalue`,
+`PosLen.pos`, `PosLen.len`.
 
 `Parsers.xparse(String, buf, pos, len, opts)` returns `Parsers.Result{PosLen}`, where the `x.val` is a `PosLen`.
 """
 primitive type PosLen 64 end
-
-const MAX_POS = 4398046511104
-const MAX_LEN = 1048575
-@noinline postoolarge(pos) = throw(ArgumentError("position argument to Parsers.PosLen ($pos) is too large; max position allowed is $MAX_POS"))
-@noinline lentoolarge(len) = throw(ArgumentError("length argument to Parsers.PosLen ($len) is too large; max length allowed is $MAX_LEN"))
-
-@inline function PosLen(pos::Integer, len::Integer, ismissing=false, escaped=false)
-    pos > MAX_POS && postoolarge(pos)
-    len > MAX_LEN && lentoolarge(len)
-    pos = Int64(pos) << 20
-    pos |= ifelse(ismissing, MISSING_BIT, 0)
-    pos |= ifelse(escaped, ESCAPE_BIT, 0)
-    return Base.bitcast(PosLen, pos | Int64(len))
-end
-
-poslen(pos::Integer, len::Integer) = Base.bitcast(PosLen, (Int64(pos) << 20) | Int64(len))
-withlen(poslen::PosLen, len::Integer) = Base.bitcast(PosLen, (Base.bitcast(Int64, poslen) & ~MAX_LEN) | Int64(len))
-withmissing(pl::PosLen) = Base.or_int(pl, Base.bitcast(PosLen, MISSING_BIT))
-withescaped(pl::PosLen) = Base.or_int(pl, Base.bitcast(PosLen, ESCAPE_BIT))
+primitive type PosLen31 64 end
 
 const MISSING_BIT = Base.bitcast(Int64, 0x8000000000000000)
 const ESCAPE_BIT = Base.bitcast(Int64, 0x4000000000000000)
-const POS_BITS = Base.bitcast(Int64, 0x3ffffffffff00000)
-const LEN_BITS = Base.bitcast(Int64, 0x00000000000fffff)
+_pos_shift(::Union{PosLen,Type{PosLen}}) = 20
+_max_pos(::Union{PosLen,Type{PosLen}}) = 4398046511104
+_max_len(::Union{PosLen,Type{PosLen}}) = 1048575
+_pos_bits(::Union{PosLen,Type{PosLen}}) = Base.bitcast(Int64, 0x3ffffffffff00000)
+_len_bits(::Union{PosLen,Type{PosLen}}) = Base.bitcast(Int64, 0x00000000000fffff)
 
-@noinline invalidproperty(nm) = throw(ArgumentError("invalid property $nm for PosLen"))
+_pos_shift(::Union{PosLen31,Type{PosLen31}}) = 31
+_max_pos(::Union{PosLen31,Type{PosLen31}}) = Int64(2147483648)
+_max_len(::Union{PosLen31,Type{PosLen31}}) = Int64(2147483647)
+_pos_bits(::Union{PosLen31,Type{PosLen31}}) = Base.bitcast(Int64, 0x3fffffff80000000)
+_len_bits(::Union{PosLen31,Type{PosLen31}}) = Base.bitcast(Int64, 0x000000007fffffff)
 
-function Base.getproperty(x::PosLen, nm::Symbol)
-    y = Base.bitcast(Int64, x)
-    nm === :pos && return (y & POS_BITS) >> 20
-    nm === :len && return y & LEN_BITS
-    nm === :missingvalue && return (y & MISSING_BIT) == MISSING_BIT
-    nm === :escapedvalue && return (y & ESCAPE_BIT) == ESCAPE_BIT
-    invalidproperty(nm)
+@noinline postoolarge(::Type{T}, pos) where {T} =
+    throw(ArgumentError("position argument to $T ($pos) is too large; max position allowed is $(_max_pos(T))"))
+@noinline lentoolarge(::Type{T}, len) where {T} =
+    throw(ArgumentError("length argument to $T ($len) is too large; max length allowed is $(_max_len(T))"))
+
+for T in (:PosLen, :PosLen31)
+    @eval @inline function $T(pos::Integer, len::Integer, ismissing=false, escaped=false)
+        pos > _max_pos($T) && postoolarge($T, pos)
+        len > _max_len($T) && lentoolarge($T, len)
+        @assert pos >= 0
+        @assert len >= 0
+        pos = Int64(pos) << _pos_shift($T)
+        pos |= ifelse(ismissing, MISSING_BIT, 0)
+        pos |= ifelse(escaped, ESCAPE_BIT, 0)
+        return Base.bitcast($T, pos | Int64(len))
+    end
+
+    @eval @noinline invalidproperty(::Type{$T}, nm) = throw(ArgumentError("invalid property $nm for $($T)"))
+    @eval function Base.getproperty(x::$T, nm::Symbol)
+        y = Base.bitcast(Int64, x)
+        nm === :pos && return (y & _pos_bits($T)) >> _pos_shift($T)
+        nm === :len && return y & _len_bits($T)
+        nm === :missingvalue && return (y & MISSING_BIT) == MISSING_BIT
+        nm === :escapedvalue && return (y & ESCAPE_BIT) == ESCAPE_BIT
+        invalidproperty($T, nm)
+    end
+    @eval Base.propertynames(::$T) = (:pos, :len, :missingvalue, :escapedvalue)
+    @eval Base.show(io::IO, x::$T) = print(io, "$($T)(pos=$(x.pos), len=$(x.len), missingvalue=$(x.missingvalue), escapedvalue=$(x.escapedvalue))")
 end
-Base.propertynames(::PosLen) = (:pos, :len, :missingvalue, :escapedvalue)
 
-Base.show(io::IO, x::PosLen) = print(io, "PosLen(pos=$(x.pos), len=$(x.len), missingvalue=$(x.missingvalue), escapedvalue=$(x.escapedvalue))")
+poslen(pos::Integer, len::Integer) = poslen(PosLen, pos, len)
+poslen(::Type{T}, pos::Integer, len::Integer) where {T} = Base.bitcast(PosLen,   (Int64(pos) << _pos_shift(PosLen))   | Int64(len))
+poslen(::Type{PosLen31}, pos::Integer, len::Integer)    = Base.bitcast(PosLen31, (Int64(pos) << _pos_shift(PosLen31)) | Int64(len))
+
+withlen(pl::T, len::Integer) where {T<:Union{PosLen,PosLen31}} = Base.bitcast(T, (Base.bitcast(Int64, pl) & (~_max_len(T))) | Int64(len))
+withmissing(pl::T) where {T<:Union{PosLen,PosLen31}} = Base.or_int(pl, Base.bitcast(T, MISSING_BIT))
+withescaped(pl::T) where {T<:Union{PosLen,PosLen31}} = Base.or_int(pl, Base.bitcast(T, ESCAPE_BIT))
 
 """
     Parsers.getstring(buf_or_io, poslen::PosLen, e::UInt8) => String
@@ -500,10 +515,10 @@ function getstring end
 
 _unsafe_string(p, len) = ccall(:jl_pchar_to_string, Ref{String}, (Ptr{UInt8}, Int), p, len)
 
-getstring(source::Union{IO, AbstractVector{UInt8}}, x::PosLen, e::Token) =
+getstring(source::Union{IO, AbstractVector{UInt8}}, x::Union{PosLen,PosLen31}, e::Token) =
     getstring(source, x, e.token::UInt8)
 
-@inline function getstring(source::Union{IO, AbstractVector{UInt8}}, x::PosLen, e::UInt8)
+@inline function getstring(source::Union{IO, AbstractVector{UInt8}}, x::Union{PosLen,PosLen31}, e::UInt8)
     x.escapedvalue && return unescape(source, x, e)
     if source isa AbstractVector{UInt8}
         return _unsafe_string(pointer(source, x.pos), x.len)
@@ -518,10 +533,10 @@ getstring(source::Union{IO, AbstractVector{UInt8}}, x::PosLen, e::Token) =
     end
 end
 
-getstring(str::AbstractString, poslen::PosLen, e::UInt8) = getstring(codeunits(str), poslen, e)
+getstring(str::AbstractString, pl::Union{PosLen,PosLen31}, e::UInt8) = getstring(codeunits(str), pl, e)
 
 # if a cell value of a csv file has escape characters, we need to unescape it
-@noinline function unescape(origbuf, x::PosLen, e)
+@noinline function unescape(origbuf, x::Union{PosLen,PosLen31}, e)
     n = x.len
     if origbuf isa AbstractVector{UInt8}
         source = view(origbuf, x.pos:(x.pos + x.len - 1))
