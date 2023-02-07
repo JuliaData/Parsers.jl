@@ -457,8 +457,8 @@ _pos_bits(::Union{PosLen,Type{PosLen}}) = Base.bitcast(Int64, 0x3ffffffffff00000
 _len_bits(::Union{PosLen,Type{PosLen}}) = Base.bitcast(Int64, 0x00000000000fffff)
 
 _pos_shift(::Union{PosLen31,Type{PosLen31}}) = 31
-_max_pos(::Union{PosLen31,Type{PosLen31}}) = 2147483648
-_max_len(::Union{PosLen31,Type{PosLen31}}) = 2147483647
+_max_pos(::Union{PosLen31,Type{PosLen31}}) = Int64(2147483648)
+_max_len(::Union{PosLen31,Type{PosLen31}}) = Int64(2147483647)
 _pos_bits(::Union{PosLen31,Type{PosLen31}}) = Base.bitcast(Int64, 0x3fffffff80000000)
 _len_bits(::Union{PosLen31,Type{PosLen31}}) = Base.bitcast(Int64, 0x000000007fffffff)
 

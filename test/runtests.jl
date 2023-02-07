@@ -655,10 +655,10 @@ res = Parsers.xparse(String, "", Parsers.PosLen31; sentinel=["NULL"])
 
 # PosLen
 @test_throws ArgumentError Parsers.PosLen(Parsers._max_pos(Parsers.PosLen) + 1, 0)
-@test_throws ArgumentError Parsers.PosLen(1, Parsers.Parsers._max_len(Parsers.PosLen) + 1)
+@test_throws ArgumentError Parsers.PosLen(1, Parsers._max_len(Parsers.PosLen) + 1)
 @test_throws ArgumentError Parsers.PosLen(1, 1).invalidproperty
 @test_throws ArgumentError Parsers.PosLen31(Parsers._max_pos(Parsers.PosLen31) + 1, 0)
-@test_throws ArgumentError Parsers.PosLen31(1, Parsers.Parsers._max_len(Parsers.PosLen31) + 1)
+@test_throws ArgumentError Parsers.PosLen31(1, Parsers._max_len(Parsers.PosLen31) + 1)
 @test_throws ArgumentError Parsers.PosLen31(1, 1).invalidproperty
 # TODO: validate withlen and poslen
 
