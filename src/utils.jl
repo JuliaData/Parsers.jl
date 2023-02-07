@@ -501,7 +501,7 @@ withmissing(pl::T) where {T<:Union{PosLen,PosLen31}} = Base.or_int(pl, Base.bitc
 withescaped(pl::T) where {T<:Union{PosLen,PosLen31}} = Base.or_int(pl, Base.bitcast(T, ESCAPE_BIT))
 
 """
-    Parsers.getstring(buf_or_io, PosLen::PosLen, e::UInt8) => String
+    Parsers.getstring(buf_or_io, poslen::PosLen, e::UInt8) => String
 
 When calling `Parsers.xparse` with a `String` type argument, a `Parsers.Result{PosLen}` is returned, which has 3 fields:
   * `val`: a [`PosLen`](@ref) value which stores the starting byte position and length of the parsed string value

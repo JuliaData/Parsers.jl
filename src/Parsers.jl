@@ -331,7 +331,7 @@ function xparse end
 
 const SourceType = Union{AbstractVector{UInt8}, AbstractString, IO}
 
-returntype(::Type{T}) where {T <: AbstractString} = PosLen
+returntype(::Type{T}) where {T <: String} = PosLen
 returntype(::Type{Number}) = Union{Int64, Int128, BigInt, Float32, Float64, BigFloat}
 returntype(::Type{T}) where {T} = T
 
