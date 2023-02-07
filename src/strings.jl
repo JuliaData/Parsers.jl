@@ -28,7 +28,7 @@ function findeof(source, pos, len, b, code, pl, opts)
         incr!(source)
     end
     code |= EOF
-    pl = poslen(pl.pos, (lastnonwhitepos - pl.pos) + 1)
+    pl = poslen(typeof(pl), pl.pos, (lastnonwhitepos - pl.pos) + 1)
     return pos, code, pl, pl
 end
 

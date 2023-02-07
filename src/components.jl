@@ -5,7 +5,11 @@ function Result(parser)
         startpos = pos
         code = SUCCESS
         b = eof(source, pos, len) ? 0x00 : peekbyte(source, pos)
-        pl = poslen(pos, 0)
+        # For almost all RTs, poslen(RT, ...) will return a Parsers.PosLen. For non-string
+        # types, this pl is only used for internal bookkeeping, for strings however
+        # we allow the user to provide a custom PosLen type (like PosLen31) in which case
+        # they need to overload this method to get the instance here.
+        pl = poslen(RT, pos, 0)
         pos, code, pl, x = parser(T, source, pos, len, b, code, pl)
         tlen = pos - startpos
         if valueok(code)
@@ -79,7 +83,7 @@ function whitespace(spacedelim, tabdelim, stripquoted, stripwh)
                     # within quotes, if user asked to strip quoted
                     (quoted(code) && stripquoted)
                 )
-                    pl = poslen(pos, 0)
+                    pl = poslen(typeof(pl), pos, 0)
                 end
             end
             pos, code, pl, x = parser(T, source, pos, len, b, code, pl)
@@ -205,7 +209,7 @@ function quoted(checkquoted, oq, cq, e, stripquoted)
             end
             if isquoted
                 code |= QUOTED
-                pl = poslen(pos, 0)
+                pl = poslen(typeof(pl), pos, 0)
                 if eof(source, pos, len)
                     # "dangling" oq, not valid
                     code |= INVALID_QUOTED_FIELD | EOF
@@ -215,7 +219,7 @@ function quoted(checkquoted, oq, cq, e, stripquoted)
             end
             pos, code, pl, x = parser(T, source, pos, len, b, code, pl)
             if isgreedy(T) && isquoted
-                return pos, code, pl, x 
+                return pos, code, pl, x
             end
             if eof(source, pos, len)
                 if isquoted

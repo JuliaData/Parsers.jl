@@ -243,15 +243,17 @@ end
 for useio in (false, true)
     for (oq, cq, e) in ((UInt8('"'), UInt8('"'), UInt8('"')), (UInt8('"'), UInt8('"'), UInt8('\\')), (UInt8('{'), UInt8('}'), UInt8('\\')))
         for (i, case) in enumerate(testcases)
-            # println("testing string case i = $i, case = $case, useio = $useio, oq = `$(Char(oq))`, cq = `$(Char(cq))`, e = `$(Char(e))`")
-            str = replace(replace(replace(case.str, '{'=>Char(oq)), '}'=>Char(cq)), '\\'=>Char(e))
-            source = useio ? IOBuffer(str) : str
-            res = Parsers.xparse(String, source; openquotechar=oq, closequotechar=cq, escapechar=e, case.kwargs...)
-            x, code, tlen = res.val, res.code, res.tlen
-            if !Parsers.invalidquotedfield(code)
-                @test x.pos == case.vpos
-                @test x.len == case.vlen
-                @test tlen == case.tlen
+            for S in (Parsers.PosLen, Parsers.PosLen31)
+                # println("testing string case i = $i, case = $case, useio = $useio, oq = `$(Char(oq))`, cq = `$(Char(cq))`, e = `$(Char(e))`")
+                str = replace(replace(replace(case.str, '{'=>Char(oq)), '}'=>Char(cq)), '\\'=>Char(e))
+                source = useio ? IOBuffer(str) : str
+                res = Parsers.xparse(String, source, S; openquotechar=oq, closequotechar=cq, escapechar=e, case.kwargs...)
+                x, code, tlen = res.val, res.code, res.tlen
+                if !Parsers.invalidquotedfield(code)
+                    @test x.pos == case.vpos
+                    @test x.len == case.vlen
+                    @test tlen == case.tlen
+                end
             end
         end
     end
@@ -259,6 +261,9 @@ end
 
 # escaped value
 res = Parsers.xparse(String, "\"123 \\\\ 456\""; escapechar=UInt8('\\'))
+@test res.val.pos == 2
+@test res.val.escapedvalue
+res = Parsers.xparse(String, "\"123 \\\\ 456\"", Parsers.PosLen31; escapechar=UInt8('\\'))
 @test res.val.pos == 2
 @test res.val.escapedvalue
 
@@ -277,63 +282,66 @@ res = Parsers.xparse(Int64, "1\n"; sentinel=["", " ", "  "])
 # #140, #142
 res = Parsers.xparse(String, "NA"; sentinel=["NA"])
 @test res.code == (SENTINEL | EOF)
+res = Parsers.xparse(String, "NA", Parsers.PosLen31; sentinel=["NA"])
+@test res.code == (SENTINEL | EOF)
 
 # stripwhitespace
-res = Parsers.xparse(String, "{{hey there}}"; openquotechar="{{", closequotechar="}}", stripwhitespace=true)
-@test res.val.pos == 3 && res.val.len == 9
-res = Parsers.xparse(String, "{hey there}"; openquotechar='{', closequotechar='}', stripwhitespace=true)
-@test res.val.pos == 2 && res.val.len == 9
-res = Parsers.xparse(String, "{{hey there }}"; openquotechar="{{", closequotechar="}}", stripwhitespace=true)
-@test res.val.pos == 3 && res.val.len == 10
-res = Parsers.xparse(String, "{hey there }"; openquotechar='{', closequotechar='}', stripwhitespace=true)
-@test res.val.pos == 2 && res.val.len == 10
-res = Parsers.xparse(String, "{hey there },"; openquotechar='{', closequotechar='}', delim=',', stripwhitespace=true)
-@test res.val.pos == 2 && res.val.len == 10
-res = Parsers.xparse(String, "{hey there } ,"; openquotechar='{', closequotechar='}', delim=',', stripwhitespace=true)
-@test res.val.pos == 2 && res.val.len == 10
-res = Parsers.xparse(String, "{hey there } a,"; openquotechar='{', closequotechar='}', delim=',', stripwhitespace=true)
-@test res.val.pos == 2 && res.val.len == 10 && Parsers.invaliddelimiter(res.code)
-res = Parsers.xparse(String, "{hey there } a "; openquotechar='{', closequotechar='}', delim=nothing, stripwhitespace=true)
-@test res.val.pos == 2 && res.val.len == 10 && res.tlen == 13
-res = Parsers.xparse(String, "hey there ,"; delim=',', stripwhitespace=true)
-@test res.val.pos == 1 && res.val.len == 9
-res = Parsers.xparse(String, " hey there "; stripwhitespace=true)
-@test res.val.pos == 2 && res.val.len == 9
-res = Parsers.xparse(String, " hey there "; delim=nothing, stripwhitespace=true)
-@test res.val.pos == 2 && res.val.len == 9
+for S in (Parsers.PosLen, Parsers.PosLen31)
+    res = Parsers.xparse(String, "{{hey there}}", S; openquotechar="{{", closequotechar="}}", stripwhitespace=true)
+    @test res.val.pos == 3 && res.val.len == 9
+    res = Parsers.xparse(String, "{hey there}", S; openquotechar='{', closequotechar='}', stripwhitespace=true)
+    @test res.val.pos == 2 && res.val.len == 9
+    res = Parsers.xparse(String, "{{hey there }}", S; openquotechar="{{", closequotechar="}}", stripwhitespace=true)
+    @test res.val.pos == 3 && res.val.len == 10
+    res = Parsers.xparse(String, "{hey there }", S; openquotechar='{', closequotechar='}', stripwhitespace=true)
+    @test res.val.pos == 2 && res.val.len == 10
+    res = Parsers.xparse(String, "{hey there },", S; openquotechar='{', closequotechar='}', delim=',', stripwhitespace=true)
+    @test res.val.pos == 2 && res.val.len == 10
+    res = Parsers.xparse(String, "{hey there } ,", S; openquotechar='{', closequotechar='}', delim=',', stripwhitespace=true)
+    @test res.val.pos == 2 && res.val.len == 10
+    res = Parsers.xparse(String, "{hey there } a,", S; openquotechar='{', closequotechar='}', delim=',', stripwhitespace=true)
+    @test res.val.pos == 2 && res.val.len == 10 && Parsers.invaliddelimiter(res.code)
+    res = Parsers.xparse(String, "{hey there } a ", S; openquotechar='{', closequotechar='}', delim=nothing, stripwhitespace=true)
+    @test res.val.pos == 2 && res.val.len == 10 && res.tlen == 13
+    res = Parsers.xparse(String, "hey there ,", S; delim=',', stripwhitespace=true)
+    @test res.val.pos == 1 && res.val.len == 9
+    res = Parsers.xparse(String, " hey there ", S; stripwhitespace=true)
+    @test res.val.pos == 2 && res.val.len == 9
+    res = Parsers.xparse(String, " hey there ", S; delim=nothing, stripwhitespace=true)
+    @test res.val.pos == 2 && res.val.len == 9
 
-res = Parsers.xparse(String, "{{hey there}}"; openquotechar="{{", closequotechar="}}", stripquoted=true)
-@test res.val.pos == 3 && res.val.len == 9
-res = Parsers.xparse(String, "{hey there}"; openquotechar='{', closequotechar='}', stripquoted=true)
-@test res.val.pos == 2 && res.val.len == 9
-res = Parsers.xparse(String, "{{hey there }}"; openquotechar="{{", closequotechar="}}", stripquoted=true)
-@test res.val.pos == 3 && res.val.len == 9
-res = Parsers.xparse(String, "{hey there }"; openquotechar='{', closequotechar='}', stripquoted=true)
-@test res.val.pos == 2 && res.val.len == 9
-res = Parsers.xparse(String, "{hey there },"; openquotechar='{', closequotechar='}', delim=',', stripquoted=true)
-@test res.val.pos == 2 && res.val.len == 9
-res = Parsers.xparse(String, "{hey there } ,"; openquotechar='{', closequotechar='}', delim=',', stripquoted=true)
-@test res.val.pos == 2 && res.val.len == 9
-res = Parsers.xparse(String, "{hey there } a,"; openquotechar='{', closequotechar='}', delim=',', stripquoted=true)
-@test res.val.pos == 2 && res.val.len == 9 && Parsers.invaliddelimiter(res.code)
-res = Parsers.xparse(String, "{hey there } a "; openquotechar='{', closequotechar='}', delim=nothing, stripquoted=true)
-@test res.val.pos == 2 && res.val.len == 9 && res.tlen == 13
-res = Parsers.xparse(String, "hey there ,"; delim=',', stripquoted=true)
-@test res.val.pos == 1 && res.val.len == 9
-res = Parsers.xparse(String, " hey there "; stripquoted=true)
-@test res.val.pos == 2 && res.val.len == 9
-res = Parsers.xparse(String, " hey there "; delim=nothing, stripquoted=true)
-@test res.val.pos == 2 && res.val.len == 9
-# `stripquoted=true` should always override `stripwhitespace` to `true`
-res = Parsers.xparse(String, " hey there "; delim=nothing, stripquoted=true, stripwhitespace=false)
-@test res.val.pos == 2 && res.val.len == 9
+    res = Parsers.xparse(String, "{{hey there}}", S; openquotechar="{{", closequotechar="}}", stripquoted=true)
+    @test res.val.pos == 3 && res.val.len == 9
+    res = Parsers.xparse(String, "{hey there}", S; openquotechar='{', closequotechar='}', stripquoted=true)
+    @test res.val.pos == 2 && res.val.len == 9
+    res = Parsers.xparse(String, "{{hey there }}", S; openquotechar="{{", closequotechar="}}", stripquoted=true)
+    @test res.val.pos == 3 && res.val.len == 9
+    res = Parsers.xparse(String, "{hey there }", S; openquotechar='{', closequotechar='}', stripquoted=true)
+    @test res.val.pos == 2 && res.val.len == 9
+    res = Parsers.xparse(String, "{hey there },", S; openquotechar='{', closequotechar='}', delim=',', stripquoted=true)
+    @test res.val.pos == 2 && res.val.len == 9
+    res = Parsers.xparse(String, "{hey there } ,", S; openquotechar='{', closequotechar='}', delim=',', stripquoted=true)
+    @test res.val.pos == 2 && res.val.len == 9
+    res = Parsers.xparse(String, "{hey there } a,", S; openquotechar='{', closequotechar='}', delim=',', stripquoted=true)
+    @test res.val.pos == 2 && res.val.len == 9 && Parsers.invaliddelimiter(res.code)
+    res = Parsers.xparse(String, "{hey there } a ", S; openquotechar='{', closequotechar='}', delim=nothing, stripquoted=true)
+    @test res.val.pos == 2 && res.val.len == 9 && res.tlen == 13
+    res = Parsers.xparse(String, "hey there ,", S; delim=',', stripquoted=true)
+    @test res.val.pos == 1 && res.val.len == 9
+    res = Parsers.xparse(String, " hey there ", S; stripquoted=true)
+    @test res.val.pos == 2 && res.val.len == 9
+    res = Parsers.xparse(String, " hey there ", S; delim=nothing, stripquoted=true)
+    @test res.val.pos == 2 && res.val.len == 9
+    # `stripquoted=true` should always override `stripwhitespace` to `true`
+    res = Parsers.xparse(String, " hey there ", S; delim=nothing, stripquoted=true, stripwhitespace=false)
+    @test res.val.pos == 2 && res.val.len == 9
 
-# https://github.com/JuliaData/Parsers.jl/issues/115
-res = Parsers.xparse(String, "{hey there } "; openquotechar='{', closequotechar='}', stripquoted=true, delim=' ')
-@test res.val.pos == 2 && res.val.len == 9
-@test Parsers.delimited(res.code)
-@test res.tlen == 13
-
+    # https://github.com/JuliaData/Parsers.jl/issues/115
+    res = Parsers.xparse(String, "{hey there } ", S; openquotechar='{', closequotechar='}', stripquoted=true, delim=' ')
+    @test res.val.pos == 2 && res.val.len == 9
+    @test Parsers.delimited(res.code)
+    @test res.tlen == 13
+end
 end # @testset "Core Parsers.xparse"
 
 @testset "ints" begin
@@ -630,6 +638,8 @@ opts = Parsers.Options(sentinel=missings, trues=["true"])
 # reported from Slack via CSV.jl
 res = Parsers.xparse(String, ""; sentinel=["NULL"])
 @test res == Parsers.Result{PosLen}(OK | EOF, 0, Base.bitcast(PosLen, 0x0000000000100000))
+res = Parsers.xparse(String, "", Parsers.PosLen31; sentinel=["NULL"])
+@test res == Parsers.Result{Parsers.PosLen31}(OK | EOF, 0, Base.bitcast(Parsers.PosLen31, 0x0000000080000000))
 
 # Parsers.getstring
 @test Parsers.getstring(b"hey there", Parsers.PosLen(5, 5), 0x00) == "there"
@@ -637,11 +647,20 @@ res = Parsers.xparse(String, ""; sentinel=["NULL"])
 @test Parsers.getstring("hey there", Parsers.PosLen(5, 5), 0x00) == "there"
 @test Parsers.getstring("hey \"\" there", Parsers.PosLen(1, 12, false, true), UInt8('"')) == "hey \" there"
 @test Parsers.getstring(IOBuffer("hey \"\" there"), Parsers.PosLen(1, 12, false, true), UInt8('"')) == "hey \" there"
+@test Parsers.getstring(b"hey there", Parsers.PosLen31(5, 5), 0x00) == "there"
+@test Parsers.getstring(IOBuffer("hey there"), Parsers.PosLen31(5, 5), 0x00) == "there"
+@test Parsers.getstring("hey there", Parsers.PosLen31(5, 5), 0x00) == "there"
+@test Parsers.getstring("hey \"\" there", Parsers.PosLen31(1, 12, false, true), UInt8('"')) == "hey \" there"
+@test Parsers.getstring(IOBuffer("hey \"\" there"), Parsers.PosLen31(1, 12, false, true), UInt8('"')) == "hey \" there"
 
 # PosLen
-@test_throws ArgumentError Parsers.PosLen(Parsers.MAX_POS + 1, 0)
-@test_throws ArgumentError Parsers.PosLen(1, Parsers.MAX_LEN + 1)
+@test_throws ArgumentError Parsers.PosLen(Parsers._max_pos(Parsers.PosLen) + 1, 0)
+@test_throws ArgumentError Parsers.PosLen(1, Parsers.Parsers._max_len(Parsers.PosLen) + 1)
 @test_throws ArgumentError Parsers.PosLen(1, 1).invalidproperty
+@test_throws ArgumentError Parsers.PosLen31(Parsers._max_pos(Parsers.PosLen31) + 1, 0)
+@test_throws ArgumentError Parsers.PosLen31(1, Parsers.Parsers._max_len(Parsers.PosLen31) + 1)
+@test_throws ArgumentError Parsers.PosLen31(1, 1).invalidproperty
+# TODO: validate withlen and poslen
 
 # test invalid fallback parsing
 @test_throws Parsers.Error Parsers.parse(Complex{Float64}, "NaN+NaN*im")
@@ -667,6 +686,12 @@ opt = Parsers.Options(; delim=nothing, quoted=true)
 res = Parsers.xparse(String, source, 1, 0, opt)
 @test Parsers.getstring(source, res.val, opt.e) == "str1"
 res = Parsers.xparse(String, source, 1 + res.tlen, 0, opt)
+@test Parsers.getstring(source, res.val, opt.e) == "str2"
+source = IOBuffer("\"str1\" \"str2\"")
+opt = Parsers.Options(; delim=nothing, quoted=true)
+res = Parsers.xparse(String, source, 1, 0, opt, Parsers.PosLen31)
+@test Parsers.getstring(source, res.val, opt.e) == "str1"
+res = Parsers.xparse(String, source, 1 + res.tlen, 0, opt, Parsers.PosLen31)
 @test Parsers.getstring(source, res.val, opt.e) == "str2"
 
 # checkdelim!
