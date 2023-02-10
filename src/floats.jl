@@ -2,6 +2,9 @@ using Base.MPFR, Base.GMP, Base.GMP.MPZ
 
 _widen(x::UInt64) = UInt128(x)
 _widen(x::Int64) = Int128(x)
+_unwiden(x::UInt128) = x % UInt64
+_unwiden(x::Int128) = x % Int64
+_unwiden(x::BigInt) = x % Int128
 
 const BIGINT = BigInt[]
 
@@ -56,7 +59,7 @@ function typeparser(::Type{BigFloat}, source, pos, len, b, code, pl, options)
     base = 0
     rounding = Base.MPFR.ROUNDING_MODE[]
     z = BigFloat(precision=Base.MPFR.DEFAULT_PRECISION[])
-    if source isa AbstractVector{UInt8}
+    if source isa AbstractVector{UInt8} || source isa String
         str = source
         strpos = pos
     else
@@ -75,7 +78,7 @@ function typeparser(::Type{BigFloat}, source, pos, len, b, code, pl, options)
         err = ccall((:mpfr_strtofr, :libmpfr), Int32, (Ref{BigFloat}, Ptr{UInt8}, Ref{Ptr{UInt8}}, Int32, Base.MPFR.MPFRRoundingMode), z, ptr, endptr, base, rounding)
         code |= endptr[] == ptr ? INVALID : OK
         pos += Int(endptr[] - ptr)
-        return pos, code, PosLen(pl.pos, pos - pl.pos), z
+        return pos, code, PosLen(pl.pos, max(0, pos - pl.pos)), z
     end
 end
 
@@ -239,7 +242,14 @@ end
             ndigits += 1
             if eof(source, pos, len)
                 # input is integer, like "1"
-                x = handlef(ifelse(neg, -T(digits), T(digits)), f)
+                if T === Number && IntType != Int64 && digits <= _unwiden(digits)
+                    # if T is Number, let's do a quick check if we tripped the
+                    # overflow and can actually unwiden
+                    y = _unwiden(digits)
+                    x = handlef(ifelse(neg, -y, y), f)
+                else
+                    x = handlef(ifelse(neg, -T(digits), T(digits)), f)
+                end
                 code |= OK | EOF
                 @goto done
             end
@@ -274,7 +284,11 @@ end
         incr!(source)
         if eof(source, pos, len)
             # if input is "." then invalid, otherwise ok, like "1."
-            x = handlef(ifelse(neg, -T(digits), T(digits)), f)
+            if T === Number
+                x = handlef(ifelse(neg, -Float64(digits), Float64(digits)), f)
+            else
+                x = handlef(ifelse(neg, -T(digits), T(digits)), f)
+            end
             code |= ((startpos + 1) == pos ? INVALID : OK) | EOF
             @goto done
         end
@@ -288,7 +302,11 @@ end
                 x = f === nothing ? x : nothing
                 @goto done
             else
-                x = handlef(ifelse(neg, -T(digits), T(digits)), f)
+                if T === Number
+                    x = handlef(ifelse(neg, -Float64(digits), Float64(digits)), f)
+                else
+                    x = handlef(ifelse(neg, -T(digits), T(digits)), f)
+                end
                 code |= OK
                 @goto done
             end

@@ -737,6 +737,11 @@ end
     @test Parsers.parse(Number, "1.0") === 1.0
     @test Parsers.parse(Number, "1.0f0") === 1.0f0
     @test Parsers.parse(Number, "1.0e0") === 1.0e0
+    @test Parsers.parse(Number, "1.") === 1.0
+    @test Parsers.parse(Number, "-1.") === -1.0
+    @test Parsers.parse(Number, "9223372036854775807") === 9223372036854775807
+    @test Parsers.parse(Number, "170141183460469231731687303715884105727") === 170141183460469231731687303715884105727
+    @test Parsers.parse(Number, "0e348") == big"0.0"
     # Int128 literal
     @test Parsers.parse(Number, "9223372036854775808") === 9223372036854775808
     # BigInt
