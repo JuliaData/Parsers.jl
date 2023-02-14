@@ -419,8 +419,9 @@ include("bools.jl")
 include("dates.jl")
 
 function __init__()
-    resize!(empty!(BIGINT), Threads.nthreads())
-    resize!(empty!(BIGFLOATS), Threads.nthreads())
+    nt = isdefined(Base.Threads, :maxthreadid) ? Threads.maxthreadid() : Threads.nthreads()
+    resize!(empty!(BIGINT), nt)
+    resize!(empty!(BIGFLOATS), nt)
     return
 end
 
