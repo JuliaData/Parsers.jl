@@ -349,7 +349,7 @@ end
                     code |= INVALID
                     x = f === nothing ? x : nothing
                 else
-                    x = scale(T, FT, digits, -signed(frac), neg, f)
+                    x, code = scale(T, FT, digits, -signed(frac), neg, code, f)
                     code |= OK | EOF
                 end
                 @goto done
@@ -407,7 +407,7 @@ end
                 x = f === nothing ? x : nothing
                 @goto done
             else
-                x = scale(T, FT, digits, -signed(frac), neg, f)
+                x, code = scale(T, FT, digits, -signed(frac), neg, code, f)
             end
         else
             x = handlef(ifelse(neg, -T(digits), T(digits)), f)
@@ -438,7 +438,7 @@ end
                 code |= INVALID
                 x = f === nothing ? x : nothing
             else
-                x = scale(T, FT, digits, ee, neg, f)
+                x, code = scale(T, FT, digits, ee, neg, code, f)
                 code |= OK | EOF
             end
             @goto done
@@ -451,7 +451,7 @@ end
                 code |= INVALID
                 x = f === nothing ? x : nothing
             else
-                x = scale(T, FT, digits, ifelse(negexp, -signed(exp), signed(exp)) - signed(frac), neg, f)
+                x, code = scale(T, FT, digits, ifelse(negexp, -signed(exp), signed(exp)) - signed(frac), neg, code, f)
                 code |= OK
             end
             @goto done
@@ -487,19 +487,37 @@ pow10(::Type{BigFloat}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
 _unsigned(x::BigInt) = x
 _unsigned(x) = unsigned(x)
 
-@inline function scale(::Type{T}, FT::FloatType, v, exp, neg, f::F) where {T, F}
+@inline function scale(::Type{T}, FT::FloatType, v, exp, neg, code, f::F) where {T, F}
     if T === Float64
-        return handlef(__scale(Float64, _unsigned(v), exp, neg), f)
+        return handlef(__scale(Float64, _unsigned(v), exp, neg), f), code
     elseif T === Float32
-        return handlef(__scale(Float32, _unsigned(v), exp, neg), f)
+        return handlef(__scale(Float32, _unsigned(v), exp, neg), f), code
     elseif T === Float16
-        return handlef(__scale(Float16, _unsigned(v), exp, neg), f)
+        return handlef(__scale(Float16, _unsigned(v), exp, neg), f), code
     elseif FT == FLOAT64
-        return handlef(__scale(Float64, _unsigned(v), exp, neg), f)
+        f64 = __scale(Float64, _unsigned(v), exp, neg)
+        if isfinite(f64)
+            return handlef(f64, f), code
+        else
+            code |= INVALID
+            return nothing, code
+        end
     elseif FT == FLOAT32
-        return handlef(__scale(Float32, _unsigned(v), exp, neg), f)
+        f32 = __scale(Float32, _unsigned(v), exp, neg)
+        if isfinite(f32)
+            return handlef(f32, f), code
+        else
+            code |= INVALID
+            return nothing, code
+        end
     elseif FT == FLOAT16
-        return handlef(__scale(Float16, _unsigned(v), exp, neg), f)
+        f16 = __scale(Float16, _unsigned(v), exp, neg)
+        if isfinite(f16)
+            return handlef(f16, f), code
+        else
+            code |= INVALID
+            return nothing, code
+        end
     else
         error("invalid float type for scale: `$T`")
     end

@@ -748,6 +748,7 @@ end
     @test Parsers.parse(Number, "170141183460469231731687303715884105728") == 170141183460469231731687303715884105728
     # BigFloat promotion
     @test Parsers.parse(Number, "1e310") == Base.parse(BigFloat, "1e310")
+    @test Parsers.parse(Number, "1.7976931348623157e310") == big"1.7976931348623157e310"
 end
 
 # https://github.com/JuliaData/CSV.jl/issues/1063
