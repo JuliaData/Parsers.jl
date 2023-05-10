@@ -43,7 +43,7 @@ function typeparser(::Type{SHA1}, source, pos, len, b, code, pl, options)
         # Only check validity every 8 bytes to hopefully enable some vectorization
         if check == 0xFFFF
             pos -= 8 # Backtrack to the start of the invalid hex
-            fastseek!(source, pos)
+            fastseek!(source, pos - 1)
             while _HEX_LUT[peekbyte(source, pos) + 0x01] != 0xFFFF
                 pos += 1
                 incr!(source)
@@ -149,7 +149,7 @@ function typeparser(::Type{UUID}, source, pos, len, b, code, pl, options)
 
     @label backtrack_error
     pos -= segment_len # Backtrack to the start of the invalid hex
-    fastseek!(source, pos)
+    fastseek!(source, pos - 1)
     while _HEX_LUT[peekbyte(source, pos) + 0x01] != 0xFFFF
         pos += 1
         incr!(source)
