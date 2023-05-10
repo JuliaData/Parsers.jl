@@ -726,6 +726,7 @@ end # @testset "misc"
 
 include("floats.jl")
 include("dates.jl")
+include("hexadecimal.jl")
 
 
 @testset "Aqua.jl" begin
