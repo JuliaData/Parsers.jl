@@ -8,11 +8,32 @@ const _HEX_LUT = UInt32[
     in UInt8(0):UInt8(255)
 ]
 
+const _HEX_LUT_INV = UInt8.((
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+))
+
 ### SHA1 ###
 
 struct SHA1
     h::NTuple{5,UInt32}
 end
+
+function Base.string(s::SHA1)
+    out = Base.StringVector(40)
+    i = 40
+    @inbounds for j in 5:-1:1
+        h = s.h[j]
+        for _ in 1:8
+            out[i] = _HEX_LUT_INV[0x01 + (h & 0x0f)]
+            h >>= 4
+            i -= 1
+        end
+    end
+    return String(out)
+end
+
+# give SHA1 scalar behavior in broadcasting
+Base.broadcastable(x::SHA1) = Ref(x)
 
 supportedtype(::Type{SHA1}) = true
 
@@ -25,7 +46,7 @@ function typeparser(::Type{SHA1}, source, pos, len, b, code, pl, options)
             incr!(source)
         end
         eof(source, pos, len) && (code |= EOF)
-        return (pos, code | INVALID, PosLen(pl.pos, pos - pl.pos), SHA1((0,0,0,0,0)))
+        return (pos, code | INVALID, poslen(pl.pos, pos - pl.pos), SHA1((0,0,0,0,0)))
     end
 
     check = UInt32(0)
@@ -48,12 +69,12 @@ function typeparser(::Type{SHA1}, source, pos, len, b, code, pl, options)
                 pos += 1
                 incr!(source)
             end
-            return pos, code | INVALID, PosLen(pl.pos, pos - pl.pos), SHA1(out)
+            return pos, code | INVALID, poslen(pl.pos, pos - pl.pos), SHA1(out)
         end
         out = _set_tup5_at(out, i, h)
     end
     eof(source, pos, len) && (code |= EOF)
-    return (pos, code | OK, PosLen(pl.pos, pos - pl.pos), SHA1(out))
+    return (pos, code | OK, poslen(pl.pos, pos - pl.pos), SHA1(out))
 end
 
 ### UUID ###
@@ -66,86 +87,86 @@ function typeparser(::Type{UUID}, source, pos, len, b, code, pl, options)
     lo = UInt64(0)
 
     @inbounds begin
-    if len - pos + 1 < 36
-        while pos <= len && (_HEX_LUT[b + 0x01] != 0xFFFF || b == UInt8('-'))
+        if len - pos + 1 < 36
+            while pos <= len && (_HEX_LUT[b + 0x01] != 0xFFFF || b == UInt8('-'))
+                pos += 1
+                incr!(source)
+                b = peekbyte(source, pos)
+            end
+            eof(source, pos, len) && (code |= EOF)
+            return (pos, code | INVALID, poslen(pl.pos, pos - pl.pos), UUID((hi, lo)))
+        end
+
+        segment_len = 8
+        for _ in 1:segment_len
+            b = peekbyte(source, pos)
+            c = _HEX_LUT[b + 0x01]
+            check |= c
+            hi = ((hi << 4) | c)
             pos += 1
             incr!(source)
-            b = peekbyte(source, pos)
         end
-        eof(source, pos, len) && (code |= EOF)
-        return (pos, code | INVALID, PosLen(pl.pos, pos - pl.pos), UUID((hi, lo)))
-    end
+        check != 0xFFFF || @goto backtrack_error
+        peekbyte(source, pos) == UInt8('-') || @goto error
 
-    segment_len = 8
-    for _ in 1:segment_len
-        b = peekbyte(source, pos)
-        c = _HEX_LUT[b + 0x01]
-        check |= c
-        hi = ((hi << 4) | UInt32(c))
         pos += 1
         incr!(source)
-    end
-    check != 0xFFFF || @goto backtrack_error
-    peekbyte(source, pos) == UInt8('-') || @goto error
+        segment_len = 4
+        for _ in 1:segment_len
+            b = peekbyte(source, pos)
+            c = _HEX_LUT[b + 0x01]
+            check |= c
+            hi = ((hi << 4) | c)
+            pos += 1
+            incr!(source)
+        end
+        check != 0xFFFF || @goto backtrack_error
+        peekbyte(source, pos) == UInt8('-') || @goto error
 
-    pos += 1
-    incr!(source)
-    segment_len = 4
-    for _ in 1:segment_len
-        b = peekbyte(source, pos)
-        c = _HEX_LUT[b + 0x01]
-        check |= c
-        hi = ((hi << 4) | UInt32(c))
         pos += 1
         incr!(source)
-    end
-    check != 0xFFFF || @goto backtrack_error
-    peekbyte(source, pos) == UInt8('-') || @goto error
+        segment_len = 4
+        for _ in 1:segment_len
+            b = peekbyte(source, pos)
+            c = _HEX_LUT[b + 0x01]
+            check |= c
+            hi = ((hi << 4) | c)
+            pos += 1
+            incr!(source)
+        end
+        check != 0xFFFF || @goto backtrack_error
+        peekbyte(source, pos) == UInt8('-') || @goto error
 
-    pos += 1
-    incr!(source)
-    segment_len = 4
-    for _ in 1:segment_len
-        b = peekbyte(source, pos)
-        c = _HEX_LUT[b + 0x01]
-        check |= c
-        hi = ((hi << 4) | UInt32(c))
         pos += 1
         incr!(source)
-    end
-    check != 0xFFFF || @goto backtrack_error
-    peekbyte(source, pos) == UInt8('-') || @goto error
+        segment_len = 4
+        for _ in 1:segment_len
+            b = peekbyte(source, pos)
+            c = _HEX_LUT[b + 0x01]
+            check |= c
+            lo = ((lo << 4) | c)
+            pos += 1
+            incr!(source)
+        end
+        check != 0xFFFF || @goto backtrack_error
+        peekbyte(source, pos) == UInt8('-') || @goto error
 
-    pos += 1
-    incr!(source)
-    segment_len = 4
-    for _ in 1:segment_len
-        b = peekbyte(source, pos)
-        c = _HEX_LUT[b + 0x01]
-        check |= c
-        lo = ((lo << 4) | UInt32(c))
         pos += 1
         incr!(source)
-    end
-    check != 0xFFFF || @goto backtrack_error
-    peekbyte(source, pos) == UInt8('-') || @goto error
-
-    pos += 1
-    incr!(source)
-    segment_len = 12
-    for _ in 1:segment_len
-        b = peekbyte(source, pos)
-        c = _HEX_LUT[b + 0x01]
-        check |= c
-        lo = ((lo << 4) | UInt32(c))
-        pos += 1
-        incr!(source)
-    end
-    check != 0xFFFF || @goto backtrack_error
+        segment_len = 12
+        for _ in 1:segment_len
+            b = peekbyte(source, pos)
+            c = _HEX_LUT[b + 0x01]
+            check |= c
+            lo = ((lo << 4) | c)
+            pos += 1
+            incr!(source)
+        end
+        check != 0xFFFF || @goto backtrack_error
     end # @inbounds
 
     eof(source, pos, len) && (code |= EOF)
-    return (pos, code | OK, PosLen(pl.pos, pos - pl.pos), UUID((hi, lo)))
+    return (pos, code | OK, poslen(pl.pos, pos - pl.pos), UUID((hi, lo)))
 
     @label backtrack_error
     pos -= segment_len # Backtrack to the start of the invalid hex
@@ -156,5 +177,6 @@ function typeparser(::Type{UUID}, source, pos, len, b, code, pl, options)
     end
     @label error
     eof(source, pos, len) && (code |= EOF)
-    return pos, code | INVALID, PosLen(pl.pos, pos - pl.pos), UUID((hi, lo))
+    return (pos, code | INVALID, poslen(pl.pos, pos - pl.pos), UUID((hi, lo)))
 end
+

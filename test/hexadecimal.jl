@@ -43,6 +43,9 @@ using Parsers
     @testset "SHA1" begin
         ss = "0123456789abcdef0123456789ABCDEF01234567"
         s = Parsers.SHA1((0x01234567, 0x89abcdef, 0x01234567, 0x89abcdef, 0x01234567))
+
+        @test string(s) == lowercase(ss)
+
         for i in 1:39
             res = Parsers.xparse(Parsers.SHA1, ss, 1, i, _OPTIONS)
             @test Parsers.invalid(res.code)
