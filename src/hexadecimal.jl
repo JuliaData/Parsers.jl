@@ -106,7 +106,7 @@ function typeparser(::Type{UUID}, source, pos, len, b, code, pl, options)
             pos += 1
             incr!(source)
         end
-        check != 0xFFFF || @goto backtrack_error
+        check != 0xFFFF || (return _backtrack_error(source, pos, len, code, segment_len, hi, lo, pl))
         peekbyte(source, pos) == UInt8('-') || @goto error
 
         pos += 1
@@ -120,7 +120,7 @@ function typeparser(::Type{UUID}, source, pos, len, b, code, pl, options)
             pos += 1
             incr!(source)
         end
-        check != 0xFFFF || @goto backtrack_error
+        check != 0xFFFF || (return _backtrack_error(source, pos, len, code, segment_len, hi, lo, pl))
         peekbyte(source, pos) == UInt8('-') || @goto error
 
         pos += 1
@@ -134,7 +134,7 @@ function typeparser(::Type{UUID}, source, pos, len, b, code, pl, options)
             pos += 1
             incr!(source)
         end
-        check != 0xFFFF || @goto backtrack_error
+        check != 0xFFFF || (return _backtrack_error(source, pos, len, code, segment_len, hi, lo, pl))
         peekbyte(source, pos) == UInt8('-') || @goto error
 
         pos += 1
@@ -148,7 +148,7 @@ function typeparser(::Type{UUID}, source, pos, len, b, code, pl, options)
             pos += 1
             incr!(source)
         end
-        check != 0xFFFF || @goto backtrack_error
+        check != 0xFFFF || (return _backtrack_error(source, pos, len, code, segment_len, hi, lo, pl))
         peekbyte(source, pos) == UInt8('-') || @goto error
 
         pos += 1
@@ -162,21 +162,24 @@ function typeparser(::Type{UUID}, source, pos, len, b, code, pl, options)
             pos += 1
             incr!(source)
         end
-        check != 0xFFFF || @goto backtrack_error
+        check != 0xFFFF || (return _backtrack_error(source, pos, len, code, segment_len, hi, lo, pl))
     end # @inbounds
 
     eof(source, pos, len) && (code |= EOF)
     return (pos, code | OK, poslen(pl.pos, pos - pl.pos), UUID((hi, lo)))
 
-    @label backtrack_error
+    @label error
+    eof(source, pos, len) && (code |= EOF)
+    return (pos, code | INVALID, poslen(pl.pos, pos - pl.pos), UUID((hi, lo)))
+end
+
+@noinline function _backtrack_error(source, pos, len, code, segment_len, hi, lo, pl)
     pos -= segment_len # Backtrack to the start of the invalid hex
     fastseek!(source, pos - 1)
     while _HEX_LUT[peekbyte(source, pos) + 0x01] != 0xFFFF
         pos += 1
         incr!(source)
     end
-    @label error
     eof(source, pos, len) && (code |= EOF)
     return (pos, code | INVALID, poslen(pl.pos, pos - pl.pos), UUID((hi, lo)))
 end
-
