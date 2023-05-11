@@ -3,6 +3,7 @@ module Parsers
 export PosLen
 
 using Dates
+using UUIDs
 
 include("utils.jl")
 
@@ -417,6 +418,7 @@ include("floats.jl")
 include("strings.jl")
 include("bools.jl")
 include("dates.jl")
+include("hexadecimal.jl")
 
 function __init__()
     nt = isdefined(Base.Threads, :maxthreadid) ? Threads.maxthreadid() : Threads.nthreads()
