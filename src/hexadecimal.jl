@@ -88,9 +88,10 @@ function typeparser(::Type{UUID}, source, pos, len, b, code, pl, options)
 
     @inbounds begin
         if len - pos + 1 < 36
-            while pos <= len && (_HEX_LUT[b + 0x01] != 0xFFFF || b == UInt8('-'))
+            while (_HEX_LUT[b + 0x01] != 0xFFFF || b == UInt8('-'))
                 pos += 1
                 incr!(source)
+                pos <= len || break
                 b = peekbyte(source, pos)
             end
             eof(source, pos, len) && (code |= EOF)
@@ -176,9 +177,12 @@ end
 @noinline function _backtrack_error(source, pos, len, code, segment_len, hi, lo, pl)
     pos -= segment_len # Backtrack to the start of the invalid hex
     fastseek!(source, pos - 1)
-    while _HEX_LUT[peekbyte(source, pos) + 0x01] != 0xFFFF
+    b = peekbyte(source, pos)
+    while (_HEX_LUT[b + 0x01] != 0xFFFF || b == UInt8('-'))
         pos += 1
         incr!(source)
+        pos <= len || break
+        b = peekbyte(source, pos)
     end
     eof(source, pos, len) && (code |= EOF)
     return (pos, code | INVALID, poslen(pl.pos, pos - pl.pos), UUID((hi, lo)))
