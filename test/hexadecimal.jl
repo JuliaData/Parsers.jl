@@ -17,6 +17,12 @@ using Parsers
 
             res = Parsers.xparse(UUID, IOBuffer(us), 1, i, _OPTIONS)
             @test Parsers.invalid(res.code)
+
+            res = Parsers.xparse(UUID, view(us, 1:i), 1, i, _OPTIONS)
+            @test Parsers.invalid(res.code)
+
+            res = Parsers.xparse(UUID, IOBuffer(view(us, 1:i)), 1, i, _OPTIONS)
+            @test Parsers.invalid(res.code)
         end
         res = Parsers.xparse(UUID, us, 1, 36, _OPTIONS)
         @test Parsers.ok(res.code)
@@ -51,6 +57,12 @@ using Parsers
             @test Parsers.invalid(res.code)
 
             res = Parsers.xparse(Parsers.SHA1, IOBuffer(ss), 1, i, _OPTIONS)
+            @test Parsers.invalid(res.code)
+
+            res = Parsers.xparse(Parsers.SHA1, view(ss, 1:i), 1, i, _OPTIONS)
+            @test Parsers.invalid(res.code)
+
+            res = Parsers.xparse(Parsers.SHA1, IOBuffer(view(ss, 1:i)), 1, i, _OPTIONS)
             @test Parsers.invalid(res.code)
         end
         res = Parsers.xparse(Parsers.SHA1, ss, 1, 40, _OPTIONS)
