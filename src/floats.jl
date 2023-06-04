@@ -317,7 +317,7 @@ end
     # now we parse any digits following decimal point (if any); start `frac` at UInt64(0)
     # `digits` still receives any fractional digits, `frac` just keeps track of how many digits
     # were parsed to combine with any "e123" exponent numbers to determine final exponent value
-    x, code, pos = parsefrac(T, source, pos, len, b, code, options, digits, neg, startpos, UInt64(0), overflow_invalid, f)
+    x, code, pos = parsefrac(T, source, pos, len, b, code, options, digits, neg, startpos, UInt64(0), overflow_invalid, ndigits, f)
 
 @label done
     return x, code, pos
@@ -326,10 +326,10 @@ end
 # same as above; if digits overflows, we want a non-inlined version to call with a wider type
 # note that we never expect `frac` to overflow, since it's just keep track of the # of digits
 # we parse post-decimal point
-@noinline _parsefrac(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac, overflow_invalid, f::F) where {T, IntType, F} =
-    parsefrac(T, source, pos, len, b, code, options, digits, neg, startpos, frac, overflow_invalid, f)
+@noinline _parsefrac(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac, overflow_invalid, ndigits, f::F) where {T, IntType, F} =
+    parsefrac(T, source, pos, len, b, code, options, digits, neg, startpos, frac, overflow_invalid, ndigits, f)
 
-@inline function parsefrac(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac, overflow_invalid, f::F) where {T, IntType, F}
+@inline function parsefrac(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac, overflow_invalid, ndigits, f::F) where {T, IntType, F}
     x = zero(T)
     parsedanyfrac = false
     FT = FLOAT64
@@ -349,7 +349,7 @@ end
                     code |= INVALID
                     x = f === nothing ? x : nothing
                 else
-                    x, code = scale(T, FT, digits, -signed(frac), neg, code, f)
+                    x, code = scale(T, FT, digits, -signed(frac), neg, code, ndigits, f)
                     code |= OK | EOF
                 end
                 @goto done
@@ -357,7 +357,7 @@ end
             b = peekbyte(source, pos) - UInt8('0')
             b > 0x09 && break
             if overflows(IntType) && digits > overflowval(IntType)
-                return _parsefrac(T, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos, frac, overflow_invalid, f)
+                return _parsefrac(T, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos, frac, overflow_invalid, ndigits, f)
             end
         end
         b += UInt8('0')
@@ -398,7 +398,7 @@ end
 
         # at this point, we've parsed X and Y in "X.YeZ", but not Z in a scientific notation exponent number
         # we start our exponent number at UInt64(0)
-        return parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, UInt64(0), negexp, FT, overflow_invalid, f)
+        return parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, UInt64(0), negexp, FT, overflow_invalid, ndigits, f)
     else
         # if no scientific notation, we're done, so scale digits + frac and return
         if parsedanyfrac
@@ -407,7 +407,7 @@ end
                 x = f === nothing ? x : nothing
                 @goto done
             else
-                x, code = scale(T, FT, digits, -signed(frac), neg, code, f)
+                x, code = scale(T, FT, digits, -signed(frac), neg, code, ndigits, f)
             end
         else
             x = handlef(ifelse(neg, -T(digits), T(digits)), f)
@@ -421,10 +421,10 @@ end
 
 # same no-inline story, but this time for exponent number; probably even more rare to overflow the exponent number
 # compared to pre/post decimal digits, but we account for it all the same (a lot of float parsers don't account for this)
-@noinline _parseexp(::Type{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::ExpType, negexp, FT, overflow_invalid, f::F) where {T, ExpType, F} =
-    parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, exp, negexp, FT, overflow_invalid, f)
+@noinline _parseexp(::Type{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::ExpType, negexp, FT, overflow_invalid, ndigits, f::F) where {T, ExpType, F} =
+    parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, exp, negexp, FT, overflow_invalid, ndigits, f)
 
-@inline function parseexp(::Type{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::ExpType, negexp, FT, overflow_invalid, f::F) where {T, ExpType, F}
+@inline function parseexp(::Type{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::ExpType, negexp, FT, overflow_invalid, ndigits, f::F) where {T, ExpType, F}
     x = zero(T)
     # note that `b` has already had `b - UInt8('0')` applied to it for parseexp
     while true
@@ -438,7 +438,7 @@ end
                 code |= INVALID
                 x = f === nothing ? x : nothing
             else
-                x, code = scale(T, FT, digits, ee, neg, code, f)
+                x, code = scale(T, FT, digits, ee, neg, code, ndigits, f)
                 code |= OK | EOF
             end
             @goto done
@@ -451,13 +451,13 @@ end
                 code |= INVALID
                 x = f === nothing ? x : nothing
             else
-                x, code = scale(T, FT, digits, ifelse(negexp, -signed(exp), signed(exp)) - signed(frac), neg, code, f)
+                x, code = scale(T, FT, digits, ifelse(negexp, -signed(exp), signed(exp)) - signed(frac), neg, code, ndigits, f)
                 code |= OK
             end
             @goto done
         end
         if overflows(ExpType) && exp > overflowval(ExpType)
-            return _parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, _widen(exp), negexp, FT, overflow_invalid, f)
+            return _parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, _widen(exp), negexp, FT, overflow_invalid, ndigits, f)
         end
     end
 @label done
@@ -487,7 +487,7 @@ pow10(::Type{BigFloat}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
 _unsigned(x::BigInt) = x
 _unsigned(x) = unsigned(x)
 
-@inline function scale(::Type{T}, FT::FloatType, v, exp, neg, code, f::F) where {T, F}
+@inline function scale(::Type{T}, FT::FloatType, v, exp, neg, code, ndigits, f::F) where {T, F}
     if T === Float64
         return handlef(__scale(Float64, _unsigned(v), exp, neg), f), code
     elseif T === Float32
