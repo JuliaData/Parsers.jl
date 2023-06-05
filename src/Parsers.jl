@@ -112,6 +112,7 @@ end
   * `stripwhitespace=nothing`: if true, leading and trailing whitespace is stripped from string fields, note that for *quoted* strings however, whitespace is preserved within quotes (but ignored before/after quote characters). To also strip *within* quotes, see `stripquoted`
   * `stripquoted=false`: if true, whitespace is also stripped within quoted strings. If true, `stripwhitespace` is also set to true.
   * `groupmark=nothing`: optionally specify a single-byte character denoting the number grouping mark, this allows parsing of numbers that have, e.g., thousand separators (`1,000.00`).
+  * `rounding=RoundNearest`: optionally specify a rounding mode to use when parsing. Valid values are `RoundNearest`, `RoundToZero`. No rounding means an `Inexact` error will be thrown if the inputs cannot be represented without loss of precision.
 """
 struct Options
     flags::Flags
@@ -126,6 +127,7 @@ struct Options
     falses::Union{Nothing, Vector{String}}
     dateformat::Union{Nothing, Format}
     groupmark::Union{Nothing,UInt8}
+    rounding::Union{Nothing,RoundingMode}
 end
 
 # backwards compat
@@ -141,10 +143,10 @@ end
 
 const OPTIONS = Options(Flags(false, false, false, false, false, false, false, false, false), UInt8('.'),
     Token(UInt8('"')), Token(UInt8('"')), UInt8('"'), Token[], Token(""), Token(""),
-    nothing, nothing, nothing, nothing)
+    nothing, nothing, nothing, nothing, nothing)
 const XOPTIONS = Options(Flags(false, false, false, false, true, true, true, false, false), UInt8('.'),
     Token(UInt8('"')), Token(UInt8('"')), UInt8('"'), Token[], Token(UInt8(',')), Token(""),
-    nothing, nothing, nothing, nothing)
+    nothing, nothing, nothing, nothing, nothing)
 
 prepare!(x::Vector) = sort!(x, by=x->sizeof(x), rev=true)
 asciival(c::Char) = isascii(c)
@@ -198,8 +200,9 @@ function Options(
             debug::Bool=false,
             stripwhitespace::Bool=false,
             stripquoted::Bool=false,
-            groupmark::Union{Nothing,Char,UInt8}=nothing)
-
+            groupmark::Union{Nothing,Char,UInt8}=nothing,
+            rounding::Union{Nothing,RoundingMode}=nothing,
+)
     # backwards compat; users previously had to pass wh1/wh2 as non-wh to avoid stripping
     if wh1 != UInt8(' ') || wh2 != UInt8('\t')
         stripwhitespace = false
@@ -250,7 +253,7 @@ function Options(
     end
     df = dateformat === nothing ? nothing : dateformat isa String ? Format(dateformat) : dateformat isa Dates.DateFormat ? Format(dateformat) : dateformat
     flags = Flags(spacedelim, tabdelim, stripquoted, stripwhitespace, quoted, checksentinel, checkdelim, ignorerepeated, ignoreemptylines)
-    return Options(flags, decimal, oq, cq, e, sent, delim, token(comment, "comment"), trues, falses, df, groupmark === nothing ? nothing : UInt8(groupmark))
+    return Options(flags, decimal, oq, cq, e, sent, delim, token(comment, "comment"), trues, falses, df, groupmark === nothing ? nothing : UInt8(groupmark), rounding)
 end
 
 function token(x::MaybeToken, arg)
@@ -287,7 +290,8 @@ Options(;
     stripwhitespace::Bool=false,
     stripquoted::Bool=false,
     groupmark::Union{Nothing,Char,UInt8}=nothing,
-) = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, debug, stripwhitespace, stripquoted, groupmark)
+    rounding::Union{Nothing,RoundingMode}=nothing,
+) = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, debug, stripwhitespace, stripquoted, groupmark, rounding)
 
 include("components.jl")
 
