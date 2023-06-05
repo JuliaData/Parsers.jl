@@ -232,49 +232,53 @@ end
     x = zero(T)
     ndigits = 0
     has_groupmark = options.groupmark !== nothing
+    groupmark0 = something(options.groupmark, 0xff) - UInt8('0')
+
     # we already previously checked if `b` was decimal or a digit, so don't need to check explicitly again
     if b != options.decimal
         b -= UInt8('0')
+        prev_b0 = b
         while true
-            digits = _muladd(ten(IntType), digits, b)
-            pos += 1
-            incr!(source)
-            ndigits += 1
-            if eof(source, pos, len)
-                # input is integer, like "1"
-                if T === Number && IntType != Int64 && digits <= _unwiden(digits)
-                    # if T is Number, let's do a quick check if we tripped the
-                    # overflow and can actually unwiden
-                    y = _unwiden(digits)
-                    x = handlef(ifelse(neg, -y, y), f)
-                else
-                    x = handlef(ifelse(neg, -T(digits), T(digits)), f)
+            if b <= 0x09
+                if overflows(IntType) && digits > overflowval(IntType)
+                    return _parsedigits(T, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos, overflow_invalid, f)
+                elseif ndigits > maxdigits(T)
+                    # if input is way too big, just bail
+                    fastseek!(source, startpos - 1)
+                    pos = startpos
+                    code |= INVALID
+                    x = f === nothing ? x : nothing
+                    @goto done
                 end
-                code |= OK | EOF
-                @goto done
-            end
-            if has_groupmark
-                b, nb = dpeekbyte(source, pos) .- UInt8('0')
-                if (options.groupmark)::UInt8 - UInt8('0') == b && nb <= 0x09
-                    incr!(source)
-                    pos += 1
-                    b = nb
+                digits = _muladd(ten(IntType), digits, b)
+                pos += 1
+                incr!(source)
+                ndigits += 1
+                if eof(source, pos, len)
+                    # input is integer, like "1"
+                    if T === Number && IntType != Int64 && digits <= _unwiden(digits)
+                        # if T is Number, let's do a quick check if we tripped the
+                        # overflow and can actually unwiden
+                        y = _unwiden(digits)
+                        x = handlef(ifelse(neg, -y, y), f)
+                    else
+                        x = handlef(ifelse(neg, -T(digits), T(digits)), f)
+                    end
+                    code |= OK | EOF
+                    @goto done
                 end
+            elseif has_groupmark && b == groupmark0
+                prev_b0 == groupmark0 && (code |= INVALID; @goto done) # two groupmarks in a row
+                pos += 1
+                Parsers.incr!(source)
+                Parsers.eof(source, pos, len) && (code |= INVALID | EOF; @goto done) # groupmark at end of input
             else
-                b = peekbyte(source, pos) - UInt8('0')
+                # if `b` isn't a digit or a groupmark, time to break out of digit parsing while loop
+                (has_groupmark && prev_b0 == groupmark0) && (code |= INVALID; @goto done) # ended with groupmark
+                break
             end
-            # if `b` isn't a digit, time to break out of digit parsing while loop
-            b > 0x09 && break
-            if overflows(IntType) && digits > overflowval(IntType)
-                return _parsedigits(T, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos, overflow_invalid, f)
-            elseif ndigits > maxdigits(T)
-                # if input is way too big, just bail
-                fastseek!(source, startpos - 1)
-                pos = startpos
-                code |= INVALID
-                x = f === nothing ? x : nothing
-                @goto done
-            end
+            prev_b0 = b
+            b = peekbyte(source, pos) - UInt8('0')
         end
         # b wasn't a digit, so add back '0' to recover original Char value
         b += UInt8('0')
