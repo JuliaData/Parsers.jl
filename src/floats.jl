@@ -230,51 +230,57 @@ end
 
 @inline function parsedigits(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool=false, f::F=nothing) where {T, IntType, F}
     x = zero(T)
-    ndigits = 0
+    ndigits = 0 # excludes leading zeros
+    anydigits = false
     has_groupmark = options.groupmark !== nothing
+    groupmark0 = something(options.groupmark, 0xff) - UInt8('0')
+
     # we already previously checked if `b` was decimal or a digit, so don't need to check explicitly again
     if b != options.decimal
         b -= UInt8('0')
+        prev_b0 = b
+        anydigits = b <= 0x09
         while true
-            digits = _muladd(ten(IntType), digits, b)
-            pos += 1
-            incr!(source)
-            ndigits += 1
-            if eof(source, pos, len)
-                # input is integer, like "1"
-                if T === Number && IntType != Int64 && digits <= _unwiden(digits)
-                    # if T is Number, let's do a quick check if we tripped the
-                    # overflow and can actually unwiden
-                    y = _unwiden(digits)
-                    x = handlef(ifelse(neg, -y, y), f)
-                else
-                    x = handlef(ifelse(neg, -T(digits), T(digits)), f)
+            if b <= 0x09
+                if overflows(IntType) && digits > overflowval(IntType)
+                    return _parsedigits(T, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos, overflow_invalid, f)
+                elseif ndigits > maxdigits(T)
+                    # if input is way too big, just bail
+                    fastseek!(source, startpos - 1)
+                    pos = startpos
+                    code |= INVALID
+                    x = f === nothing ? x : nothing
+                    @goto done
                 end
-                code |= OK | EOF
-                @goto done
-            end
-            if has_groupmark
-                b, nb = dpeekbyte(source, pos) .- UInt8('0')
-                if (options.groupmark)::UInt8 - UInt8('0') == b && nb <= 0x09
-                    incr!(source)
-                    pos += 1
-                    b = nb
+                digits = _muladd(ten(IntType), digits, b)
+                pos += 1
+                incr!(source)
+                ndigits += (!iszero(ndigits) || !iszero(b)) # only accumulate digits without leading zeros
+                if eof(source, pos, len)
+                    # input is integer, like "1"
+                    if T === Number && IntType != Int64 && digits <= _unwiden(digits)
+                        # if T is Number, let's do a quick check if we tripped the
+                        # overflow and can actually unwiden
+                        y = _unwiden(digits)
+                        x = handlef(ifelse(neg, -y, y), f)
+                    else
+                        x = handlef(ifelse(neg, -T(digits), T(digits)), f)
+                    end
+                    code |= OK | EOF
+                    @goto done
                 end
+            elseif has_groupmark && b == groupmark0
+                prev_b0 == groupmark0 && (code |= INVALID; @goto done) # two groupmarks in a row
+                pos += 1
+                Parsers.incr!(source)
+                Parsers.eof(source, pos, len) && (code |= INVALID | EOF; @goto done) # groupmark at end of input
             else
-                b = peekbyte(source, pos) - UInt8('0')
+                # if `b` isn't a digit or a groupmark, time to break out of digit parsing while loop
+                (has_groupmark && prev_b0 == groupmark0) && (code |= INVALID; @goto done) # ended with groupmark
+                break
             end
-            # if `b` isn't a digit, time to break out of digit parsing while loop
-            b > 0x09 && break
-            if overflows(IntType) && digits > overflowval(IntType)
-                return _parsedigits(T, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos, overflow_invalid, f)
-            elseif ndigits > maxdigits(T)
-                # if input is way too big, just bail
-                fastseek!(source, startpos - 1)
-                pos = startpos
-                code |= INVALID
-                x = f === nothing ? x : nothing
-                @goto done
-            end
+            prev_b0 = b
+            b = peekbyte(source, pos) - UInt8('0')
         end
         # b wasn't a digit, so add back '0' to recover original Char value
         b += UInt8('0')
@@ -297,7 +303,7 @@ end
             # if the next byte after decimal point isn't a digit or exponent char ('e', 'E', 'f', 'F')
             # and we haven't parsed any digits, like ".a", then invalid
             # otherwise ok, like "1.a" (only "1." is parsed)
-            if ndigits == 0
+            if !anydigits
                 code |= INVALID
                 x = f === nothing ? x : nothing
                 @goto done
@@ -317,7 +323,7 @@ end
     # now we parse any digits following decimal point (if any); start `frac` at UInt64(0)
     # `digits` still receives any fractional digits, `frac` just keeps track of how many digits
     # were parsed to combine with any "e123" exponent numbers to determine final exponent value
-    x, code, pos = parsefrac(T, source, pos, len, b, code, options, digits, neg, startpos, UInt64(0), overflow_invalid, f)
+    x, code, pos = parsefrac(T, source, pos, len, b, code, options, digits, neg, startpos, UInt64(0), overflow_invalid, ndigits, f)
 
 @label done
     return x, code, pos
@@ -326,10 +332,10 @@ end
 # same as above; if digits overflows, we want a non-inlined version to call with a wider type
 # note that we never expect `frac` to overflow, since it's just keep track of the # of digits
 # we parse post-decimal point
-@noinline _parsefrac(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac, overflow_invalid, f::F) where {T, IntType, F} =
-    parsefrac(T, source, pos, len, b, code, options, digits, neg, startpos, frac, overflow_invalid, f)
+@noinline _parsefrac(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac, overflow_invalid, ndigits, f::F) where {T, IntType, F} =
+    parsefrac(T, source, pos, len, b, code, options, digits, neg, startpos, frac, overflow_invalid, ndigits, f)
 
-@inline function parsefrac(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac, overflow_invalid, f::F) where {T, IntType, F}
+@inline function parsefrac(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac, overflow_invalid, ndigits, f::F) where {T, IntType, F}
     x = zero(T)
     parsedanyfrac = false
     FT = FLOAT64
@@ -340,6 +346,7 @@ end
         # if so, parse fractional digits
         while true
             digits = _muladd(ten(IntType), digits, b)
+            ndigits += (!iszero(ndigits) || !iszero(b)) # only accumulate digits without leading zeros
             pos += 1
             incr!(source)
             frac += UInt64(1)
@@ -349,7 +356,7 @@ end
                     code |= INVALID
                     x = f === nothing ? x : nothing
                 else
-                    x, code = scale(T, FT, digits, -signed(frac), neg, code, f)
+                    x, code = scale(T, FT, digits, -signed(frac), neg, code, ndigits, f)
                     code |= OK | EOF
                 end
                 @goto done
@@ -357,7 +364,7 @@ end
             b = peekbyte(source, pos) - UInt8('0')
             b > 0x09 && break
             if overflows(IntType) && digits > overflowval(IntType)
-                return _parsefrac(T, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos, frac, overflow_invalid, f)
+                return _parsefrac(T, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos, frac, overflow_invalid, ndigits, f)
             end
         end
         b += UInt8('0')
@@ -398,7 +405,7 @@ end
 
         # at this point, we've parsed X and Y in "X.YeZ", but not Z in a scientific notation exponent number
         # we start our exponent number at UInt64(0)
-        return parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, UInt64(0), negexp, FT, overflow_invalid, f)
+        return parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, UInt64(0), negexp, FT, overflow_invalid, ndigits, f)
     else
         # if no scientific notation, we're done, so scale digits + frac and return
         if parsedanyfrac
@@ -407,7 +414,7 @@ end
                 x = f === nothing ? x : nothing
                 @goto done
             else
-                x, code = scale(T, FT, digits, -signed(frac), neg, code, f)
+                x, code = scale(T, FT, digits, -signed(frac), neg, code, ndigits, f)
             end
         else
             x = handlef(ifelse(neg, -T(digits), T(digits)), f)
@@ -421,10 +428,10 @@ end
 
 # same no-inline story, but this time for exponent number; probably even more rare to overflow the exponent number
 # compared to pre/post decimal digits, but we account for it all the same (a lot of float parsers don't account for this)
-@noinline _parseexp(::Type{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::ExpType, negexp, FT, overflow_invalid, f::F) where {T, ExpType, F} =
-    parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, exp, negexp, FT, overflow_invalid, f)
+@noinline _parseexp(::Type{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::ExpType, negexp, FT, overflow_invalid, ndigits, f::F) where {T, ExpType, F} =
+    parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, exp, negexp, FT, overflow_invalid, ndigits, f)
 
-@inline function parseexp(::Type{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::ExpType, negexp, FT, overflow_invalid, f::F) where {T, ExpType, F}
+@inline function parseexp(::Type{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::ExpType, negexp, FT, overflow_invalid, ndigits, f::F) where {T, ExpType, F}
     x = zero(T)
     # note that `b` has already had `b - UInt8('0')` applied to it for parseexp
     while true
@@ -438,7 +445,7 @@ end
                 code |= INVALID
                 x = f === nothing ? x : nothing
             else
-                x, code = scale(T, FT, digits, ee, neg, code, f)
+                x, code = scale(T, FT, digits, ee, neg, code, ndigits, f)
                 code |= OK | EOF
             end
             @goto done
@@ -451,13 +458,13 @@ end
                 code |= INVALID
                 x = f === nothing ? x : nothing
             else
-                x, code = scale(T, FT, digits, ifelse(negexp, -signed(exp), signed(exp)) - signed(frac), neg, code, f)
+                x, code = scale(T, FT, digits, ifelse(negexp, -signed(exp), signed(exp)) - signed(frac), neg, code, ndigits, f)
                 code |= OK
             end
             @goto done
         end
         if overflows(ExpType) && exp > overflowval(ExpType)
-            return _parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, _widen(exp), negexp, FT, overflow_invalid, f)
+            return _parseexp(T, source, pos, len, b, code, options, digits, neg, startpos, frac, _widen(exp), negexp, FT, overflow_invalid, ndigits, f)
         end
     end
 @label done
@@ -487,7 +494,7 @@ pow10(::Type{BigFloat}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
 _unsigned(x::BigInt) = x
 _unsigned(x) = unsigned(x)
 
-@inline function scale(::Type{T}, FT::FloatType, v, exp, neg, code, f::F) where {T, F}
+@inline function scale(::Type{T}, FT::FloatType, v, exp, neg, code, ndigits, f::F) where {T, F}
     if T === Float64
         return handlef(__scale(Float64, _unsigned(v), exp, neg), f), code
     elseif T === Float32

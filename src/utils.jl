@@ -315,18 +315,6 @@ function peekbyte end
 incr!(io::IO) = readbyte(io)
 readbyte(from::IO) = Base.read(from, UInt8)
 peekbyte(from::IO) = UInt8(Base.peek(from))
-function dpeekbyte(s::IO)
-    mark(s)
-    b = EOF_BYTE
-    nb = EOF_BYTE
-    try
-        b = read(s, UInt8)::UInt8
-        nb = read(s, UInt8)::UInt8
-    finally
-        reset(s)
-    end
-    return (b, nb)
-end
 
 function readbyte(from::IOBuffer)
     i = from.ptr
@@ -339,10 +327,6 @@ function peekbyte(from::IOBuffer)
     @inbounds byte = from.data[from.ptr]
     return byte
 end
-function dpeekbyte(from::IOBuffer)
-    @inbounds byte = from.data[from.ptr]
-    return byte, from.ptr >= from.size ? EOF_BYTE : @inbounds from.data[from.ptr+1]
-end
 
 function incr!(from::IOBuffer)
     from.ptr += 1
@@ -351,23 +335,13 @@ end
 
 incr!(::Union{AbstractVector{UInt8}, AbstractString}) = nothing
 peekbyte(from::IO, pos) = peekbyte(from)
-dpeekbyte(from::IO, pos) = dpeekbyte(from)
 function peekbyte(from::AbstractVector{UInt8}, pos)
     @inbounds b = from[pos]
     return b
 end
-function dpeekbyte(from::AbstractVector{UInt8}, pos)
-    @inbounds b = from[pos]
-    return b, get(from, pos+1, EOF_BYTE)
-end
-
 function peekbyte(from::AbstractString, pos)
     @inbounds b = codeunit(from, pos)
     return b
-end
-function dpeekbyte(from::AbstractString, pos)
-    @inbounds b = codeunit(from, pos)
-    return b, pos > sizeof(from) ? EOF_BYTE : peekbyte(from, pos+1)
 end
 
 eof(::AbstractVector{UInt8}, pos::Integer, len::Integer) = pos > len

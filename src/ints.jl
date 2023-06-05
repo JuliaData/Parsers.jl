@@ -8,6 +8,7 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
     x = zero(T)
     neg = false
     has_groupmark = opts.groupmark !== nothing
+    groupmark0 = something(opts.groupmark, 0xff) - UInt8('0')
     # start actual int parsing
     neg = b == UInt8('-')
     if neg || b == UInt8('+')
@@ -24,72 +25,73 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
         code |= INVALID
         @goto done
     end
+    prev_b0 = b
     while true
-        x = T(10) * x + unsafe_trunc(T, b)
-        pos += 1
-        incr!(source)
-        if eof(source, pos, len)
-            x = ifelse(neg, -x, x)
-            code |= OK | EOF
-            @goto done
-        end
-        if has_groupmark
-            b, nb = dpeekbyte(source, pos) .- UInt8('0')
-            if (opts.groupmark)::UInt8 - UInt8('0') == b && nb <= 0x09
-                incr!(source)
-                pos += 1
-                b = nb
+        if b <= 0x09
+            overflows(T) && x > overflowval(T) && break
+            x = T(10) * x + unsafe_trunc(T, b)
+            pos += 1
+            incr!(source)
+            if eof(source, pos, len)
+                x = ifelse(neg, -x, x)
+                code |= OK | EOF
+                @goto done
             end
+        elseif has_groupmark && b == groupmark0
+            prev_b0 == groupmark0 && (code |= INVALID; @goto done) # two groupmarks in a row
+            pos += 1
+            Parsers.incr!(source)
+            Parsers.eof(source, pos, len) && (code |= INVALID | EOF; @goto done) # groupmark at end of input
         else
-            b = peekbyte(source, pos) - UInt8('0')
-        end
-        if b > 0x09
             # detected a non-digit, time to bail on value parsing
             x = ifelse(neg, -x, x)
-            code |= OK
+            # Cannot end on a groupmark
+            (has_groupmark && prev_b0 == groupmark0) ? (code |= INVALID) : (code |= OK)
             @goto done
         end
-        overflows(T) && x > overflowval(T) && break
+        prev_b0 = b
+        b = peekbyte(source, pos) - UInt8('0')
     end
     # extra loop because we got too close to overflowing while parsing digits
     x = ifelse(neg, -x, x)
     while true
-        x, ov_mul = Base.mul_with_overflow(x, T(10))
-        x, ov_add = Base.add_with_overflow(x, ifelse(neg, -T(b), T(b)))
-        if ov_mul | ov_add
-            # we overflowed, mark as OVERFLOW
-            code |= OVERFLOW
-            # in this case, we know b is a digit that caused us
-            # to overflow, so we don't really want to consider it for
-            # a close quote character or delimiter, so if b is the last character
-            # let's just bail as eof
+        if b <= 0x09
+            x, ov_mul = Base.mul_with_overflow(x, T(10))
+            x, ov_add = Base.add_with_overflow(x, ifelse(neg, -T(b), T(b)))
+            if ov_mul | ov_add
+                # we overflowed, mark as OVERFLOW
+                code |= OVERFLOW
+                # in this case, we know b is a digit that caused us
+                # to overflow, so we don't really want to consider it for
+                # a close quote character or delimiter, so if b is the last character
+                # let's just bail as eof
+                pos += 1
+                incr!(source)
+                if eof(source, pos, len)
+                    code |= EOF
+                end
+                @goto done
+            end
             pos += 1
             incr!(source)
             if eof(source, pos, len)
-                code |= EOF
+                code |= OK | EOF
+                @goto done
             end
-            @goto done
-        end
-        pos += 1
-        incr!(source)
-        if eof(source, pos, len)
-            code |= OK | EOF
-            @goto done
-        end
-        if has_groupmark
-            b, nb = dpeekbyte(source, pos) .- UInt8('0')
-            if (opts.groupmark)::UInt8 - UInt8('0') == b && nb <= 0x09
-                incr!(source)
-                pos += 1
-                b = nb
-            end
+        elseif has_groupmark && b == groupmark0
+            prev_b0 == groupmark0 && (code |= INVALID; @goto done) # two groupmarks in a row
+            pos += 1
+            Parsers.incr!(source)
+            Parsers.eof(source, pos, len) && (code |= INVALID | EOF; @goto done) # groupmark at end of input
         else
-            b = peekbyte(source, pos) - UInt8('0')
-        end
-        if b > 0x09
-            code |= OK
+            # detected a non-digit, time to bail on value parsing
+            x = ifelse(neg, -x, x)
+            # Cannot end on a groupmark
+            (has_groupmark && prev_b0 == groupmark0) ? (code |= INVALID) : (code |= OK)
             @goto done
         end
+        prev_b0 = b
+        b = peekbyte(source, pos) - UInt8('0')
     end
 
 @label done
