@@ -239,7 +239,13 @@ function Options(
     if falses !== nothing
         falses = prepare!(falses)
     end
-    if groupmark !== nothing && (groupmark == decimal || isnumeric(groupmark) || (del == groupmark && !quoted) || (openquotechar == groupmark) || (closequotechar == groupmark))
+    if groupmark !== nothing && (
+        _match(groupmark, decimal) ||
+        isnumeric(Char(groupmark)) ||
+        (_match(del, groupmark) && !quoted) ||
+        _match(openquotechar, groupmark) ||
+        _match(closequotechar, groupmark)
+    )
         throw(ArgumentError("`groupmark` cannot be a number, a quoting char, coincide with `decimal` and `delim` unless `quoted=true`."))
     end
     df = dateformat === nothing ? nothing : dateformat isa String ? Format(dateformat) : dateformat isa Dates.DateFormat ? Format(dateformat) : dateformat

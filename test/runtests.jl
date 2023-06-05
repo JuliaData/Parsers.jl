@@ -367,11 +367,30 @@ end # @testset "Core Parsers.xparse"
     @test Parsers.xparse(Int32, "\"100,000,000\",100"; groupmark=',', openquotechar='"', closequotechar='"') == Parsers.Result{Int32}(Int16(13), 14, 100_000_000)
 
     @test_throws ArgumentError Parsers.xparse(Int64, "42"; groupmark=',', quoted=false, delim=',')
+    @test_throws ArgumentError Parsers.xparse(Int64, "42"; groupmark=',', quoted=false, delim=UInt8(','))
     @test_throws ArgumentError Parsers.xparse(Int64, "42"; groupmark=',', decimal=',')
+    @test_throws ArgumentError Parsers.xparse(Int64, "42"; groupmark=',', decimal=UInt8(','))
     @test_throws ArgumentError Parsers.xparse(Int64, "42"; groupmark='0')
+    @test_throws ArgumentError Parsers.xparse(Int64, "42"; groupmark=UInt8('0'))
     @test_throws ArgumentError Parsers.xparse(Int64, "42"; groupmark='9')
     @test_throws ArgumentError Parsers.xparse(Int64, "42"; groupmark='"', openquotechar='"')
+    @test_throws ArgumentError Parsers.xparse(Int64, "42"; groupmark='"', openquotechar=UInt8('"'))
     @test_throws ArgumentError Parsers.xparse(Int64, "42"; groupmark='"', closequotechar='"')
+    @test_throws ArgumentError Parsers.xparse(Int64, "42"; groupmark='"', closequotechar=UInt8('"'))
+
+    # #168
+    res = Parsers.xparse(Int, "1,729"; groupmark=',')
+    @test res.code == (OK | EOF)
+    @test res.tlen == 5
+    @test res.val == 1729
+    res = Parsers.xparse(Int, "1,729"; groupmark=UInt8(','))
+    @test res.code == (OK | EOF)
+    @test res.tlen == 5
+    @test res.val == 1729
+    @test_throws ArgumentError Parsers.xparse(Int, "3.14", groupmark='.', decimal=UInt8('.'), quoted=false)
+    @test_throws ArgumentError Parsers.xparse(Int, "3.14", groupmark=UInt8('.'), decimal='.', quoted=false)
+    @test_throws ArgumentError Parsers.xparse(Int, "3.14", groupmark=UInt8('.'), decimal=UInt8('.'), quoted=false)
+    @test_throws ArgumentError Parsers.xparse(Int, "3.14", groupmark='.', decimal='.', quoted=false)
 end
 
 # test lots of ints
