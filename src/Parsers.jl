@@ -112,7 +112,7 @@ end
   * `stripwhitespace=nothing`: if true, leading and trailing whitespace is stripped from string fields, note that for *quoted* strings however, whitespace is preserved within quotes (but ignored before/after quote characters). To also strip *within* quotes, see `stripquoted`
   * `stripquoted=false`: if true, whitespace is also stripped within quoted strings. If true, `stripwhitespace` is also set to true.
   * `groupmark=nothing`: optionally specify a single-byte character denoting the number grouping mark, this allows parsing of numbers that have, e.g., thousand separators (`1,000.00`).
-  * `rounding=RoundNearest`: optionally specify a rounding mode to use when parsing. Valid values are `RoundNearest`, `RoundToZero`. No rounding means an `Inexact` error will be thrown if the inputs cannot be represented without loss of precision.
+  * `rounding=RoundNearest`: optionally specify a rounding mode to use when parsing. No rounding means the result will be marked with `INEXACT` code if the value is not exactly representable in the target type.
 """
 struct Options
     flags::Flags
