@@ -230,7 +230,8 @@ end
 
 @inline function parsedigits(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool=false, f::F=nothing) where {T, IntType, F}
     x = zero(T)
-    ndigits = 0
+    ndigits = 0 # excludes leading zeros
+    anydigits = false
     has_groupmark = options.groupmark !== nothing
     groupmark0 = something(options.groupmark, 0xff) - UInt8('0')
 
@@ -238,6 +239,7 @@ end
     if b != options.decimal
         b -= UInt8('0')
         prev_b0 = b
+        anydigits = b <= 0x09
         while true
             if b <= 0x09
                 if overflows(IntType) && digits > overflowval(IntType)
@@ -253,7 +255,7 @@ end
                 digits = _muladd(ten(IntType), digits, b)
                 pos += 1
                 incr!(source)
-                ndigits += 1
+                ndigits += (!iszero(ndigits) || !iszero(b)) # only accumulate digits without leading zeros
                 if eof(source, pos, len)
                     # input is integer, like "1"
                     if T === Number && IntType != Int64 && digits <= _unwiden(digits)
@@ -301,7 +303,7 @@ end
             # if the next byte after decimal point isn't a digit or exponent char ('e', 'E', 'f', 'F')
             # and we haven't parsed any digits, like ".a", then invalid
             # otherwise ok, like "1.a" (only "1." is parsed)
-            if ndigits == 0
+            if !anydigits
                 code |= INVALID
                 x = f === nothing ? x : nothing
                 @goto done
@@ -344,6 +346,7 @@ end
         # if so, parse fractional digits
         while true
             digits = _muladd(ten(IntType), digits, b)
+            ndigits += (!iszero(ndigits) || !iszero(b)) # only accumulate digits without leading zeros
             pos += 1
             incr!(source)
             frac += UInt64(1)
