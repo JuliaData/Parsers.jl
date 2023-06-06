@@ -68,8 +68,7 @@ const INVALID_QUOTED_FIELD = 0b1000000001000000 % ReturnCode
 const INVALID_DELIMITER    = 0b1000000010000000 % ReturnCode
 const OVERFLOW             = 0b1000000100000000 % ReturnCode
 const INVALID_TOKEN        = 0b1000010000000000 % ReturnCode
-
-const EOF_BYTE = 0xFF
+const INEXACT              = 0b1000100000000000 % ReturnCode
 
 valueok(x::ReturnCode) = (x & OK) == OK
 ok(x::ReturnCode) = (x & (OK | INVALID)) == OK
@@ -83,6 +82,7 @@ specialvalue(x::ReturnCode) = (x & SPECIAL_VALUE) == SPECIAL_VALUE
 invalidquotedfield(x::ReturnCode) = (x & INVALID_QUOTED_FIELD) == INVALID_QUOTED_FIELD
 invaliddelimiter(x::ReturnCode) = (x & INVALID_DELIMITER) == INVALID_DELIMITER
 overflow(x::ReturnCode) = (x & OVERFLOW) == OVERFLOW
+inexact(x::ReturnCode) = (x & INEXACT) == INEXACT
 quotednotescaped(x::ReturnCode) = (x & (QUOTED | ESCAPED_STRING)) == QUOTED
 invalidtoken(x::ReturnCode) = (x & INVALID_TOKEN) == INVALID_TOKEN
 eof(x::ReturnCode) = (x & EOF) == EOF
@@ -364,6 +364,9 @@ function text(r)
     if r & (~INVALID & OVERFLOW) > 0
         str *= ", value overflowed"
     end
+    if r & (~INVALID & INEXACT) > 0
+        str *= ", value is inexactly represented"
+    end
     if r & SENTINEL > 0
         str *= ", a sentinel value was parsed"
     end
@@ -399,7 +402,8 @@ codes(r) = chop(chop(string(
     ifelse(r & EOF > 0, "EOF | ", ""),
     ifelse(r & (~INVALID & INVALID_QUOTED_FIELD) > 0, "INVALID_QUOTED_FIELD | ", ""),
     ifelse(r & (~INVALID & INVALID_DELIMITER) > 0, "INVALID_DELIMITER | ", ""),
-    ifelse(r & (~INVALID & OVERFLOW) > 0, "OVERFLOW | ", "")
+    ifelse(r & (~INVALID & OVERFLOW) > 0, "OVERFLOW | ", ""),
+    ifelse(r & (~INVALID & INEXACT) > 0, "INEXACT | ", ""),
 )))
 
 """

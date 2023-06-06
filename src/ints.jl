@@ -119,7 +119,7 @@ end
     end
     b = peekbyte(source, pos)
     # parse rest of number
-    _, code, pos = parsedigits(Number, source, pos, len, b, code, OPTIONS, Int64(0), neg, startpos, true, f)
+    _, code, pos = parsedigits(Number, source, pos, len, b, code, OPTIONS, Int64(0), neg, startpos, true, 0, f)
     if invalid(code)
         # by default, parsedigits only has up to Float64 precision; if we overflow
         # let's try BigFloat

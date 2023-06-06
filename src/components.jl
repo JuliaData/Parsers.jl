@@ -249,7 +249,7 @@ function sentinel(chcksentinel, sentinel)
                 if isgreedy(T)
                     pl = withlen(pl, sentinelpos - pl.pos)
                 else
-                    code &= ~(INVALID | EOF | OVERFLOW)
+                    code &= ~(INVALID | EOF | OVERFLOW | INEXACT)
                     pos = sentinelpos
                     fastseek!(source, pos - 1)
                 end

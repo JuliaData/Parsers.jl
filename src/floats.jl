@@ -225,12 +225,11 @@ end
 end
 
 # if we need to _widen the type due to `digits` overflow, we want a non-inlined version so base case compilation doesn't get out of control
-@noinline _parsedigits(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool, f::F) where {T, IntType, F} =
-    parsedigits(T, source, pos, len, b, code, options, digits, neg, startpos, overflow_invalid, f)
+@noinline _parsedigits(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool, ndigits::Int, f::F) where {T, IntType, F} =
+    parsedigits(T, source, pos, len, b, code, options, digits, neg, startpos, overflow_invalid, ndigits, f)
 
-@inline function parsedigits(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool=false, f::F=nothing) where {T, IntType, F}
+@inline function parsedigits(::Type{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool=false, ndigits::Int=0, f::F=nothing) where {T, IntType, F}
     x = zero(T)
-    ndigits = 0 # excludes leading zeros
     anydigits = false
     has_groupmark = options.groupmark !== nothing
     groupmark0 = something(options.groupmark, 0xff) - UInt8('0')
@@ -243,7 +242,7 @@ end
         while true
             if b <= 0x09
                 if overflows(IntType) && digits > overflowval(IntType)
-                    return _parsedigits(T, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos, overflow_invalid, f)
+                    return _parsedigits(T, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos, overflow_invalid, ndigits, f)
                 elseif ndigits > maxdigits(T)
                     # if input is way too big, just bail
                     fastseek!(source, startpos - 1)
@@ -394,8 +393,9 @@ end
                 x = f === nothing ? x : nothing
                 @goto done
             end
+            b = peekbyte(source, pos)
         end
-        b = peekbyte(source, pos) - UInt8('0')
+        b -= UInt8('0')
         if b > 0x09
             # invalid to have a "dangling" 'e'
             code |= INVALID
