@@ -105,7 +105,7 @@ end
     x, code = res.val, res.code
     @test x === Time(1, 2, 3)
     @test code == OK | EOF
-    
+
     res = Parsers.xparse(Date, IOBuffer("\"\""))
     x, code = res.val, res.code
 
@@ -121,7 +121,7 @@ end
     x, code = res.val, res.code
 
     @test code == QUOTED | INVALID | EOF
-    
+
     res = Parsers.xparse(Date, IOBuffer("NA"), sentinel=["NA"])
     x, code = res.val, res.code
 
@@ -154,10 +154,10 @@ end
     x, code = res.val, res.code
     @test x === Date(1)
     @test code === OK | DELIMITED
-    
+
     @test Parsers.parse(DateTime, IOBuffer("1996/Feb/15"), Parsers.Options(dateformat="yy/uuu/dd")) === DateTime(1996, 2, 15)
     @test Parsers.parse(DateTime, IOBuffer("1996, Jan, 15"), Parsers.Options(dateformat="yyyy, uuu, dd")) === DateTime(1996, 1, 15)
-    
+
     @test_throws Parsers.Error Parsers.parse(Date, IOBuffer("2020-05-32"))
     @test_throws Parsers.Error Parsers.parse(DateTime, IOBuffer("2020-05-32"))
     @test_throws Parsers.Error Parsers.parse(Time, IOBuffer("25:00:00"))
@@ -203,7 +203,7 @@ testcases = [
     ("yy/uuu/dd", "96/Feb/15", Dates.DateTime(96, 2, 15)),
     ("yy/uuu/dd", "1996/Feb/15", Dates.DateTime(1996, 2, 15)),
     ("yy/uuu/dd", "96/Feb/1", Dates.DateTime(96, 2, 1)),
-    
+
     ("yyyy, uuu, dd", "1996, Jan, 15", Dates.DateTime(1996, 1, 15)),
     ("yyyy.U.dd", "1996.February.15", Dates.DateTime(1996, 2, 15)),
     ("yyyymmdd", "19960315", Dates.DateTime(1996, 3, 15)),
@@ -212,7 +212,7 @@ testcases = [
     ("/yyyy/m/d", "/1996/5/15", Dates.DateTime(1996, 5, 15)),
     ("yyyy年mm月dd日", "2009年12月01日", Dates.DateTime(2009, 12, 1)),
     ("yyyy𒀱mm𒀱dd", "2021𒀱6𒀱28", Dates.Date(2021, 6, 28)),
-    
+
     (Parsers.Format("dd uuuuu YYYY", "french"), "28 mai 2014", Dates.DateTime(2014, 5, 28)),
     (Parsers.Format("dd uuuuu yyyy", "french"), "28 févr 2014", Dates.DateTime(2014, 2, 28)),
     (Parsers.Format("dd uuuuu yyyy", "french"), "28 août 2014", Dates.DateTime(2014, 8, 28)),
@@ -244,6 +244,15 @@ for useio in (true, false)
         @test Parsers.parse(typeof(dt), useio ? IOBuffer(str) : str, Parsers.Options(dateformat=fmt)) == dt
     end
 end
+
+res = Parsers.xparse(DateTime, "2017-Mar-17 00:00:00.1231", dateformat="y-u-d H:M:S.s", rounding=nothing)
+@test res.code == EOF | INEXACT
+res = Parsers.xparse(DateTime, "2017-Mar-17 00:00:00.1231", dateformat="y-u-d H:M:S.s", rounding=RoundNearest)
+@test res.code == EOF | OK
+@test res.val == Dates.DateTime(2017, 3, 17, 0, 0, 0, 123)
+res = Parsers.xparse(DateTime, "2017-Mar-17 00:00:00.1231", dateformat="y-u-d H:M:S.s", rounding=RoundUp)
+@test res.code == EOF | OK
+@test res.val == Dates.DateTime(2017, 3, 17, 0, 0, 0, 124)
 
 @static if VERSION >= v"1.3-DEV"
 @testset "AM/PM" begin

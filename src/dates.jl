@@ -256,14 +256,23 @@ for (tok, fn) in zip("uUeE", Any[Dates.monthabbr_to_value, Dates.monthname_to_va
     end
 end
 
-@inline function tryparsenext(d::Dates.DatePart{'s'}, source, pos, len, b, code)
+@inline function tryparsenext(d::Dates.DatePart{'s'}, source, pos, len, b, code, options)
     ms0, newpos, b, code = tryparsenext_base10(source, pos, len, b, code, maxdigits(d))
     invalid(code) && return ms0, newpos, b, code
+    rounding = options.rounding
     len = newpos - pos
     if len > 3
-        ms, r = divrem(ms0, Int64(10) ^ (len - 3))
-        if r != 0
-            code |= INVALID
+        if rounding === nothing
+            ms, r = divrem(ms0, Int64(10) ^ (len - 3))
+            if r != 0
+                code |= INEXACT
+            end
+        elseif rounding === RoundNearest
+            ms = div(ms0, Int64(10) ^ (len - 3), RoundNearest)
+        elseif rounding === RoundToZero
+            ms = div(ms0, Int64(10) ^ (len - 3), RoundToZero)
+        else
+            ms = div(ms0, Int64(10) ^ (len - 3), rounding::RoundingMode)
         end
     else
         ms = ms0 * Int64(10) ^ (3 - len)
@@ -375,7 +384,7 @@ end
         elseif T !== Date && tok isa Dates.DatePart{'p'}
             ampm, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
         elseif T !== Date && tok isa Dates.DatePart{'s'}
-            millisecond, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
+            millisecond, pos, b, code = tryparsenext(tok, source, pos, len, b, code, options)
         elseif tok isa Dates.DatePart{'z'}
             tz, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
         elseif tok isa Dates.DatePart{'Z'}
