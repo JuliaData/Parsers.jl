@@ -356,7 +356,7 @@ end
                     code |= INVALID
                     x = f === nothing ? x : nothing
                 else
-                    x, code = scale(T, FT, digits, -signed(frac), neg, code, ndigits, f)
+                    x, code = scale(T, FT, digits, -signed(frac), neg, code, ndigits, f, options)
                     code |= OK | EOF
                 end
                 @goto done
@@ -414,7 +414,7 @@ end
                 x = f === nothing ? x : nothing
                 @goto done
             else
-                x, code = scale(T, FT, digits, -signed(frac), neg, code, ndigits, f)
+                x, code = scale(T, FT, digits, -signed(frac), neg, code, ndigits, f, options)
             end
         else
             x = handlef(ifelse(neg, -T(digits), T(digits)), f)
@@ -445,7 +445,7 @@ end
                 code |= INVALID
                 x = f === nothing ? x : nothing
             else
-                x, code = scale(T, FT, digits, ee, neg, code, ndigits, f)
+                x, code = scale(T, FT, digits, ee, neg, code, ndigits, f, options)
                 code |= OK | EOF
             end
             @goto done
@@ -458,7 +458,7 @@ end
                 code |= INVALID
                 x = f === nothing ? x : nothing
             else
-                x, code = scale(T, FT, digits, ifelse(negexp, -signed(exp), signed(exp)) - signed(frac), neg, code, ndigits, f)
+                x, code = scale(T, FT, digits, ifelse(negexp, -signed(exp), signed(exp)) - signed(frac), neg, code, ndigits, f, options)
                 code |= OK
             end
             @goto done
@@ -494,7 +494,7 @@ pow10(::Type{BigFloat}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
 _unsigned(x::BigInt) = x
 _unsigned(x) = unsigned(x)
 
-@inline function scale(::Type{T}, FT::FloatType, v, exp, neg, code, ndigits, f::F) where {T, F}
+@inline function scale(::Type{T}, FT::FloatType, v, exp, neg, code, ndigits, f::F, ::Options) where {T, F}
     if T === Float64
         return handlef(__scale(Float64, _unsigned(v), exp, neg), f), code
     elseif T === Float32
