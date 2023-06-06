@@ -393,8 +393,9 @@ end
                 x = f === nothing ? x : nothing
                 @goto done
             end
+            b = peekbyte(source, pos)
         end
-        b = peekbyte(source, pos) - UInt8('0')
+        b -= UInt8('0')
         if b > 0x09
             # invalid to have a "dangling" 'e'
             code |= INVALID
