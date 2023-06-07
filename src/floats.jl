@@ -263,7 +263,7 @@ end
                         y = _unwiden(digits)
                         x = handlef(ifelse(neg, -y, y), f)
                     else
-                        x = handlef(ifelse(neg, -T(digits), T(digits)), f)
+                        x, code = noscale(T, digits, neg, code, ndigits, f, options)
                     end
                     code |= OK | EOF
                     @goto done
@@ -292,7 +292,7 @@ end
             if T === Number
                 x = handlef(ifelse(neg, -Float64(digits), Float64(digits)), f)
             else
-                x = handlef(ifelse(neg, -T(digits), T(digits)), f)
+                x, code = noscale(T, digits, neg, code, ndigits, f, options)
             end
             code |= ((startpos + 1) == pos ? INVALID : OK) | EOF
             @goto done
@@ -310,7 +310,7 @@ end
                 if T === Number
                     x = handlef(ifelse(neg, -Float64(digits), Float64(digits)), f)
                 else
-                    x = handlef(ifelse(neg, -T(digits), T(digits)), f)
+                    x, code = noscale(T, digits, neg, code, ndigits, f, options)
                 end
                 code |= OK
                 @goto done
@@ -418,7 +418,7 @@ end
                 x, code = scale(T, FT, digits, -signed(frac), neg, code, ndigits, f, options)
             end
         else
-            x = handlef(ifelse(neg, -T(digits), T(digits)), f)
+            x, code = noscale(T, digits, neg, code, ndigits, f, options)
         end
         code |= OK
     end
@@ -495,6 +495,12 @@ pow10(::Type{BigFloat}, e) = (@inbounds v = F64_SHORT_POWERS[e+1]; return v)
 _unsigned(x::BigInt) = x
 _unsigned(x) = unsigned(x)
 
+# No fractional part or exponent, digits in `v` are already scaled
+@inline function noscale(::Type{T}, v::Integer, neg::Bool, code, ndigits, f::F, ::Options) where {T, F}
+    return handlef(ifelse(neg, -T(v), T(v)), f), code
+end
+
+# Digits in `v` need to be scaled by `exp`
 @inline function scale(::Type{T}, FT::FloatType, v, exp, neg, code, ndigits, f::F, ::Options) where {T, F}
     if T === Float64
         return handlef(__scale(Float64, _unsigned(v), exp, neg), f), code
