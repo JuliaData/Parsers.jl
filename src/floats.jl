@@ -322,6 +322,7 @@ end
     # now we parse any digits following decimal point (if any); start `frac` at UInt64(0)
     # `digits` still receives any fractional digits, `frac` just keeps track of how many digits
     # were parsed to combine with any "e123" exponent numbers to determine final exponent value
+    (overflows(IntType) && digits > overflowval(IntType)) && (digits = _widen(digits))
     x, code, pos = parsefrac(T, source, pos, len, b, code, options, digits, neg, startpos, UInt64(0), overflow_invalid, ndigits, f)
 
 @label done
