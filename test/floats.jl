@@ -152,6 +152,8 @@ testcases = [
 
     # A different kind of very large number.
     (str="22.222222222222222", x=22.22222222222222, code=(OK | EOF), len=0, tot=0),
+    # A number that overflows `digits` with the last digit before the decimal.
+    (str="3402823669209384634.6", x=3.4028236692093844e18, code=(OK | EOF), len=0, tot=0),
 
     # Exactly halfway between 1 and math.Nextafter(1, 2).
     # Round to even (down).
