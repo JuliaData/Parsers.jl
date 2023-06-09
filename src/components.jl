@@ -1,6 +1,6 @@
 # must be outermost layer
 function Result(parser)
-    function(::Type{T}, source, pos, len, ::Type{RT}=T) where {T, RT}
+    function(conf::AbstractConf{T}, source, pos, len, ::Type{RT}=T) where {T, RT}
         Base.@_inline_meta
         startpos = pos
         code = SUCCESS
@@ -10,7 +10,7 @@ function Result(parser)
         # we allow the user to provide a custom PosLen type (like PosLen31) in which case
         # they need to overload this method to get the instance here.
         pl = poslen(RT, pos, 0)
-        pos, code, pl, x = parser(T, source, pos, len, b, code, pl)
+        pos, code, pl, x = parser(conf, source, pos, len, b, code, pl)
         tlen = pos - startpos
         if valueok(code)
             y = x::RT
@@ -35,9 +35,9 @@ end
 emptysentinel(opts::Options) = emptysentinel(opts.flags.checksentinel && isempty(opts.sentinel))
 function emptysentinel(checksent::Bool)
     function(parser)
-        function checkemptysentinel(::Type{T}, source, pos, len, b, code, pl) where {T}
+        function checkemptysentinel(conf::AbstractConf{T}, source, pos, len, b, code, pl) where {T}
             Base.@_inline_meta
-            pos, code, pl, x = parser(T, source, pos, len, b, code, pl)
+            pos, code, pl, x = parser(conf, source, pos, len, b, code, pl)
             if checksent && pl.len == 0 && (!isgreedy(T) || !quoted(code))
                 code &= ~(OK | INVALID)
                 code |= SENTINEL
@@ -55,7 +55,7 @@ iswh(b, spacedelim, tabdelim) = (!spacedelim && b == UInt8(' ')) || (!tabdelim &
 whitespace(opts::Options) = whitespace(opts.flags.spacedelim, opts.flags.tabdelim, opts.flags.stripquoted, opts.flags.stripwhitespace)
 function whitespace(spacedelim, tabdelim, stripquoted, stripwh)
     function(parser)
-        function stripwhitespace(::Type{T}, source, pos, len, b, code, pl) where {T}
+        function stripwhitespace(conf::AbstractConf{T}, source, pos, len, b, code, pl) where {T}
             Base.@_inline_meta
             # strip leading whitespace
             if !eof(source, pos, len) && (
@@ -86,7 +86,7 @@ function whitespace(spacedelim, tabdelim, stripquoted, stripwh)
                     pl = poslen(typeof(pl), pos, 0)
                 end
             end
-            pos, code, pl, x = parser(T, source, pos, len, b, code, pl)
+            pos, code, pl, x = parser(conf, source, pos, len, b, code, pl)
             # strip trailing whitespace
             if !eof(source, pos, len) && (
                 # post non-quoted value, if delim is not whitespace, and non-string
@@ -201,7 +201,7 @@ end
 quoted(opts::Options) = quoted(opts.flags.checkquoted, opts.oq, opts.cq, opts.e, opts.flags.stripquoted)
 function quoted(checkquoted, oq, cq, e, stripquoted)
     function(parser)
-        function findquoted(::Type{T}, source, pos, len, b, code, pl) where {T}
+        function findquoted(conf::AbstractConf{T}, source, pos, len, b, code, pl) where {T}
             Base.@_inline_meta
             isquoted = false
             if checkquoted && !eof(source, pos, len)
@@ -217,7 +217,7 @@ function quoted(checkquoted, oq, cq, e, stripquoted)
                     b = peekbyte(source, pos)
                 end
             end
-            pos, code, pl, x = parser(T, source, pos, len, b, code, pl)
+            pos, code, pl, x = parser(conf, source, pos, len, b, code, pl)
             if isgreedy(T) && isquoted
                 return pos, code, pl, x
             end
@@ -238,10 +238,10 @@ end
 sentinel(opts::Options) = sentinel(opts.flags.checksentinel, opts.sentinel)
 function sentinel(chcksentinel, sentinel)
     function(parser)
-        function checkforsentinel(::Type{T}, source, pos, len, b, code, pl) where {T}
+        function checkforsentinel(conf::AbstractConf{T}, source, pos, len, b, code, pl) where {T}
             Base.@_inline_meta
             match, sentinelpos = (!chcksentinel || isempty(sentinel) || eof(source, pos, len)) ? (false, 0) : checktokens(source, pos, len, b, sentinel)
-            pos, code, pl, x = parser(T, source, pos, len, b, code, pl)
+            pos, code, pl, x = parser(conf, source, pos, len, b, code, pl)
             # @show match, sentinelpos, pos, pl
             if match && sentinelpos > (pl.pos + pl.len - 1)
                 # if we matched a sentinel value that was as long or longer than our type value
@@ -363,9 +363,9 @@ end
 delimiter(opts::Options) = delimiter(opts.flags.checkdelim, opts.delim, opts.flags.ignorerepeated, opts.cmt, opts.flags.ignoreemptylines, opts.flags.stripwhitespace)
 function delimiter(checkdelim, delim, ignorerepeated, cmt, ignoreemptylines, stripwhitespace)
     function(parser)
-        function _finddelimiter(::Type{T}, source, pos, len, b, code, pl) where {T}
+        function _finddelimiter(conf::AbstractConf{T}, source, pos, len, b, code, pl) where {T}
             Base.@_inline_meta
-            pos, code, pl, x = parser(T, source, pos, len, b, code, pl)
+            pos, code, pl, x = parser(conf, source, pos, len, b, code, pl)
             if eof(source, pos, len) || !checkdelim || delimited(code) || newline(code) # greedy case
                 return pos, code, pl, x
             end
@@ -377,14 +377,22 @@ function delimiter(checkdelim, delim, ignorerepeated, cmt, ignoreemptylines, str
 end
 
 function typeparser(opts::Options)
-    function(::Type{T}, source, pos, len, b, code, pl) where {T}
+    function(conf::AbstractConf{T}, source, pos, len, b, code, pl) where {T}
         Base.@_inline_meta
-        return typeparser(T, source, pos, len, b, code, pl, opts)
+        return typeparser(conf, source, pos, len, b, code, pl, opts)
     end
 end
 
 # backwards compat
-@inline function typeparser(T, source, pos, len, b, code, opts::Options)
-    pos, code, pl, x = typeparser(T, source, pos, len, b, code, poslen(pos, 0), opts)
+@inline function typeparser(conf, source, pos, len, b, code, opts::Options)
+    pos, code, pl, x = typeparser(conf, source, pos, len, b, code, poslen(pos, 0), opts)
     return x, code, pos
 end
+
+@inline function typeparser(::Type{T}, source, pos, len, b, code, opts::Options) where {T}
+    pos, code, pl, x = typeparser(DefaultConf{T}(), source, pos, len, b, code, poslen(pos, 0), opts)
+    return x, code, pos
+end
+
+@inline typeparser(::Type{T}, source, pos, len, b, code, pl) where {T} =
+    typeparser(DefaultConf{T}(), source, pos, len, b, code, pl, Options())

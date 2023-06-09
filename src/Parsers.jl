@@ -293,6 +293,14 @@ Options(;
     rounding::Union{Nothing,RoundingMode}=nothing,
 ) = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, debug, stripwhitespace, stripquoted, groupmark, rounding)
 
+# "beta" for now, but allows custom types to define their own "Options"-like struct
+# that can handle additional type-specific options
+abstract type AbstractConf{T} end
+
+struct DefaultConf{T} <: AbstractConf{T} end
+
+conf(::Type{T}, opts::Options; kw...) where {T} = DefaultConf{T}()
+
 include("components.jl")
 
 # high-level convenience functions like in Base
@@ -350,18 +358,21 @@ returntype(::Type{T}) where {T} = T
 xparse(::Type{T}, source::SourceType, S=nothing; pos::Integer=1, len::Integer=source isa IO ? 0 : sizeof(source), kw...) where {T} =
     S === nothing ? xparse(T, source, pos, len, Options(; kw...)) : xparse(T, source, pos, len, Options(; kw...), S)
 
-@inline _xparse(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=returntype(T)) where {T, S} =
+@inline _xparse(conf::AbstractConf{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=returntype(T)) where {T, S} =
     Result(emptysentinel(options)(delimiter(options)(whitespace(options)(
         quoted(options)(whitespace(options)(sentinel(options)(typeparser(options)
-    )))))))(T, source, pos, len, S)
+    )))))))(conf, source, pos, len, S)
 
-function xparse(::Type{T}, source::SourceType, pos, len, options=XOPTIONS, ::Type{S}=returntype(T)) where {T, S}
+xparse(::Type{T}, source::SourceType, pos, len, options=XOPTIONS, ::Type{S}=returntype(T)) where {T, S} =
+    xparse(conf(T, options), source, pos, len, options, S)
+
+function xparse(conf::AbstractConf{T}, source::SourceType, pos, len, options=XOPTIONS, ::Type{S}=returntype(T)) where {T, S}
     buf = source isa AbstractString ? codeunits(source) : source
     if T === Number || supportedtype(T)
-        return _xparse(T, buf, pos, len, options, S)
+        return _xparse(conf, buf, pos, len, options, S)
     else
         # generic fallback calls Base.tryparse
-        res = _xparse(String, source, pos, len, options)
+        res = _xparse(DefaultConf{String}(), source, pos, len, options)
         code = res.code
         pl = res.val
         if !Parsers.invalid(code) && !Parsers.sentinel(code)
@@ -379,16 +390,19 @@ function xparse(::Type{T}, source::SourceType, pos, len, options=XOPTIONS, ::Typ
 end
 
 # condensed version of xparse that doesn't worry about quoting or delimiters; called from Parsers.parse/Parsers.tryparse
-@inline _xparse2(::Type{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, opts::Options=OPTIONS, ::Type{S}=returntype(T)) where {T, S} =
-    Result(whitespace(false, false, false, true)(typeparser(opts)))(T, source, pos, len, S)
+@inline _xparse2(conf::AbstractConf{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, opts::Options=OPTIONS, ::Type{S}=returntype(T)) where {T, S} =
+    Result(whitespace(false, false, false, true)(typeparser(opts)))(conf, source, pos, len, S)
 
-@inline function xparse2(::Type{T}, source::SourceType, pos, len, options=OPTIONS, ::Type{S}=returntype(T)) where {T, S}
+@inline xparse2(::Type{T}, source::SourceType, pos, len, options=OPTIONS, ::Type{S}=returntype(T)) where {T, S} =
+    xparse2(conf(T, options), source, pos, len, options, S)
+
+@inline function xparse2(conf::AbstractConf{T}, source::SourceType, pos, len, options=OPTIONS, ::Type{S}=returntype(T)) where {T, S}
     buf = source isa AbstractString ? codeunits(source) : source
     if T === Number || supportedtype(T)
-        return _xparse2(T, buf, pos, len, options, S)
+        return _xparse2(conf, buf, pos, len, options, S)
     else
         # generic fallback calls Base.tryparse
-        res = _xparse2(String, source, pos, len, options)
+        res = _xparse2(DefaultConf{String}(), source, pos, len, options)
         code = res.code
         pl = res.val
         if !Parsers.invalid(code) && !Parsers.sentinel(code)
