@@ -301,6 +301,8 @@ struct DefaultConf{T} <: AbstractConf{T} end
 
 conf(::Type{T}, opts::Options; kw...) where {T} = DefaultConf{T}()
 
+result(::Type{T}, res::Result) where {T} = res
+
 include("components.jl")
 
 # high-level convenience functions like in Base
@@ -358,13 +360,13 @@ returntype(::Type{T}) where {T} = T
 xparse(::Type{T}, source::SourceType, S=nothing; pos::Integer=1, len::Integer=source isa IO ? 0 : sizeof(source), kw...) where {T} =
     S === nothing ? xparse(T, source, pos, len, Options(; kw...)) : xparse(T, source, pos, len, Options(; kw...), S)
 
-@inline _xparse(conf::AbstractConf{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=returntype(T)) where {T, S} =
+_xparse(conf::AbstractConf{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, options::Options=XOPTIONS, ::Type{S}=returntype(T)) where {T, S} =
     Result(emptysentinel(options)(delimiter(options)(whitespace(options)(
         quoted(options)(whitespace(options)(sentinel(options)(typeparser(options)
     )))))))(conf, source, pos, len, S)
 
 xparse(::Type{T}, source::SourceType, pos, len, options=XOPTIONS, ::Type{S}=returntype(T)) where {T, S} =
-    xparse(conf(T, options), source, pos, len, options, S)
+    result(T, xparse(conf(T, options), source, pos, len, options, S))
 
 function xparse(conf::AbstractConf{T}, source::SourceType, pos, len, options=XOPTIONS, ::Type{S}=returntype(T)) where {T, S}
     buf = source isa AbstractString ? codeunits(source) : source
@@ -390,11 +392,11 @@ function xparse(conf::AbstractConf{T}, source::SourceType, pos, len, options=XOP
 end
 
 # condensed version of xparse that doesn't worry about quoting or delimiters; called from Parsers.parse/Parsers.tryparse
-@inline _xparse2(conf::AbstractConf{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, opts::Options=OPTIONS, ::Type{S}=returntype(T)) where {T, S} =
+_xparse2(conf::AbstractConf{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, opts::Options=OPTIONS, ::Type{S}=returntype(T)) where {T, S} =
     Result(whitespace(false, false, false, true)(typeparser(opts)))(conf, source, pos, len, S)
 
 @inline xparse2(::Type{T}, source::SourceType, pos, len, options=OPTIONS, ::Type{S}=returntype(T)) where {T, S} =
-    xparse2(conf(T, options), source, pos, len, options, S)
+    result(T, xparse2(conf(T, options), source, pos, len, options, S))
 
 @inline function xparse2(conf::AbstractConf{T}, source::SourceType, pos, len, options=OPTIONS, ::Type{S}=returntype(T)) where {T, S}
     buf = source isa AbstractString ? codeunits(source) : source
