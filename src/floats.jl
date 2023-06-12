@@ -224,9 +224,11 @@ end
     end
 end
 
+rettype(::Type{T}) where {T} = T === Number ? Nothing : T
+
 # if we need to _widen the type due to `digits` overflow, we want a non-inlined version so base case compilation doesn't get out of control
 @noinline _parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool, ndigits::Int, f::F) where {T, IntType, F} =
-    parsedigits(conf, source, pos, len, b, code, options, digits, neg, startpos, overflow_invalid, ndigits, f)::Tuple{T, ReturnCode, Int}
+    parsedigits(conf, source, pos, len, b, code, options, digits, neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
 
 @inline function parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool=false, ndigits::Int=0, f::F=nothing) where {T, IntType, F}
     x = zero(T)
@@ -333,7 +335,7 @@ end
 # note that we never expect `frac` to overflow, since it's just keep track of the # of digits
 # we parse post-decimal point
 @noinline _parsefrac(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac, overflow_invalid, ndigits, f::F) where {T, IntType, F} =
-    parsefrac(conf, source, pos, len, b, code, options, digits, neg, startpos, frac, overflow_invalid, ndigits, f)::Tuple{T, ReturnCode, Int}
+    parsefrac(conf, source, pos, len, b, code, options, digits, neg, startpos, frac, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
 
 @inline function parsefrac(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac, overflow_invalid, ndigits, f::F) where {T, IntType, F}
     x = zero(T)
@@ -430,7 +432,7 @@ end
 # same no-inline story, but this time for exponent number; probably even more rare to overflow the exponent number
 # compared to pre/post decimal digits, but we account for it all the same (a lot of float parsers don't account for this)
 @noinline _parseexp(conf::AbstractConf{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::ExpType, negexp, FT, overflow_invalid, ndigits, f::F) where {T, ExpType, F} =
-    parseexp(conf, source, pos, len, b, code, options, digits, neg, startpos, frac, exp, negexp, FT, overflow_invalid, ndigits, f)::Tuple{T, ReturnCode, Int}
+    parseexp(conf, source, pos, len, b, code, options, digits, neg, startpos, frac, exp, negexp, FT, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
 
 @inline function parseexp(conf::AbstractConf{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::ExpType, negexp, FT, overflow_invalid, ndigits, f::F) where {T, ExpType, F}
     x = zero(T)
