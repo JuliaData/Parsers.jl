@@ -39,7 +39,7 @@ supportedtype(::Type{SHA1}) = true
 
 _set_tup5_at(t::NTuple{5,UInt32}, i, x::UInt32) = ntuple(j -> j == i ? x : t[j], 5)
 
-function typeparser(::Type{SHA1}, source, pos, len, b, code, pl, options)
+function typeparser(::AbstractConf{SHA1}, source, pos, len, b, code, pl, options)
     if len - pos + 1 < 40
         @inbounds while pos <= len && _HEX_LUT[peekbyte(source, pos) + 0x01] != 0xFFFF
             pos += 1
@@ -81,7 +81,7 @@ end
 
 supportedtype(::Type{UUID}) = true
 
-function typeparser(::Type{UUID}, source, pos, len, b, code, pl, options)
+function typeparser(::AbstractConf{UUID}, source, pos, len, b, code, pl, options)
     check = UInt32(0)
     hi = UInt64(0)
     lo = UInt64(0)

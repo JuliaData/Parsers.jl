@@ -2,7 +2,7 @@ isgreedy(::Type{T}) where {T <: AbstractString} = true
 isgreedy(::Type{Symbol}) = true
 isgreedy(T) = false
 
-@inline function typeparser(::Type{T}, source, pos, len, b, code, pl, opts) where {T <: AbstractString}
+@inline function typeparser(::AbstractConf{T}, source, pos, len, b, code, pl, opts) where {T <: AbstractString}
     if quoted(code)
         code |= OK
         return findendquoted(T, source, pos, len, b, code, pl, true, opts.cq, opts.e, opts.flags.stripquoted)
@@ -32,7 +32,7 @@ function findeof(source, pos, len, b, code, pl, opts)
     return pos, code, pl, pl
 end
 
-function typeparser(::Type{Char}, source, pos, len, b, code, pl, opts)
+function typeparser(::AbstractConf{Char}, source, pos, len, b, code, pl, opts)
     startpos = pos
     l = 8 * (4 - leading_ones(b))
     c = UInt32(b) << 24
@@ -76,7 +76,7 @@ function typeparser(::Type{Char}, source, pos, len, b, code, pl, opts)
     return pos, code, PosLen(pl.pos, pos - pl.pos), ch
 end
 
-function typeparser(::Type{Symbol}, source, pos, len, b, code, pl, opts)
+function typeparser(::AbstractConf{Symbol}, source, pos, len, b, code, pl, opts)
     if quoted(code)
         code |= OK
         pos, code, pl, _ = findendquoted(Symbol, source, pos, len, b, code, pl, true, opts.cq, opts.e, opts.stripquoted)

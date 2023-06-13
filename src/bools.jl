@@ -1,7 +1,7 @@
 const DEFAULT_TRUE = "true"
 const DEFAULT_FALSE = "false"
 
-@inline function typeparser(::Type{Bool}, source, pos, len, b, code, pl, options::Options)
+@inline function typeparser(::AbstractConf{Bool}, source, pos, len, b, code, pl, options::Options)
     x = false
     trues = options.trues
     falses = options.falses
@@ -13,7 +13,7 @@ const DEFAULT_FALSE = "false"
             eof(source, pos, len) && (code |= EOF)
             @goto done
         else
-            intpos, intcode, intpl, intx = typeparser(UInt8, source, pos, len, b, code, pl, options)
+            intpos, intcode, intpl, intx = typeparser(DefaultConf{UInt8}(), source, pos, len, b, code, pl, options)
             if ok(intcode) && intx < 0x02
                 x = intx == 0x01
                 code = intcode

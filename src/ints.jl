@@ -4,7 +4,7 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
 # if we eventually support non-base 10
 # overflowval(::Type{T}, base) where {T <: Integer} = div(typemax(T) - base + 1, base)
 
-@inline function typeparser(::Type{T}, source, pos, len, b, code, pl, opts) where {T <: Integer}
+@inline function typeparser(::AbstractConf{T}, source, pos, len, b, code, pl, opts) where {T <: Integer}
     x = zero(T)
     neg = false
     has_groupmark = opts.groupmark !== nothing
@@ -98,7 +98,7 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
     return pos, code, PosLen(pl.pos, pos - pl.pos), x
 end
 
-@inline function typeparser(::Type{Number}, source, pos, len, b, code, pl, opts)
+@inline function typeparser(::AbstractConf{Number}, source, pos, len, b, code, pl, opts)
     x = Ref{Number}()
     pos, code = parsenumber(source, pos, len, b, y -> (x[] = y), opts)
     return pos, code, PosLen(pl.pos, pos - pl.pos), x[]
@@ -119,11 +119,11 @@ end
     end
     b = peekbyte(source, pos)
     # parse rest of number
-    _, code, pos = parsedigits(Number, source, pos, len, b, code, OPTIONS, Int64(0), neg, startpos, true, 0, f)
+    _, code, pos = parsedigits(DefaultConf{Number}(), source, pos, len, b, code, OPTIONS, Int64(0), neg, startpos, true, 0, f)
     if invalid(code)
         # by default, parsedigits only has up to Float64 precision; if we overflow
         # let's try BigFloat
-        pos, code, _, x = typeparser(BigFloat, source, startpos, len, b, startcode, poslen(pos, 0), opts)
+        pos, code, _, x = typeparser(DefaultConf{BigFloat}(), source, startpos, len, b, startcode, poslen(pos, 0), opts)
         if ok(code)
             f(x)
         end
