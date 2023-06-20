@@ -182,6 +182,9 @@ _startswith(a::Nothing, b::Nothing) = false
 
 const MaybeToken = Union{Nothing, UInt8, Char, String, Regex}
 
+_nbytes(::UInt8) = 1
+_nbytes(c::Char) = ncodeunits(c)
+
 function Options(
             sentinel::Union{Nothing, Missing, Vector},
             wh1::Union{UInt8, Char},
@@ -251,13 +254,14 @@ function Options(
         isnumeric(Char(groupmark)) ||
         (_match(del, groupmark) && !quoted) ||
         _match(openquotechar, groupmark) ||
-        _match(closequotechar, groupmark)
+        _match(closequotechar, groupmark) ||
+        _nbytes(groupmark) != 1
     )
-        arg_error!(_errors, "`groupmark` cannot be a number, a quoting char, coincide with `decimal` and `delim` unless `quoted=true`")
+        arg_error!(_errors, "`groupmark` cannot be a number, a quoting char, coincide with `decimal` and `delim` unless `quoted=true` and must be a single ascii character")
     end
     df = dateformat === nothing ? nothing : dateformat isa String ? Format(dateformat) : dateformat isa Dates.DateFormat ? Format(dateformat) : dateformat
     flags = Flags(spacedelim, tabdelim, stripquoted, stripwhitespace, quoted, checksentinel, checkdelim, ignorerepeated, ignoreemptylines)
-    return Options(flags, decimal, oq, cq, e, sent, delim, token(comment, "comment"), trues, falses, df, groupmark === nothing ? nothing : UInt8(groupmark), rounding)
+    return Options(flags, decimal, oq, cq, e, sent, delim, token(comment, "comment"), trues, falses, df, groupmark === nothing ? nothing : (groupmark % UInt8), rounding)
 end
 
 function token(x::MaybeToken, arg)
