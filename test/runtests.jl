@@ -564,6 +564,10 @@ pos += tlen
 @test_throws ArgumentError Parsers.Options(escapechar=UInt8('a'), delim="a")
 @test_throws ArgumentError Parsers.Options(escapechar='a', delim=r"a")
 
+errs = String[]
+Parsers.Options(groupmark='9', delim='"', _errors=errs)
+@test length(errs) == 2
+
 @test Parsers.checkdelim!(UInt8[], 1, 0, Parsers.OPTIONS) == 1
 @test Parsers.checkdelim!(codeunits(","), 1, 1, Parsers.XOPTIONS) == 2
 @test Parsers.checkdelim!(codeunits("::"), 1, 2, Parsers.Options(delim="::")) == 3

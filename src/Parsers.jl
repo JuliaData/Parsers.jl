@@ -113,6 +113,7 @@ end
   * `stripquoted=false`: if true, whitespace is also stripped within quoted strings. If true, `stripwhitespace` is also set to true.
   * `groupmark=nothing`: optionally specify a single-byte character denoting the number grouping mark, this allows parsing of numbers that have, e.g., thousand separators (`1,000.00`).
   * `rounding=RoundNearest`: optionally specify a rounding mode to use when parsing. No rounding means the result will be marked with `INEXACT` code if the value is not exactly representable in the target type.
+  * `_errors::Union{Nothing,Vector{String}}=nothing`: optionally provide a vector to store errors encountered argument validation. If `nothing`, errors will be thrown immediately. If any messages are written to `_errors`, the returned `Options` instance is not safe to use.
 """
 struct Options
     flags::Flags
@@ -202,7 +203,10 @@ function Options(
             stripquoted::Bool=false,
             groupmark::Union{Nothing,Char,UInt8}=nothing,
             rounding::Union{Nothing,RoundingMode}=nothing,
+            _errors::Union{Nothing,Vector{String}}=nothing,
 )
+    arg_error!(_errors, msg) = (isnothing(_errors) ? throw(ArgumentError(msg)) : push!(_errors, msg); nothing)
+
     # backwards compat; users previously had to pass wh1/wh2 as non-wh to avoid stripping
     if wh1 != UInt8(' ') || wh2 != UInt8('\t')
         stripwhitespace = false
@@ -210,13 +214,13 @@ function Options(
     if sentinel isa Vector{String}
         for sent in sentinel
             if stripwhitespace && (_contains(sent, " ") || _contains(sent, "\t"))
-                throw(ArgumentError("sentinel value isn't allowed to contain ' ' or '\t' characters if `stripwhitespace=true`"))
+                arg_error!(_errors, "sentinel value isn't allowed to contain ' ' or '\t' characters if `stripwhitespace=true`")
             end
             if quoted && (_contains(sent, openquotechar) || _contains(sent, closequotechar) || _contains(sent, escapechar))
-                throw(ArgumentError("sentinel value isn't allowed to contain openquotechar, closequotechar, or escapechar characters"))
+                arg_error!(_errors, "sentinel value isn't allowed to contain `openquotechar`, `closequotechar`, or `escapechar` characters")
             end
             if _contains(sent, delim)
-                throw(ArgumentError("sentinel value isn't allowed to contain a delimiter character"))
+                arg_error!(_errors, "sentinel value isn't allowed to contain a delimiter character")
             end
         end
     end
@@ -224,13 +228,13 @@ function Options(
     oq = token(openquotechar, "openquotechar")
     cq = token(closequotechar, "closequotechar")
     e = token(escapechar, "escapechar")
-    e.token isa UInt8 || throw(ArgumentError("escapechar must be a single ascii character"))
+    e.token isa UInt8 || arg_error!(_errors, "`escapechar` must be a single ascii character")
     e = e.token
-    quoted && (isempty(oq) || isempty(cq) || isempty(e)) && throw(ArgumentError("quoted=true requires openquotechar, closequotechar, and escapechar to be specified"))
+    quoted && (isempty(oq) || isempty(cq) || isempty(e)) && arg_error!(_errors, "quoted=true requires `openquotechar`, `closequotechar`, and `escapechar` to be specified")
     sent = (sentinel === nothing || sentinel === missing) ? Token[] : map(x -> token(x, "sentinel"), prepare!(sentinel))
     checksentinel = sentinel !== nothing
     quoted && ((_match(openquotechar, delim) || _match(closequotechar, delim)) || _match(escapechar, delim)) &&
-        throw(ArgumentError("delim argument must be different than openquotechar, closequotechar, and escapechar arguments"))
+        arg_error!(_errors, "`delim` argument must be different than `openquotechar`, `closequotechar`, and `escapechar` arguments")
     del = delim
     delim = token(delim, "delim")
     checkdelim = delim !== nothing && !isempty(delim)
@@ -249,7 +253,7 @@ function Options(
         _match(openquotechar, groupmark) ||
         _match(closequotechar, groupmark)
     )
-        throw(ArgumentError("`groupmark` cannot be a number, a quoting char, coincide with `decimal` and `delim` unless `quoted=true`."))
+        arg_error!(_errors, "`groupmark` cannot be a number, a quoting char, coincide with `decimal` and `delim` unless `quoted=true`")
     end
     df = dateformat === nothing ? nothing : dateformat isa String ? Format(dateformat) : dateformat isa Dates.DateFormat ? Format(dateformat) : dateformat
     flags = Flags(spacedelim, tabdelim, stripquoted, stripwhitespace, quoted, checksentinel, checkdelim, ignorerepeated, ignoreemptylines)
@@ -291,7 +295,8 @@ Options(;
     stripquoted::Bool=false,
     groupmark::Union{Nothing,Char,UInt8}=nothing,
     rounding::Union{Nothing,RoundingMode}=nothing,
-) = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, debug, stripwhitespace, stripquoted, groupmark, rounding)
+    _errors::Union{Nothing,Vector{String}}=nothing,
+) = Options(sentinel, wh1, wh2, openquotechar, closequotechar, escapechar, delim, decimal, trues, falses, dateformat, ignorerepeated, ignoreemptylines, comment, quoted, debug, stripwhitespace, stripquoted, groupmark, rounding, _errors)
 
 # "beta" for now, but allows custom types to define their own "Options"-like struct
 # that can handle additional type-specific options
