@@ -213,13 +213,13 @@ function Options(
     if sentinel isa Vector{String}
         for sent in sentinel
             if stripwhitespace && (_contains(sent, " ") || _contains(sent, "\t"))
-                throw(ArgumentError("sentinel value isn't allowed to contain ' ' or '\t' characters if `stripwhitespace=true`"))
+                throw(ArgumentError("`sentinel` value isn't allowed to contain ' ' or '\t' characters if `stripwhitespace=true`"))
             end
             if quoted && (_contains(sent, openquotechar) || _contains(sent, closequotechar) || _contains(sent, escapechar))
-                throw(ArgumentError("sentinel value isn't allowed to contain openquotechar, closequotechar, or escapechar characters"))
+                throw(ArgumentError("`sentinel` value isn't allowed to contain `openquotechar`, `closequotechar`, or `escapechar` characters"))
             end
             if _contains(sent, delim)
-                throw(ArgumentError("sentinel value isn't allowed to contain a delimiter character"))
+                throw(ArgumentError("`sentinel` value isn't allowed to contain a delimiter character"))
             end
         end
     end
@@ -227,13 +227,13 @@ function Options(
     oq = token(openquotechar, "openquotechar")
     cq = token(closequotechar, "closequotechar")
     e = token(escapechar, "escapechar")
-    e.token isa UInt8 || throw(ArgumentError("escapechar must be a single ascii character"))
+    e.token isa UInt8 || throw(ArgumentError("`escapechar` must be a single ascii character"))
     e = e.token
-    quoted && (isempty(oq) || isempty(cq) || isempty(e)) && throw(ArgumentError("quoted=true requires openquotechar, closequotechar, and escapechar to be specified"))
+    quoted && (isempty(oq) || isempty(cq) || isempty(e)) && throw(ArgumentError("quoted=true requires `openquotechar`, `closequotechar`, and `escapechar` to be specified"))
     sent = (sentinel === nothing || sentinel === missing) ? Token[] : map(x -> token(x, "sentinel"), prepare!(sentinel))
     checksentinel = sentinel !== nothing
     quoted && ((_match(openquotechar, delim) || _match(closequotechar, delim)) || _match(escapechar, delim)) &&
-        throw(ArgumentError("delim argument must be different than openquotechar, closequotechar, and escapechar arguments"))
+        throw(ArgumentError("`delim` argument must be different than `openquotechar`, `closequotechar`, and `escapechar` arguments"))
     del = delim
     delim = token(delim, "delim")
     checkdelim = delim !== nothing && !isempty(delim)
