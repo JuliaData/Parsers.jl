@@ -563,6 +563,12 @@ pos += tlen
 @test_throws ArgumentError Parsers.Options(openquotechar=r"a+", delim="aaa")
 @test_throws ArgumentError Parsers.Options(escapechar=UInt8('a'), delim="a")
 @test_throws ArgumentError Parsers.Options(escapechar='a', delim=r"a")
+@test_throws ArgumentError Parsers.Options(decimal='α')
+@test_throws ArgumentError Parsers.Options(decimal='1')
+@test_throws ArgumentError Parsers.Options(groupmark='α')
+@test_throws ArgumentError Parsers.Options(groupmark='1')
+@test_throws ArgumentError Parsers.Options(groupmark='α')
+@test_throws ArgumentError Parsers.Options(groupmark=' ', decimal=' ')
 
 @test Parsers.checkdelim!(UInt8[], 1, 0, Parsers.OPTIONS) == 1
 @test Parsers.checkdelim!(codeunits(","), 1, 1, Parsers.XOPTIONS) == 2
