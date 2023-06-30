@@ -262,17 +262,28 @@ end
     rounding = options.rounding
     len = newpos - pos
     if len > 3
+        n_digits_to_shift = Int64(10) ^ (len - 3)
         if rounding === nothing
-            ms, r = divrem(ms0, Int64(10) ^ (len - 3))
+            ms, r = divrem(ms0, n_digits_to_shift)
             if r != 0
                 code |= INEXACT
             end
         elseif rounding === RoundNearest
-            ms = div(ms0, Int64(10) ^ (len - 3), RoundNearest)
+            ms = div(ms0, n_digits_to_shift, RoundNearest)
         elseif rounding === RoundToZero
-            ms = div(ms0, Int64(10) ^ (len - 3), RoundToZero)
+            ms = div(ms0, n_digits_to_shift, RoundToZero)
+        elseif rounding === RoundNearestTiesAway
+            ms = div(ms0, n_digits_to_shift, RoundNearestTiesAway)
+        elseif rounding === RoundNearestTiesUp
+            ms = div(ms0, n_digits_to_shift, RoundNearestTiesUp)
+        elseif rounding === RoundFromZero
+            ms = div(ms0, n_digits_to_shift, RoundFromZero)
+        elseif rounding === RoundUp
+            ms = div(ms0, n_digits_to_shift, RoundUp)
+        elseif rounding === RoundDown
+            ms = div(ms0, n_digits_to_shift, RoundDown)
         else
-            ms = div(ms0, Int64(10) ^ (len - 3), rounding::RoundingMode)
+            throw(ArgumentError("invalid rounding mode: $rounding"))
         end
     else
         ms = ms0 * Int64(10) ^ (3 - len)

@@ -14,6 +14,9 @@ end
 
 const SupportedFloats = Union{Float16, Float32, Float64, BigFloat}
 const SupportedTypes = Union{Integer, SupportedFloats, Dates.TimeType, Bool, AbstractString, Symbol, Char}
+const SupportedRoundingModes = Union{RoundingMode{:Nearest}, RoundingMode{:NearestTiesAway}, RoundingMode{:NearestTiesUp}, RoundingMode{:ToZero}, RoundingMode{:FromZero}, RoundingMode{:Up}, RoundingMode{:Down}}
+_issupported_rounding_mode(::T) where {T} = T <: SupportedRoundingModes
+_issupported_rounding_mode(::Nothing) = true
 
 supportedtype(::Type{T}) where {T} = T <: SupportedTypes
 
@@ -257,7 +260,7 @@ function Options(
     end
     _nbytes(decimal) == 1 || throw(ArgumentError("`decimal` must be a single ascii character"))
     !isnumeric(Char(decimal)) || throw(ArgumentError("`decimal` cannot be a number"))
-
+    _issupported_rounding_mode(rounding) || throw(ArgumentError("`rounding` must be `nothing` or one of: $(SupportedRoundingModes)"))
     df = dateformat === nothing ? nothing : dateformat isa String ? Format(dateformat) : dateformat isa Dates.DateFormat ? Format(dateformat) : dateformat
     flags = Flags(spacedelim, tabdelim, stripquoted, stripwhitespace, quoted, checksentinel, checkdelim, ignorerepeated, ignoreemptylines)
     return Options(flags, decimal, oq, cq, e, sent, delim, token(comment, "comment"), trues, falses, df, groupmark === nothing ? nothing : groupmark % UInt8, rounding)
