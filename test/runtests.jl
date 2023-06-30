@@ -787,4 +787,19 @@ end
     @test Serialization.deserialize(tempfile).flags == Parsers.Options().flags
 end
 
+@testset "EscapedIterator" begin
+    for (input, expected) in (("", ""), ("a", "a"), ("\\a", "a"), ("\\\\", "\\"), ("a\\\\\\\\", "a\\\\"), ("a\\\"bb\\\\ccc" ^ 100, "a\"bb\\ccc" ^ 100))
+        input_bytes = collect(codeunits(input))
+        expected_bytes = collect(codeunits(expected))
+        itr = Parsers.EscapedIterator(input_bytes, Parsers.PosLen31(1, length(input_bytes), false, ('\\' in input)), UInt8('\\'))
+        @test length(itr) == length(expected_bytes)
+        @test collect(itr) == expected_bytes
+        unescaped_length, last_escape_pos = Parsers.unescaped_length_and_last_escape_pos(itr)
+        @test unescaped_length == length(expected_bytes)
+        pos = something(findlast(==(UInt8('\\')), input_bytes), 0)
+        pos > 1 && input_bytes[pos - 1] == UInt8('\\') && (pos -= 1)
+        @test pos == last_escape_pos
+    end
+end
+
 end # @testset "Parsers"

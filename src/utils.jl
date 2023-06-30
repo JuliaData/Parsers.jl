@@ -407,8 +407,11 @@ codes(r) = chop(chop(string(
     ifelse(r & (~INVALID & INEXACT) > 0, "INEXACT | ", ""),
 )))
 
+abstract type AbstractPosLen end
+
 """
     PosLen(pos, len, ismissing, escaped)
+    PosLen31(pos, len, ismissing, escaped)*
 
 A custom 64-bit primitive that allows efficiently storing the byte position
 and length of a value within a byte array, along with whether a sentinel
@@ -416,27 +419,27 @@ value was parsed, and whether the parsed value includes escaped characters.
 Specifically, the use of 64-bits is:
   * 1 bit to indicate whether a sentinel value was encountered while parsing
   * 1 bit to indicate whether the escape character was encountered while parsing
-  * 42 bits to note the byte position as an integer where a value is located in a byte array (max array size ~4.4TB)
-  * 20 bits to note the length of a parsed value (max length of ~1MB)
+  * 42 or 31* bits to note the byte position as an integer where a value is located in a byte array (max array size ~4.4TiB or ~2GiB*)
+  * 20 or 31* bits to note the length of a parsed value (max length of ~1MiB or ~2GiB*)
 
 These individual "fields" can be retrieved via dot access, like `PosLen.missingvalue`, `PosLen.escapedvalue`,
 `PosLen.pos`, `PosLen.len`.
 
 `Parsers.xparse(String, buf, pos, len, opts)` returns `Parsers.Result{PosLen}`, where the `x.val` is a `PosLen`.
 """
-primitive type PosLen 64 end
-primitive type PosLen31 64 end
+primitive type PosLen <: AbstractPosLen 64 end
+primitive type PosLen31 <: AbstractPosLen 64 end
 
 const MISSING_BIT = Base.bitcast(Int64, 0x8000000000000000)
 const ESCAPE_BIT = Base.bitcast(Int64, 0x4000000000000000)
 _pos_shift(::Union{PosLen,Type{PosLen}}) = 20
-_max_pos(::Union{PosLen,Type{PosLen}}) = 4398046511104
+_max_pos(::Union{PosLen,Type{PosLen}}) = 4398046511103
 _max_len(::Union{PosLen,Type{PosLen}}) = 1048575
 _pos_bits(::Union{PosLen,Type{PosLen}}) = Base.bitcast(Int64, 0x3ffffffffff00000)
 _len_bits(::Union{PosLen,Type{PosLen}}) = Base.bitcast(Int64, 0x00000000000fffff)
 
 _pos_shift(::Union{PosLen31,Type{PosLen31}}) = 31
-_max_pos(::Union{PosLen31,Type{PosLen31}}) = Int64(2147483648)
+_max_pos(::Union{PosLen31,Type{PosLen31}}) = Int64(2147483647)
 _max_len(::Union{PosLen31,Type{PosLen31}}) = Int64(2147483647)
 _pos_bits(::Union{PosLen31,Type{PosLen31}}) = Base.bitcast(Int64, 0x3fffffff80000000)
 _len_bits(::Union{PosLen31,Type{PosLen31}}) = Base.bitcast(Int64, 0x000000007fffffff)
@@ -475,9 +478,9 @@ poslen(pos::Integer, len::Integer) = poslen(PosLen, pos, len)
 poslen(::Type{T}, pos::Integer, len::Integer) where {T} = Base.bitcast(PosLen,   (Int64(pos) << _pos_shift(PosLen))   | Int64(len))
 poslen(::Type{PosLen31}, pos::Integer, len::Integer)    = Base.bitcast(PosLen31, (Int64(pos) << _pos_shift(PosLen31)) | Int64(len))
 
-withlen(pl::T, len::Integer) where {T<:Union{PosLen,PosLen31}} = Base.bitcast(T, (Base.bitcast(Int64, pl) & (~_max_len(T))) | Int64(len))
-withmissing(pl::T) where {T<:Union{PosLen,PosLen31}} = Base.or_int(pl, Base.bitcast(T, MISSING_BIT))
-withescaped(pl::T) where {T<:Union{PosLen,PosLen31}} = Base.or_int(pl, Base.bitcast(T, ESCAPE_BIT))
+withlen(pl::T, len::Integer) where {T<:AbstractPosLen} = Base.bitcast(T, (Base.bitcast(Int64, pl) & (~_max_len(T))) | Int64(len))
+withmissing(pl::T) where {T<:AbstractPosLen} = Base.or_int(pl, Base.bitcast(T, MISSING_BIT))
+withescaped(pl::T) where {T<:AbstractPosLen} = Base.or_int(pl, Base.bitcast(T, ESCAPE_BIT))
 
 """
     Parsers.getstring(buf_or_io, poslen::PosLen, e::UInt8) => String
@@ -494,10 +497,10 @@ function getstring end
 
 _unsafe_string(p, len) = ccall(:jl_pchar_to_string, Ref{String}, (Ptr{UInt8}, Int), p, len)
 
-getstring(source::Union{IO, AbstractVector{UInt8}}, x::Union{PosLen,PosLen31}, e::Token) =
+getstring(source::Union{IO, AbstractVector{UInt8}}, x::AbstractPosLen, e::Token) =
     getstring(source, x, e.token::UInt8)
 
-@inline function getstring(source::Union{IO, AbstractVector{UInt8}}, x::Union{PosLen,PosLen31}, e::UInt8)
+@inline function getstring(source::Union{IO, AbstractVector{UInt8}}, x::AbstractPosLen, e::UInt8)
     x.escapedvalue && return unescape(source, x, e)
     if source isa AbstractVector{UInt8}
         return _unsafe_string(pointer(source, x.pos), x.len)
@@ -512,10 +515,10 @@ getstring(source::Union{IO, AbstractVector{UInt8}}, x::Union{PosLen,PosLen31}, e
     end
 end
 
-getstring(str::AbstractString, pl::Union{PosLen,PosLen31}, e::UInt8) = getstring(codeunits(str), pl, e)
+getstring(str::AbstractString, pl::AbstractPosLen, e::UInt8) = getstring(codeunits(str), pl, e)
 
 # if a cell value of a csv file has escape characters, we need to unescape it
-@noinline function unescape(origbuf, x::Union{PosLen,PosLen31}, e)
+@noinline function unescape(origbuf, x::AbstractPosLen, e)
     n = x.len
     if origbuf isa AbstractVector{UInt8}
         source = view(origbuf, x.pos:(x.pos + x.len - 1))
@@ -546,4 +549,46 @@ getstring(str::AbstractString, pl::Union{PosLen,PosLen31}, e::UInt8) = getstring
     end
     resize!(out, len - 1)
     return String(out)
+end
+
+struct EscapedIterator{T<:AbstractPosLen}
+    bytes::Vector{UInt8}
+    pl::T
+    e::UInt8
+end
+Base.IteratorSize(::Type{<:EscapedIterator}) = Base.SizeUnknown()
+Base.IteratorEltype(::Type{<:EscapedIterator}) = Base.HasEltype()
+Base.eltype(::Type{<:EscapedIterator}) = UInt8
+function Base.length(itr::EscapedIterator)
+    itr.pl.escapedvalue ? count(!isnothing, itr) : itr.pl.len - itr.pl.pos + 1
+end
+function unescaped_length_and_last_escape_pos(itr)
+    i = itr.pl.pos
+    unescaped_length = 0
+    last_escape_pos = 0
+    while i <= itr.pl.len
+        b = @inbounds itr.bytes[i]
+        if itr.pl.escapedvalue && b == itr.e
+            last_escape_pos = i
+            i += 1
+            # it is not valid for a string to end on an escapechar
+            b = @inbounds itr.bytes[i]
+        end
+        unescaped_length += 1
+        i += 1
+    end
+    return unescaped_length, last_escape_pos
+end
+
+function Base.iterate(itr::EscapedIterator, state=itr.pl.pos)
+    if state > itr.pl.len
+        return nothing
+    end
+    b = @inbounds itr.bytes[state]
+    if itr.pl.escapedvalue && b == itr.e
+        state += 1
+        # it is not valid for a string to end on an escapechar
+        b = @inbounds itr.bytes[state]
+    end
+    return b, state + 1
 end
