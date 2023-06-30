@@ -28,6 +28,7 @@ jobs:
           - {user: JuliaStrings, repo: InlineStrings.jl}
           - {user: nickrobinson251, repo: PowerFlowData.jl}
           - {user: quinnj, repo: JSON3.jl}
+          - {user: JuliaMath, repo: FixedPointDecimals.jl}
 
     steps:
       - uses: actions/checkout@v2
