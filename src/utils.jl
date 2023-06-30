@@ -42,6 +42,7 @@ encountered while parsing a value.
 * `INVALID_QUOTED_FIELD`: a `openquotechar` were detected when parsing began, but no corresponding `closequotechar` were found to correctly close a quoted field, this is usually a fatal parsing error because parsing will continue until EOF to look for the close quote character (check via `Parsers.invalidquotedfield(code)`)
 * `INVALID_DELIMITER`: a `delim` character or string were eventually detected, but not at the expected position (directly after parsing a valid value), indicating there are extra, invalid characters between a valid value and the expected delimiter (check via `Parsers.invaliddelimiter(code)`)
 * `OVERFLOW`: overflow occurred while parsing a type, like `Integer`, that have limits on valid values (check via `Parsers.overflow(code)`)
+* `INEXACT`: a value (e.g. `DateTime` or `FixedDecimal{T}`) requires `rounding` to be representable (check via `Parsers.inexact(code)`)
 
 One additional convenience function is provided, `Parsers.quotednotescaped(code)`, which checks if a value was quoted,
 but didn't contain any escape characters, useful to indicate if a string may be used "as-is", instead of needing to be unescaped.
