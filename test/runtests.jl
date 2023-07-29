@@ -778,6 +778,8 @@ end
     # BigFloat promotion
     @test Parsers.parse(Number, "1e310") == Base.parse(BigFloat, "1e310")
     @test Parsers.parse(Number, "1.7976931348623157e310") == big"1.7976931348623157e310"
+    # error case
+    @test_throws Parsers.Error Parsers.parse(Number, "-")
 end
 
 # https://github.com/JuliaData/CSV.jl/issues/1063
