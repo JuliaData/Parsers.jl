@@ -277,7 +277,7 @@ rettype(::Type{T}) where {T} = T === Number ? Nothing : T
                 Parsers.eof(source, pos, len) && (code |= INVALID | EOF; @goto done) # groupmark at end of input
             else
                 # if `b` isn't a digit or a groupmark, time to break out of digit parsing while loop
-                (has_groupmark && prev_b0 == groupmark0) && (code |= INVALID; @goto done) # ended with groupmark
+                ((has_groupmark && prev_b0 == groupmark0) || !anydigits) && (code |= INVALID; @goto done) # ended with groupmark
                 break
             end
             prev_b0 = b

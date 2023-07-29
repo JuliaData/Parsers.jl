@@ -101,7 +101,7 @@ end
 @inline function typeparser(::AbstractConf{Number}, source, pos, len, b, code, pl, opts)
     x = Ref{Number}()
     pos, code = parsenumber(source, pos, len, b, y -> (x[] = y), opts)
-    return pos, code, PosLen(pl.pos, pos - pl.pos), x[]
+    return pos, code, PosLen(pl.pos, pos - pl.pos), isdefined(x, :x) ? x[] : (0::Number)
 end
 
 @inline function parsenumber(source, pos, len, b, f::F, opts=OPTIONS) where {F}
