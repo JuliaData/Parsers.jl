@@ -393,7 +393,7 @@ end
             # non-Dates defined character code
             # allocate extras if not already and parse
             if extras === nothing
-                extras = Dict{Type, Any}()
+                extras = IdDict{Type, Any}()
             end
             extraval, pos, b, code = tryparsenext(tok, source, pos, len, b, code)::Tuple{Any, Int, UInt8, ReturnCode}
             extras[Dates.CONVERSION_SPECIFIERS[charactercode(tok)]] = extraval
@@ -426,7 +426,7 @@ end
     else
         # custom TimeType
         if extras === nothing
-            extras = Dict{Type, Any}()
+            extras = IdDict{Type, Any}()
         end
         extras[Year] = year; extras[Month] = month; extras[Day] = day;
         extras[Hour] = hour; extras[Minute] = minute; extras[Second] = second; extras[Millisecond] = millisecond;
