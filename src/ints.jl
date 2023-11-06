@@ -9,6 +9,12 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
     neg = false
     has_groupmark = opts.groupmark !== nothing
     groupmark0 = something(opts.groupmark, 0xff) - UInt8('0')
+    isquoted = (code & QUOTED) != 0 # check if the bit is set
+    if !isquoted
+        if opts.groupmark == opts.delim
+            has_groupmark = false
+        end
+    end
     # start actual int parsing
     neg = b == UInt8('-')
     if neg || b == UInt8('+')

@@ -235,6 +235,12 @@ rettype(::Type{T}) where {T} = T === Number ? Nothing : T
     anydigits = false
     has_groupmark = options.groupmark !== nothing
     groupmark0 = something(options.groupmark, 0xff) - UInt8('0')
+    isquoted = (code & QUOTED) != 0 # check if the bit is set
+    if !isquoted
+        if options.groupmark == options.delim
+            has_groupmark = false
+        end
+    end
 
     # we already previously checked if `b` was decimal or a digit, so don't need to check explicitly again
     if b != options.decimal
