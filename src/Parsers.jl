@@ -446,6 +446,16 @@ function checkdelim!(source::AbstractVector{UInt8}, pos, len, options::Options)
     return pos
 end
 
+@inline function _has_groupmark(opts::Options, code::ReturnCode)
+    if opts.groupmark !== nothing
+        isquoted = (code & QUOTED) != 0
+        if isquoted || (opts.groupmark != opts.delim)
+            return true
+        end
+    end
+    return false
+end
+
 include("ints.jl")
 include("floats.jl")
 include("strings.jl")

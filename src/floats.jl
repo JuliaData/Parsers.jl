@@ -233,14 +233,8 @@ rettype(::Type{T}) where {T} = T === Number ? Nothing : T
 @inline function parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool=false, ndigits::Int=0, f::F=nothing) where {T, IntType, F}
     x = zero(T)
     anydigits = false
-    has_groupmark = options.groupmark !== nothing
+    has_groupmark = _has_groupmark(options, code)
     groupmark0 = something(options.groupmark, 0xff) - UInt8('0')
-    isquoted = (code & QUOTED) != 0 # check if the bit is set
-    if !isquoted
-        if options.groupmark == options.delim
-            has_groupmark = false
-        end
-    end
 
     # we already previously checked if `b` was decimal or a digit, so don't need to check explicitly again
     if b != options.decimal
