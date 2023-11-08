@@ -369,42 +369,42 @@ end
 @test Parsers.tryparse(Float64, "0e+") === nothing
 
 @testset "groupmark" begin
-    @test Parsers.xparse(Float64, "100,000,000.99"; groupmark=',').val == 100_000_000.99
-    @test Parsers.xparse(Float64, "100,000,000"; groupmark=',').val == 100_000_000.0
-    @test Parsers.xparse(Float64, "1,0,0,0,0,0,0,0,0.99"; groupmark=',').val == 100_000_000.99
+    # xparse2 is used for parsing inputs with a single value in them,
+    # so when delims==groupmarks, we assume what we see are groupmarks
+    @test let case = "1,0,0,0,0,0,0,0,099e-2"; Parsers.xparse2(Float32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val ≈ 100_000_000.99 end
+    @test let case = "100,000,00099e-2"; Parsers.xparse2(Float32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val ≈ 100_000_000.99 end
+    @test let case = "100,000,000.99"; Parsers.xparse2(Float32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val ≈ 100_000_000.99 end
+    @test let case = "100,000,000"; Parsers.xparse2(Float32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val ≈ 100_000_000 end
+    @test let case = "1 0 0 0 0 0 0 0 099e-2"; Parsers.xparse2(Float32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val ≈ 100_000_000.99 end
+    @test let case = "100 000 00099e-2"; Parsers.xparse2(Float32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val ≈ 100_000_000.99 end
+    @test let case = "100 000 000.99"; Parsers.xparse2(Float32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val ≈ 100_000_000.99 end
+    @test let case = "100 000 000"; Parsers.xparse2(Float32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val ≈ 100_000_000 end
+
+    @test let case = "1,0,0,0,0,0,0,0,099e-2"; Parsers.xparse2(Float64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val ≈ 100_000_000.99 end
+    @test let case = "100,000,00099e-2"; Parsers.xparse2(Float64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val ≈ 100_000_000.99 end
+    @test let case = "100,000,000.99"; Parsers.xparse2(Float64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val ≈ 100_000_000.99 end
+    @test let case = "100,000,000"; Parsers.xparse2(Float64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val ≈ 100_000_000 end
+    @test let case = "1 0 0 0 0 0 0 0 099e-2"; Parsers.xparse2(Float64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val ≈ 100_000_000.99 end
+    @test let case = "100 000 00099e-2"; Parsers.xparse2(Float64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val ≈ 100_000_000.99 end
+    @test let case = "100 000 000.99"; Parsers.xparse2(Float64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val ≈ 100_000_000.99 end
+    @test let case = "100 000 000"; Parsers.xparse2(Float64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val ≈ 100_000_000 end
+
+
     @test Parsers.xparse(Float64, "1 0 0 0 0 0 0 0 0.99"; groupmark=' ').val == 100_000_000.99
     @test Parsers.xparse(Float64, "100000000.99"; groupmark=',').val == 100_000_000.99
     @test Parsers.xparse(Float64, "100000000.99,aaa"; groupmark=',') == Parsers.Result{Float64}(OK | DELIMITED, 13, 1.0000000099e8)
     @test Parsers.xparse(Float64, "\"100,000,000.99\",100"; groupmark=',', openquotechar='"', closequotechar='"') == Parsers.Result{Float64}(Int16(13), 17, 1.0000000099e8)
-    @test Parsers.xparse(Float64, "100,000,000.99,100"; groupmark=',', openquotechar='"', closequotechar='"') == Parsers.Result{Float64}(Int16(9), 15, 1.0000000099e8)
     @test Parsers.xparse(Float64, "\"100,000,000\",100"; groupmark=',', openquotechar='"', closequotechar='"') == Parsers.Result{Float64}(Int16(13), 14, 1.0e8)
-    res = Parsers.xparse(Float64, "100,000,000,aaa"; groupmark=',')
-    @test res.code == EOF | INVALID | INVALID_DELIMITER
-    @test res.tlen == 15
 
-    @test Parsers.xparse(Float32, "100,000,000.99"; groupmark=',').val ≈ 100_000_000.99
-    @test Parsers.xparse(Float32, "100,000,000"; groupmark=',').val ≈ 100_000_000.0
-    @test Parsers.xparse(Float32, "1,0,0,0,0,0,0,0,0.99"; groupmark=',').val ≈ 100_000_000.99
     @test Parsers.xparse(Float32, "1 0 0 0 0 0 0 0 0.99"; groupmark=' ').val ≈ 100_000_000.99
     @test Parsers.xparse(Float32, "100000000.99"; groupmark=',').val ≈ 100_000_000.99
-    res = Parsers.xparse(Float32, "100000000.99,aaa"; groupmark=',')
-    @test res.code == OK | DELIMITED
-    @test res.tlen == 13
-    @test res.val ≈ 100_000_000.99
-    res = Parsers.xparse(Float32, "100,000,000,aaa"; groupmark=',')
-    @test res.code == EOF | INVALID | INVALID_DELIMITER
-    @test res.tlen == 15
 
-    @test Parsers.xparse(Float64, "100,000,00099e-2"; groupmark=',').val == 100_000_000.99
-    @test Parsers.xparse(Float64, "1,0,0,0,0,0,0,0,099e-2"; groupmark=',').val == 100_000_000.99
     @test Parsers.xparse(Float64, "1 0 0 0 0 0 0 0 099e-2"; groupmark=' ').val == 100_000_000.99
     @test Parsers.xparse(Float64, "10000000099e-2"; groupmark=',').val == 100_000_000.99
     @test Parsers.xparse(Float64, "10000000099e-2,aaa"; groupmark=',') == Parsers.Result{Float64}(OK | DELIMITED, 15, 1.0000000099e8)
     @test Parsers.xparse(Float64, "\"10000000099e-2\",100"; groupmark=',', openquotechar='"', closequotechar='"') == Parsers.Result{Float64}(Int16(13), 17, 1.0000000099e8)
     @test Parsers.xparse(Float64, "10000000099e-2,100"; groupmark=',', openquotechar='"', closequotechar='"') == Parsers.Result{Float64}(Int16(9), 15, 1.0000000099e8)
 
-    @test Parsers.xparse(Float32, "100,000,00099e-2"; groupmark=',').val ≈ 100_000_000.99
-    @test Parsers.xparse(Float32, "1,0,0,0,0,0,0,0,099e-2"; groupmark=',').val ≈ 100_000_000.99
     @test Parsers.xparse(Float32, "1 0 0 0 0 0 0 0 099e-2"; groupmark=' ').val ≈ 100_000_000.99
     @test Parsers.xparse(Float32, "10000000099e-2"; groupmark=',').val ≈ 100_000_000.99
     res = Parsers.xparse(Float32, "10000000099e-2,aaa"; groupmark=',')

@@ -111,7 +111,7 @@ end
   * `ignoreemptylines=false`: after parsing a value, if a newline is detected, another immediately proceeding newline will be checked for and consumed
   * `stripwhitespace=nothing`: if true, leading and trailing whitespace is stripped from string fields, note that for *quoted* strings however, whitespace is preserved within quotes (but ignored before/after quote characters). To also strip *within* quotes, see `stripquoted`
   * `stripquoted=false`: if true, whitespace is also stripped within quoted strings. If true, `stripwhitespace` is also set to true.
-  * `groupmark=nothing`: optionally specify a single-byte character denoting the number grouping mark, this allows parsing of numbers that have, e.g., thousand separators (`1,000.00`).
+  * `groupmark=nothing`: optionally specify a single-byte character denoting the number grouping mark, this allows parsing of numbers that have, e.g., thousand separators (`1 000.00`). When the `groupmark` is ambiguous with the `delim`, the user must quote the number if it contains group marks.
   * `rounding=RoundNearest`: optionally specify a rounding mode to use when parsing. No rounding means the result will be marked with `INEXACT` code if the value is not exactly representable in the target type.
 """
 struct Options
@@ -141,12 +141,49 @@ function Base.getproperty(x::Options, nm::Symbol)
     end
 end
 
-const OPTIONS = Options(Flags(false, false, false, false, false, false, false, false, false), UInt8('.'),
-    Token(UInt8('"')), Token(UInt8('"')), UInt8('"'), Token[], Token(""), Token(""),
-    nothing, nothing, nothing, nothing, nothing)
-const XOPTIONS = Options(Flags(false, false, false, false, true, true, true, false, false), UInt8('.'),
-    Token(UInt8('"')), Token(UInt8('"')), UInt8('"'), Token[], Token(UInt8(',')), Token(""),
-    nothing, nothing, nothing, nothing, nothing)
+# Get the default options for single-value parsing (i.e. not delimited), used
+# by Parsers.parse and Parsers.tryparse via Parser.xparse2
+function _get_default_options(;
+    flags::Flags=Flags(false, false, false, false, false, false, false, false, false),
+    decimal::UInt8=UInt8('.'),
+    oq::Token=Token(UInt8('"')),
+    cq::Token=Token(UInt8('"')),
+    e::UInt8=UInt8('"'),
+    sentinel::Vector{Token}=Token[],
+    delim::Token=Token(""),
+    cmt::Token=Token(""),
+    trues::Union{Nothing, Vector{String}}=nothing,
+    falses::Union{Nothing, Vector{String}}=nothing,
+    dateformat::Union{Nothing, Format}=nothing,
+    groupmark::Union{Nothing,UInt8}=nothing,
+    rounding::Union{Nothing,RoundingMode}=nothing,
+)
+    return Options(flags, decimal, oq, cq, e, sentinel, delim, cmt, trues, falses, dateformat, groupmark, rounding)
+end
+
+# Get the default options for delimited parsing, used by Parsers.xparse
+function _get_default_xoptions(;
+    flags::Flags=Flags(false, false, false, false, true, true, true, false, false),
+    decimal::UInt8=UInt8('.'),
+    oq::Token=Token(UInt8('"')),
+    cq::Token=Token(UInt8('"')),
+    e::UInt8=UInt8('"'),
+    sentinel::Vector{Token}=Token[],
+    delim::Token=Token(UInt8(',')),
+    cmt::Token=Token(""),
+    trues::Union{Nothing, Vector{String}}=nothing,
+    falses::Union{Nothing, Vector{String}}=nothing,
+    dateformat::Union{Nothing, Format}=nothing,
+    groupmark::Union{Nothing,UInt8}=nothing,
+    rounding::Union{Nothing,RoundingMode}=nothing,
+)
+    return Options(flags, decimal, oq, cq, e, sentinel, delim, cmt, trues, falses, dateformat, groupmark, rounding)
+end
+
+# What is used by default in Parsers.parse, Parsers.tryparse, Parsers.xparse2
+const OPTIONS = _get_default_options()
+# What is used by default in Parsers.xparse
+const XOPTIONS = _get_default_xoptions()
 
 prepare!(x::Vector) = sort!(x, by=x->sizeof(x), rev=true)
 asciival(c::Char) = isascii(c)
