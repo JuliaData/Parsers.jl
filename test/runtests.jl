@@ -347,21 +347,27 @@ end # @testset "Core Parsers.xparse"
 @testset "ints" begin
 
 @testset "groupmark" begin
-    # xparse2 is used for parsing inputs with a single value in them,
+    # `parse` is used for parsing inputs with a single value in them,
     # so when delims==groupmarks, we assume what we see are groupmarks
-    @test let case = "100,000,000"; Parsers.xparse2(Int64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val == 100_000_000 end
-    @test let case = "1,0,0,0,0,0,0,0,0"; Parsers.xparse2(Int64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val == 100_000_000 end
-    @test let case = "9,2,2,3,3,7,2,0,3,6,8,5,4,7,7,5,8,0,7"; Parsers.xparse2(Int64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val == 9223372036854775807 end
-    @test let case = "100 000 000"; Parsers.xparse2(Int64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val == 100_000_000 end
-    @test let case = "1 0 0 0 0 0 0 0 0"; Parsers.xparse2(Int64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val == 100_000_000 end
-    @test let case = "9 2 2 3 3 7 2 0 3 6 8 5 4 7 7 5 8 0 7"; Parsers.xparse2(Int64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val == 9223372036854775807 end
-
-    @test let case = "100,000,000"; Parsers.xparse2(Int32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val ≈ 100_000_000.99 end
-    @test let case = "1,0,0,0,0,0,0,0,0"; Parsers.xparse2(Int32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val ≈ 100_000_000.99 end
-    @test let case = "2,1,4,7,4,8,3,6,4,7"; Parsers.xparse2(Int32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val == 2147483647 end
-    @test let case = "100 000 000"; Parsers.xparse2(Int32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val ≈ 100_000_000.99 end
-    @test let case = "1 0 0 0 0 0 0 0 0"; Parsers.xparse2(Int32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val ≈ 100_000_000.99 end
-    @test let case = "2 1 4 7 4 8 3 6 4 7"; Parsers.xparse2(Int32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val == 2147483647 end
+    @testset "Parsers.parse" begin
+        groupmark(c::Char) = Parsers._get_default_options(groupmark=UInt8(c))
+        @testset "$T" for T in (Int32, Int64)
+            # comma
+            @test Parsers.parse(T, "100,000,000", groupmark(',')) == 100_000_000
+            @test Parsers.parse(T, "1,0,0,0,0,0,0,0,0", groupmark(',')) == 100_000_000
+            @test Parsers.parse(T, "2,1,4,7,4,8,3,6,4,7", groupmark(',')) == 2147483647
+            if T == Int64
+                @test Parsers.parse(T, "9,2,2,3,3,7,2,0,3,6,8,5,4,7,7,5,8,0,7", groupmark(',')) == 9223372036854775807
+            end
+            # space
+            @test Parsers.parse(T, "100 000 000", groupmark(' ')) == 100_000_000
+            @test Parsers.parse(T, "1 0 0 0 0 0 0 0 0", groupmark(' ')) == 100_000_000
+            @test Parsers.parse(T, "2 1 4 7 4 8 3 6 4 7", groupmark(' ')) == 2147483647
+            if T == Int64
+                @test Parsers.parse(T, "9 2 2 3 3 7 2 0 3 6 8 5 4 7 7 5 8 0 7", groupmark(' ')) == 9223372036854775807
+            end
+        end
+    end
 
     @test Parsers.xparse(Int64, "100000000"; groupmark=',').val == 100_000_000
     @test Parsers.xparse(Int64, "9223372036854775807"; groupmark=',').val == 9223372036854775807
@@ -386,52 +392,19 @@ end # @testset "Core Parsers.xparse"
     @test_throws ArgumentError Parsers.xparse(Int64, "42"; groupmark='"', closequotechar=UInt8('"'))
 
 
-    for g in (',',' ')
-        xopts_with_groupmark = Parsers._get_default_xoptions(groupmark=UInt8(g))
-        # Groupmark tests for ints
+    @testset "$T groupmark=$(repr(g))" for g in (',',' '), T in (Int32, Int64)
+        xgroupmark(c::Char) = Parsers._get_default_xoptions(groupmark=UInt8(c))
         for (input, expected_vals) in [
-            ("1000,0000,2000,3000", (1000,0,2000,3000,)),
-            ("\"1000\",\"0000\",\"2000\",\"3000\"", (1000,0,2000,3000,)),
-            ("\"1$(g)0$(g)0$(g)0\",0000,\"2$(g)0$(g)0$(g)0\",3000", (1000,0,2000,3000,)),
-            ("1000,\"0$(g)0$(g)0$(g)0\",2000,\"3$(g)0$(g)0$(g)0\"", (1000,0,2000,3000,)),
+            ("1000,0000,2000,3000" => (1000,0,2000,3000,)),
+            ("\"1000\",\"0000\",\"2000\",\"3000\"" => (1000,0,2000,3000,)),
+            ("\"1$(g)0$(g)0$(g)0\",0000,\"2$(g)0$(g)0$(g)0\",3000" => (1000,0,2000,3000,)),
+            ("1000,\"0$(g)0$(g)0$(g)0\",2000,\"3$(g)0$(g)0$(g)0\"" => (1000,0,2000,3000,)),
         ]
             pos = 1
             len = length(input)
             local res
             for expected in expected_vals
-                res = Parsers.xparse(Int, input, pos, len, xopts_with_groupmark)
-                @test res.val == expected
-                @test Parsers.ok(res.code)
-                pos += res.tlen
-            end
-            @test Parsers.ok(res.code)
-            @test Parsers.eof(res.code)
-        end
-
-        # Groupmark tests for floats
-        for (input, expected_vals) in [
-            ("1000,0000,2000,3000", (1000.0,0.0,2000.0,3000.0,)),
-            ("\"1000\",\"0000\",\"2000\",\"3000\"", (1000.0,0.0,2000.0,3000.0,)),
-            ("\"1$(g)0$(g)0$(g)0\",0000,\"2$(g)0$(g)0$(g)0\",3000", (1000.0,0.0,2000.0,3000.0,)),
-            ("1000,\"0$(g)0$(g)0$(g)0\",2000,\"3$(g)0$(g)0$(g)0\"", (1000.0,0.0,2000.0,3000.0,)),
-            ("1000.00,0000.00,2000.00,3000.00", (1000.0,0.0,2000.0,3000.0,)),
-            ("\"1000.00\",\"0000.00\",\"2000.00\",\"3000.00\"", (1000.0,0.0,2000.0,3000.0,)),
-            ("\"1$(g)0$(g)0$(g)0.00\",0000.00,\"2$(g)0$(g)0$(g)0.00\",3000.00", (1000.0,0.0,2000.0,3000.0,)),
-            ("1000,\"0$(g)0$(g)0$(g)0.00\",2000.00,\"3$(g)0$(g)0$(g)0.00\"", (1000.0,0.0,2000.0,3000.0,)),
-            ("1000.00e0,0000.00e0,2000.00e0,3000.00e0", (1000.0,0.0,2000.0,3000.0,)),
-            ("\"1000.00e0\",\"0000.00e0\",\"2000.00e0\",\"3000.00e0\"", (1000.0,0.0,2000.0,3000.0,)),
-            ("\"1$(g)0$(g)0$(g)0.00e0\",0000.00e0,\"2$(g)0$(g)0$(g)0.00e0\",3000.00e0", (1000.0,0.0,2000.0,3000.0,)),
-            ("1000,\"0$(g)0$(g)0$(g)0.00e0\",2000.00e0,\"3$(g)0$(g)0$(g)0.00e0\"", (1000.0,0.0,2000.0,3000.0,)),
-            ("1000e0,0000e0,2000e0,3000e0", (1000.0,0.0,2000.0,3000.0,)),
-            ("\"1000e0\",\"0000e0\",\"2000e0\",\"3000e0\"", (1000.0,0.0,2000.0,3000.0,)),
-            ("\"1$(g)0$(g)0$(g)0e0\",0000e0,\"2$(g)0$(g)0$(g)0e0\",3000e0", (1000.0,0.0,2000.0,3000.0,)),
-            ("1000,\"0$(g)0$(g)0$(g)0e0\",2000e0,\"3$(g)0$(g)0$(g)0e0\"", (1000.0,0.0,2000.0,3000.0,)),
-        ]
-            pos = 1
-            len = length(input)
-            local res
-            for expected in expected_vals
-                res = Parsers.xparse(Float64, input, pos, len, xopts_with_groupmark)
+                res = Parsers.xparse(T, input, pos, len, xgroupmark(g))
                 @test res.val == expected
                 @test Parsers.ok(res.code)
                 pos += res.tlen

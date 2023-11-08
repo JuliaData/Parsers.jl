@@ -369,26 +369,23 @@ end
 @test Parsers.tryparse(Float64, "0e+") === nothing
 
 @testset "groupmark" begin
-    # xparse2 is used for parsing inputs with a single value in them,
+    # `parse` is used for parsing inputs with a single value in them,
     # so when delims==groupmarks, we assume what we see are groupmarks
-    @test let case = "1,0,0,0,0,0,0,0,099e-2"; Parsers.xparse2(Float32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val ≈ 100_000_000.99 end
-    @test let case = "100,000,00099e-2"; Parsers.xparse2(Float32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val ≈ 100_000_000.99 end
-    @test let case = "100,000,000.99"; Parsers.xparse2(Float32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val ≈ 100_000_000.99 end
-    @test let case = "100,000,000"; Parsers.xparse2(Float32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val ≈ 100_000_000 end
-    @test let case = "1 0 0 0 0 0 0 0 099e-2"; Parsers.xparse2(Float32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val ≈ 100_000_000.99 end
-    @test let case = "100 000 00099e-2"; Parsers.xparse2(Float32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val ≈ 100_000_000.99 end
-    @test let case = "100 000 000.99"; Parsers.xparse2(Float32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val ≈ 100_000_000.99 end
-    @test let case = "100 000 000"; Parsers.xparse2(Float32, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val ≈ 100_000_000 end
-
-    @test let case = "1,0,0,0,0,0,0,0,099e-2"; Parsers.xparse2(Float64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val ≈ 100_000_000.99 end
-    @test let case = "100,000,00099e-2"; Parsers.xparse2(Float64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val ≈ 100_000_000.99 end
-    @test let case = "100,000,000.99"; Parsers.xparse2(Float64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val ≈ 100_000_000.99 end
-    @test let case = "100,000,000"; Parsers.xparse2(Float64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(','))).val ≈ 100_000_000 end
-    @test let case = "1 0 0 0 0 0 0 0 099e-2"; Parsers.xparse2(Float64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val ≈ 100_000_000.99 end
-    @test let case = "100 000 00099e-2"; Parsers.xparse2(Float64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val ≈ 100_000_000.99 end
-    @test let case = "100 000 000.99"; Parsers.xparse2(Float64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val ≈ 100_000_000.99 end
-    @test let case = "100 000 000"; Parsers.xparse2(Float64, case, 1, length(case), Parsers._get_default_options(groupmark=UInt8(' '))).val ≈ 100_000_000 end
-
+    @testset "Parsers.parse" begin
+        groupmark(c::Char) = Parsers._get_default_options(groupmark=UInt8(c))
+        @testset "$T" for T in (Float32, Float64)
+            # comma
+            @test Parsers.parse(T, "1,0,0,0,0,0,0,0,099e-2", groupmark(',')) ≈ 100_000_000.99
+            @test Parsers.parse(T, "100,000,00099e-2", groupmark(',')) ≈ 100_000_000.99
+            @test Parsers.parse(T, "100,000,000.99", groupmark(',')) ≈ 100_000_000.99
+            @test Parsers.parse(T, "100,000,000", groupmark(',')) ≈ 100_000_000
+            # space
+            @test Parsers.parse(T, "1 0 0 0 0 0 0 0 099e-2", groupmark(' ')) ≈ 100_000_000.99
+            @test Parsers.parse(T, "100 000 00099e-2", groupmark(' ')) ≈ 100_000_000.99
+            @test Parsers.parse(T, "100 000 000.99", groupmark(' ')) ≈ 100_000_000.99
+            @test Parsers.parse(T, "100 000 000", groupmark(' ')) ≈ 100_000_000
+        end
+    end
 
     @test Parsers.xparse(Float64, "1 0 0 0 0 0 0 0 0.99"; groupmark=' ').val == 100_000_000.99
     @test Parsers.xparse(Float64, "100000000.99"; groupmark=',').val == 100_000_000.99
@@ -411,6 +408,41 @@ end
     @test res.code == OK | DELIMITED
     @test res.tlen == 15
     @test res.val ≈ 100_000_000.99
+
+    @testset "$T groupmark=$(repr(g))" for g in (',',' '), T in (Float32, Float64)
+        xgroupmark(c::Char) = Parsers._get_default_xoptions(groupmark=UInt8(c))
+        # Groupmark tests for floats
+        for (input, expected_vals) in [
+            ("1000,0000,2000,3000" => (1000.0,0.0,2000.0,3000.0,)),
+            ("\"1000\",\"0000\",\"2000\",\"3000\"" => (1000.0,0.0,2000.0,3000.0,)),
+            ("\"1$(g)0$(g)0$(g)0\",0000,\"2$(g)0$(g)0$(g)0\",3000" => (1000.0,0.0,2000.0,3000.0,)),
+            ("1000,\"0$(g)0$(g)0$(g)0\",2000,\"3$(g)0$(g)0$(g)0\"" => (1000.0,0.0,2000.0,3000.0,)),
+            ("1000.00,0000.00,2000.00,3000.00" => (1000.0,0.0,2000.0,3000.0,)),
+            ("\"1000.00\",\"0000.00\",\"2000.00\",\"3000.00\"" => (1000.0,0.0,2000.0,3000.0,)),
+            ("\"1$(g)0$(g)0$(g)0.00\",0000.00,\"2$(g)0$(g)0$(g)0.00\",3000.00" => (1000.0,0.0,2000.0,3000.0,)),
+            ("1000,\"0$(g)0$(g)0$(g)0.00\",2000.00,\"3$(g)0$(g)0$(g)0.00\"" => (1000.0,0.0,2000.0,3000.0,)),
+            ("1000.00e0,0000.00e0,2000.00e0,3000.00e0" => (1000.0,0.0,2000.0,3000.0,)),
+            ("\"1000.00e0\",\"0000.00e0\",\"2000.00e0\",\"3000.00e0\"" => (1000.0,0.0,2000.0,3000.0,)),
+            ("\"1$(g)0$(g)0$(g)0.00e0\",0000.00e0,\"2$(g)0$(g)0$(g)0.00e0\",3000.00e0" => (1000.0,0.0,2000.0,3000.0,)),
+            ("1000,\"0$(g)0$(g)0$(g)0.00e0\",2000.00e0,\"3$(g)0$(g)0$(g)0.00e0\"" => (1000.0,0.0,2000.0,3000.0,)),
+            ("1000e0,0000e0,2000e0,3000e0" => (1000.0,0.0,2000.0,3000.0,)),
+            ("\"1000e0\",\"0000e0\",\"2000e0\",\"3000e0\"" => (1000.0,0.0,2000.0,3000.0,)),
+            ("\"1$(g)0$(g)0$(g)0e0\",0000e0,\"2$(g)0$(g)0$(g)0e0\",3000e0" => (1000.0,0.0,2000.0,3000.0,)),
+            ("1000,\"0$(g)0$(g)0$(g)0e0\",2000e0,\"3$(g)0$(g)0$(g)0e0\"" => (1000.0,0.0,2000.0,3000.0,)),
+        ]
+            pos = 1
+            len = length(input)
+            local res
+            for expected in expected_vals
+                res = Parsers.xparse(T, input, pos, len, xgroupmark(g))
+                @test res.val == expected
+                @test Parsers.ok(res.code)
+                pos += res.tlen
+            end
+            @test Parsers.ok(res.code)
+            @test Parsers.eof(res.code)
+        end
+    end
 end
 
 @testset "BigFloats" begin
