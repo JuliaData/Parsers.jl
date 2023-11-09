@@ -386,21 +386,55 @@ end
             @test Parsers.parse(T, "100 000 000", groupmark(' ')) ≈ 100_000_000
         end
     end
+    @test Parsers.xparse(Float64, "100_000_000.99"; groupmark='_').val == 100_000_000.99
+    @test Parsers.xparse(Float64, "100_000_000"; groupmark='_').val == 100_000_000.0
+    @test Parsers.xparse(Float64, "1_0_0_0_0_0_0_0_0.99"; groupmark='_').val == 100_000_000.99
 
     @test Parsers.xparse(Float64, "1 0 0 0 0 0 0 0 0.99"; groupmark=' ').val == 100_000_000.99
     @test Parsers.xparse(Float64, "100000000.99"; groupmark=',').val == 100_000_000.99
     @test Parsers.xparse(Float64, "100000000.99,aaa"; groupmark=',') == Parsers.Result{Float64}(OK | DELIMITED, 13, 1.0000000099e8)
     @test Parsers.xparse(Float64, "\"100,000,000.99\",100"; groupmark=',', openquotechar='"', closequotechar='"') == Parsers.Result{Float64}(Int16(13), 17, 1.0000000099e8)
+    @test Parsers.xparse(Float64, "100,000,000.99,100"; groupmark=',', openquotechar='"', closequotechar='"') == Parsers.Result{Float64}(Int16(9), 4, 100.0)
+    @test Parsers.xparse(Float64, "100_000_000.99,100"; groupmark='_', openquotechar='"', closequotechar='"') == Parsers.Result{Float64}(Int16(9), 15, 1.0000000099e8)
     @test Parsers.xparse(Float64, "\"100,000,000\",100"; groupmark=',', openquotechar='"', closequotechar='"') == Parsers.Result{Float64}(Int16(13), 14, 1.0e8)
+    res = Parsers.xparse(Float64, "100,000,000,aaa"; groupmark=',')
+    @test res.code == OK | DELIMITED
+    @test res.tlen == 4
+    res = Parsers.xparse(Float64, "100_000_000,aaa"; groupmark='_')
+    @test res.code == OK | DELIMITED
+    @test res.tlen == 12
 
+    @test Parsers.xparse(Float32, "100_000_000.99"; groupmark='_').val ≈ 100_000_000.99
+    @test Parsers.xparse(Float32, "100_000_000"; groupmark='_').val ≈ 100_000_000.0
+    @test Parsers.xparse(Float32, "1_0_0_0_0_0_0_0_0.99"; groupmark='_').val ≈ 100_000_000.99
     @test Parsers.xparse(Float32, "1 0 0 0 0 0 0 0 0.99"; groupmark=' ').val ≈ 100_000_000.99
     @test Parsers.xparse(Float32, "100000000.99"; groupmark=',').val ≈ 100_000_000.99
+    res = Parsers.xparse(Float32, "100000000.99,aaa"; groupmark=',')
+    @test res.code == OK | DELIMITED
+    @test res.tlen == 13
+    @test res.val ≈ 100_000_000.99
+    res = Parsers.xparse(Float32, "100,000,000,aaa"; groupmark=',')
+    @test res.code == OK | DELIMITED
+    @test res.tlen == 4
+    res = Parsers.xparse(Float32, "100_000_000,aaa"; groupmark='_')
+    @test res.code == OK | DELIMITED
+    @test res.tlen == 12
+
+    @test Parsers.xparse(Float64, "100,000,00099e-2"; groupmark=',').val == 100.0
+    @test Parsers.xparse(Float64, "100_000_00099e-2"; groupmark='_').val == 100_000_000.99
+    @test Parsers.xparse(Float64, "1,0,0,0,0,0,0,0,099e-2"; groupmark=',').val == 1.0
+    @test Parsers.xparse(Float64, "1_0_0_0_0_0_0_0_099e-2"; groupmark='_').val == 100_000_000.99
 
     @test Parsers.xparse(Float64, "1 0 0 0 0 0 0 0 099e-2"; groupmark=' ').val == 100_000_000.99
     @test Parsers.xparse(Float64, "10000000099e-2"; groupmark=',').val == 100_000_000.99
     @test Parsers.xparse(Float64, "10000000099e-2,aaa"; groupmark=',') == Parsers.Result{Float64}(OK | DELIMITED, 15, 1.0000000099e8)
     @test Parsers.xparse(Float64, "\"10000000099e-2\",100"; groupmark=',', openquotechar='"', closequotechar='"') == Parsers.Result{Float64}(Int16(13), 17, 1.0000000099e8)
     @test Parsers.xparse(Float64, "10000000099e-2,100"; groupmark=',', openquotechar='"', closequotechar='"') == Parsers.Result{Float64}(Int16(9), 15, 1.0000000099e8)
+
+    @test Parsers.xparse(Float32, "100,000,00099e-2"; groupmark=',').val ≈ 100.0
+    @test Parsers.xparse(Float32, "100_000_00099e-2"; groupmark='_').val ≈ 100_000_000.99
+    @test Parsers.xparse(Float32, "1,0,0,0,0,0,0,0,099e-2"; groupmark=',').val ≈ 1.0
+    @test Parsers.xparse(Float32, "1_0_0_0_0_0_0_0_099e-2"; groupmark='_').val ≈ 100_000_000.99
 
     @test Parsers.xparse(Float32, "1 0 0 0 0 0 0 0 099e-2"; groupmark=' ').val ≈ 100_000_000.99
     @test Parsers.xparse(Float32, "10000000099e-2"; groupmark=',').val ≈ 100_000_000.99
