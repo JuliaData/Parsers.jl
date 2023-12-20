@@ -226,6 +226,13 @@ end
 
 rettype(::Type{T}) where {T} = T === Number ? Nothing : T
 
+# when a function is passed to apply to the parsed value, we have to be really careful that the `x`
+# returned from parsedigits is `Nothing`, otherwise we end up with an overall return type like
+# `Tuple{Union{Nothing, T}, ReturnCode, Int}`, which can cause dynamic dispatches/inlining issues
+# for callers. The rule to follow is that before any call to `@goto done`, we need to ensure `x`
+# has been "handled" properly: either applied or in error cases, set to `nothing`
+getx(x, f) = f === nothing ? x : nothing
+
 # if we need to _widen the type due to `digits` overflow, we want a non-inlined version so base case compilation doesn't get out of control
 @noinline _parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool, ndigits::Int, f::F) where {T, IntType, F} =
     parsedigits(conf, source, pos, len, b, code, options, digits, neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
@@ -250,7 +257,7 @@ rettype(::Type{T}) where {T} = T === Number ? Nothing : T
                     fastseek!(source, startpos - 1)
                     pos = startpos
                     code |= INVALID
-                    x = f === nothing ? x : nothing
+                    x = getx(x, f)
                     @goto done
                 end
                 digits = _muladd(ten(IntType), digits, b)
@@ -271,13 +278,13 @@ rettype(::Type{T}) where {T} = T === Number ? Nothing : T
                     @goto done
                 end
             elseif has_groupmark && b == groupmark0
-                prev_b0 == groupmark0 && (code |= INVALID; @goto done) # two groupmarks in a row
+                prev_b0 == groupmark0 && (code |= INVALID; x = getx(x, f); @goto done) # two groupmarks in a row
                 pos += 1
                 Parsers.incr!(source)
-                Parsers.eof(source, pos, len) && (code |= INVALID | EOF; @goto done) # groupmark at end of input
+                Parsers.eof(source, pos, len) && (code |= INVALID | EOF; x = getx(x, f); @goto done) # groupmark at end of input
             else
                 # if `b` isn't a digit or a groupmark, time to break out of digit parsing while loop
-                ((has_groupmark && prev_b0 == groupmark0) || !anydigits) && (code |= INVALID; @goto done) # ended with groupmark
+                ((has_groupmark && prev_b0 == groupmark0) || !anydigits) && (code |= INVALID; x = getx(x, f); @goto done) # ended with groupmark
                 break
             end
             prev_b0 = b
@@ -306,7 +313,7 @@ rettype(::Type{T}) where {T} = T === Number ? Nothing : T
             # otherwise ok, like "1.a" (only "1." is parsed)
             if !anydigits
                 code |= INVALID
-                x = f === nothing ? x : nothing
+                x = getx(x, f)
                 @goto done
             else
                 if T === Number
@@ -356,7 +363,7 @@ end
                 # input is simple non-scientific-notation floating number, like "1.1"
                 if overflow_invalid && -signed(frac) > 308
                     code |= INVALID
-                    x = f === nothing ? x : nothing
+                    x = getx(x, f)
                 else
                     x, code = scale(conf, FT, digits, -signed(frac), neg, code, ndigits, f, options)
                     code |= OK | EOF
@@ -381,7 +388,7 @@ end
         if eof(source, pos, len)
             # it's an error to have a "dangling" 'e', so input was something like "1.1e"
             code |= INVALID | EOF
-            x = f === nothing ? x : nothing
+            x = getx(x, f)
             @goto done
         end
         b = peekbyte(source, pos)
@@ -393,7 +400,7 @@ end
             if eof(source, pos, len)
                 # it's an error to have a "dangling" '-' or '+', so input was something like "1.1e-"
                 code |= INVALID | EOF
-                x = f === nothing ? x : nothing
+                x = getx(x, f)
                 @goto done
             end
             b = peekbyte(source, pos)
@@ -402,7 +409,7 @@ end
         if b > 0x09
             # invalid to have a "dangling" 'e'
             code |= INVALID
-            x = f === nothing ? x : nothing
+            x = getx(x, f)
             @goto done
         end
 
@@ -414,7 +421,7 @@ end
         if parsedanyfrac
             if overflow_invalid && -signed(frac) > 308
                 code |= INVALID
-                x = f === nothing ? x : nothing
+                x = getx(x, f)
                 @goto done
             else
                 x, code = scale(conf, FT, digits, -signed(frac), neg, code, ndigits, f, options)
@@ -446,7 +453,7 @@ end
             ee = ifelse(negexp, -signed(exp), signed(exp)) - signed(frac)
             if overflow_invalid && ee > 308
                 code |= INVALID
-                x = f === nothing ? x : nothing
+                x = getx(x, f)
             else
                 x, code = scale(conf, FT, digits, ee, neg, code, ndigits, f, options)
                 code |= OK | EOF
@@ -459,7 +466,7 @@ end
             ee = ifelse(negexp, -signed(exp), signed(exp)) - signed(frac)
             if overflow_invalid && ee > 308
                 code |= INVALID
-                x = f === nothing ? x : nothing
+                x = getx(x, f)
             else
                 x, code = scale(conf, FT, digits, ifelse(negexp, -signed(exp), signed(exp)) - signed(frac), neg, code, ndigits, f, options)
                 code |= OK
