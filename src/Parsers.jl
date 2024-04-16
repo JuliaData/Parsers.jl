@@ -211,7 +211,7 @@ _startswith(s::String, prefix::UInt8) = startswith(s, Char(prefix))
 _startswith(s::Char, prefix::Regex) = startswith(string(s), prefix)
 _startswith(s::UInt8, prefix::Regex) = startswith(string(Char(s)), prefix)
 _startswith(s::UInt8, prefix::UInt8) = s == prefix
-_startswith(s::Char, prefix::UInt8) = first(codeunits(string(s))) == prefix
+_startswith(s::Char, prefix::UInt8) = codepoint(s) == prefix
 _startswith(a::Nothing, b) = false
 _startswith(a, b::Nothing) = false
 _startswith(a::Nothing, b::Nothing) = false
