@@ -29,6 +29,7 @@ jobs:
           - {user: nickrobinson251, repo: PowerFlowData.jl}
           - {user: quinnj, repo: JSON3.jl}
           - {user: RelationalAI, repo: ChunkedCSV.jl}
+          - {user: cjdoris, repo: ARFFFiles.jl}
 
     steps:
       - uses: actions/checkout@v2
