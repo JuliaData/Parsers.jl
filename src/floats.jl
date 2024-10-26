@@ -72,11 +72,11 @@ function typeparser(::AbstractConf{BigFloat}, source, pos, len, b, code, pl, opt
         readbytes!(source, str, vlen)
         fastseek!(source, _pos) # reset IO to earlier position
     end
-    str = String(str)
+    str = Base.cconvert(Cstring, String(str))
     GC.@preserve str begin
         ptr = pointer(str, strpos)
         endptr = Ref{Ptr{UInt8}}()
-        err = ccall((:mpfr_strtofr, :libmpfr), Int32, (Ref{BigFloat}, Cstring, Ref{Ptr{UInt8}}, Int32, Base.MPFR.MPFRRoundingMode), z, ptr, endptr, base, rounding)
+        err = ccall((:mpfr_strtofr, :libmpfr), Int32, (Ref{BigFloat}, Ptr{UInt8}, Ref{Ptr{UInt8}}, Int32, Base.MPFR.MPFRRoundingMode), z, ptr, endptr, base, rounding)
         code |= endptr[] == ptr ? INVALID : OK
         pos += Int(endptr[] - ptr)
         return pos, code, PosLen(pl.pos, max(0, pos - pl.pos)), z
