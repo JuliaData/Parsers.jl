@@ -72,7 +72,7 @@ function typeparser(::AbstractConf{BigFloat}, source, pos, len, b, code, pl, opt
         readbytes!(source, str, vlen)
         fastseek!(source, _pos) # reset IO to earlier position
     end
-    str = Base.cconvert(Cstring, String(str))
+    str = Base.cconvert(Cstring, String(copy(str)))
     GC.@preserve str begin
         ptr = pointer(str, strpos)
         endptr = Ref{Ptr{UInt8}}()
