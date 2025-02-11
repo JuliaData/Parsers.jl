@@ -6,23 +6,8 @@ _unwiden(x::UInt128) = x % UInt64
 _unwiden(x::Int128) = x % Int64
 _unwiden(x::BigInt) = x % Int128
 
-const BIGINT = BigInt[]
-
-function access_threaded(f, v::Vector)
-    tid = Threads.threadid()
-    0 < tid <= length(v) || _length_assert()
-    if @inbounds isassigned(v, tid)
-        @inbounds x = v[tid]
-    else
-        x = f()
-        @inbounds v[tid] = x
-    end
-    return x
-end
-@noinline _length_assert() =  @assert false "0 < tid <= v"
-
 function _widen(v::T) where {T <: Union{Int128, UInt128}}
-    x = access_threaded(() -> (@static VERSION > v"1.5" ? BigInt(; nbits=256) : BigInt()), BIGINT)
+    x = _get_bigint()
     ccall((:__gmpz_import, :libgmp), Int32,
         (Ref{BigInt}, Csize_t, Cint, Csize_t, Cint, Csize_t, Ref{T}),
         x, 1, 1, 16, 0, 0, v)
@@ -651,11 +636,10 @@ function _scale(::Type{T}, v::V, exp, neg) where {T, V <: UInt128}
 end
 
 const BIGEXP10 = [1 / exp10(BigInt(e)) for e = 309:327]
-const BIGFLOATS = BigFloat[]
 const BIGFLOATEXP10 = [exp10(BigFloat(i; precision=256)) for i = 1:308]
 
 function _scale(::Type{T}, v::V, exp, neg) where {T, V <: BigInt}
-    x = access_threaded(BigFloat, BIGFLOATS)
+    x = _get_bigfloats()
 
     ccall((:mpfr_set_z, :libmpfr), Int32,
         (Ref{BigFloat}, Ref{BigInt}, Int32),

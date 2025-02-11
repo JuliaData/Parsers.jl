@@ -493,20 +493,45 @@ end
     return false
 end
 
+
+if isdefined(Base, :OncePerTask)
+    const _get_bigint = OncePerTask{BigInt}(() -> BigInt(; nbits=256))
+    const _get_bigfloats = OncePerTask{BigFloat}(BigFloat)
+else
+    # N.B This code is not thread safe in the presence of thread migration
+    const BIGINT = BigInt[]
+    const BIGFLOATS = BigFloat[]
+
+    _get_bigfloats() = access_threaded(BigFloat, BIGFLOATS)
+    _get_bigint() = access_threaded(() -> (@static VERSION > v"1.5" ? BigInt(; nbits=256) : BigInt()), BIGINT)
+
+    function access_threaded(f, v::Vector)
+        tid = Threads.threadid()
+        0 < tid <= length(v) || _length_assert()
+        if @inbounds isassigned(v, tid)
+            @inbounds x = v[tid]
+        else
+            x = f()
+            @inbounds v[tid] = x
+        end
+        return x
+    end
+    @noinline _length_assert() =  @assert false "0 < tid <= v"
+
+    function __init__()
+        nt = isdefined(Base.Threads, :maxthreadid) ? Threads.maxthreadid() : Threads.nthreads()
+        resize!(empty!(BIGINT), nt)
+        resize!(empty!(BIGFLOATS), nt)
+        return
+    end
+end
+
 include("ints.jl")
 include("floats.jl")
 include("strings.jl")
 include("bools.jl")
 include("dates.jl")
 include("hexadecimal.jl")
-
-function __init__()
-    nt = isdefined(Base.Threads, :maxthreadid) ? Threads.maxthreadid() : Threads.nthreads()
-    resize!(empty!(BIGINT), nt)
-    resize!(empty!(BIGFLOATS), nt)
-    return
-end
-
 include("precompile.jl")
 
 end # module
