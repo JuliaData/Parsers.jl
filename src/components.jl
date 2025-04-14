@@ -1,7 +1,6 @@
 # must be outermost layer
 function Result(parser)
     function(conf::AbstractConf{T}, source, pos, len, ::Type{RT}=T) where {T, RT}
-        Base.@_inline_meta
         startpos = pos
         code = SUCCESS
         b = eof(source, pos, len) ? 0x00 : peekbyte(source, pos)
@@ -36,7 +35,6 @@ emptysentinel(opts::Options) = emptysentinel(opts.flags.checksentinel && isempty
 function emptysentinel(checksent::Bool)
     function(parser)
         function checkemptysentinel(conf::AbstractConf{T}, source, pos, len, b, code, pl) where {T}
-            Base.@_inline_meta
             pos, code, pl, x = parser(conf, source, pos, len, b, code, pl)
             if checksent && pl.len == 0 && (!isgreedy(T) || !quoted(code))
                 code &= ~(OK | INVALID)
@@ -56,7 +54,6 @@ whitespace(opts::Options) = whitespace(opts.flags.spacedelim, opts.flags.tabdeli
 function whitespace(spacedelim, tabdelim, stripquoted, stripwh)
     function(parser)
         function stripwhitespace(conf::AbstractConf{T}, source, pos, len, b, code, pl) where {T}
-            Base.@_inline_meta
             # strip leading whitespace
             if !eof(source, pos, len) && (
                 # pre-quotes, if delim is not whitespace
@@ -111,7 +108,7 @@ function whitespace(spacedelim, tabdelim, stripquoted, stripwh)
     end
 end
 
-@inline function findendquoted(::Type{T}, source, pos, len, b, code, pl, isquoted, cq, e, stripquoted) where {T}
+function findendquoted(::Type{T}, source, pos, len, b, code, pl, isquoted, cq, e, stripquoted) where {T}
     # for quoted fields, find the closing quote character
     # we should be positioned at the correct place to find the closing quote character if everything is as it should be
     # if we don't find the quote character immediately, something's wrong, so mark INVALID
@@ -202,7 +199,6 @@ quoted(opts::Options) = quoted(opts.flags.checkquoted, opts.oq, opts.cq, opts.e,
 function quoted(checkquoted, oq, cq, e, stripquoted)
     function(parser)
         function findquoted(conf::AbstractConf{T}, source, pos, len, b, code, pl) where {T}
-            Base.@_inline_meta
             isquoted = false
             if checkquoted && !eof(source, pos, len)
                 isquoted, pos = checktoken(source, pos, len, b, oq)
@@ -239,7 +235,6 @@ sentinel(opts::Options) = sentinel(opts.flags.checksentinel, opts.sentinel)
 function sentinel(chcksentinel, sentinel)
     function(parser)
         function checkforsentinel(conf::AbstractConf{T}, source, pos, len, b, code, pl) where {T}
-            Base.@_inline_meta
             match, sentinelpos = (!chcksentinel || isempty(sentinel) || eof(source, pos, len)) ? (false, 0) : checktokens(source, pos, len, b, sentinel)
             pos, code, pl, x = parser(conf, source, pos, len, b, code, pl)
             # @show match, sentinelpos, pos, pl
@@ -264,7 +259,7 @@ function sentinel(chcksentinel, sentinel)
     end
 end
 
-@inline function finddelimiter(::Type{T}, source, pos, len, b, code, pl, delim, ignorerepeated, cmt, ignoreemptylines, stripwhitespace) where {T}
+function finddelimiter(::Type{T}, source, pos, len, b, code, pl, delim, ignorerepeated, cmt, ignoreemptylines, stripwhitespace) where {T}
     # now we check for a delimiter; if we don't find it, keep parsing until we do
     # for greedy strings, we need to keep track of the last non-whitespace character
     # if we're stripping whitespace, but note we've already skipped leading whitespace
@@ -364,7 +359,6 @@ delimiter(opts::Options) = delimiter(opts.flags.checkdelim, opts.delim, opts.fla
 function delimiter(checkdelim, delim, ignorerepeated, cmt, ignoreemptylines, stripwhitespace)
     function(parser)
         function _finddelimiter(conf::AbstractConf{T}, source, pos, len, b, code, pl) where {T}
-            Base.@_inline_meta
             pos, code, pl, x = parser(conf, source, pos, len, b, code, pl)
             if eof(source, pos, len) || !checkdelim || delimited(code) || newline(code) # greedy case
                 return pos, code, pl, x
@@ -378,21 +372,20 @@ end
 
 function typeparser(opts::Options)
     function(conf::AbstractConf{T}, source, pos, len, b, code, pl) where {T}
-        Base.@_inline_meta
         return typeparser(conf, source, pos, len, b, code, pl, opts)
     end
 end
 
 # backwards compat
-@inline function typeparser(conf, source, pos, len, b, code, opts::Options)
+function typeparser(conf, source, pos, len, b, code, opts::Options)
     pos, code, pl, x = typeparser(conf, source, pos, len, b, code, poslen(pos, 0), opts)
     return x, code, pos
 end
 
-@inline function typeparser(::Type{T}, source, pos, len, b, code, opts::Options) where {T}
+function typeparser(::Type{T}, source, pos, len, b, code, opts::Options) where {T}
     pos, code, pl, x = typeparser(DefaultConf{T}(), source, pos, len, b, code, poslen(pos, 0), opts)
     return x, code, pos
 end
 
-@inline typeparser(::Type{T}, source, pos, len, b, code, pl) where {T} =
+typeparser(::Type{T}, source, pos, len, b, code, pl) where {T} =
     typeparser(DefaultConf{T}(), source, pos, len, b, code, pl, Options())

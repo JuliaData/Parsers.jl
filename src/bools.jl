@@ -1,7 +1,7 @@
 const DEFAULT_TRUE = "true"
 const DEFAULT_FALSE = "false"
 
-@inline function typeparser(::AbstractConf{Bool}, source, pos, len, b, code, pl, options::Options)
+function typeparser(::AbstractConf{Bool}, source, pos, len, b, code, pl, options::Options)
     x = false
     trues = options.trues
     falses = options.falses

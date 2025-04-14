@@ -50,7 +50,7 @@ end
 @enum FloatType FLOAT16 FLOAT32 FLOAT64 BIGFLOAT
 
 # for non SupportedFloat Reals, parse as Float64, then convert
-@inline function typeparser(conf::AbstractConf{T}, source, pos, len, b, code, pl, options) where {T <: Real}
+function typeparser(conf::AbstractConf{T}, source, pos, len, b, code, pl, options) where {T <: Real}
     pos, code, pl, x = typeparser(DefaultConf{Float64}(), source, pos, len, b, code, pl, options)
     return pos, code, pl, T(x)
 end
@@ -75,14 +75,14 @@ function typeparser(::AbstractConf{BigFloat}, source, pos, len, b, code, pl, opt
     GC.@preserve str begin
         ptr = pointer(str, strpos)
         endptr = Ref{Ptr{UInt8}}()
-        err = ccall((:mpfr_strtofr, :libmpfr), Int32, (Ref{BigFloat}, Ptr{UInt8}, Ref{Ptr{UInt8}}, Int32, Base.MPFR.MPFRRoundingMode), z, ptr, endptr, base, rounding)
+        err = ccall((:mpfr_strtofr, :libmpfr), Int32, (Ref{BigFloat}, Cstring, Ref{Ptr{UInt8}}, Int32, Base.MPFR.MPFRRoundingMode), z, ptr, endptr, base, rounding)
         code |= endptr[] == ptr ? INVALID : OK
         pos += Int(endptr[] - ptr)
         return pos, code, PosLen(pl.pos, max(0, pos - pl.pos)), z
     end
 end
 
-@inline function typeparser(conf::AbstractConf{T}, source, pos, len, b, code, pl, options) where {T <: SupportedFloats}
+function typeparser(conf::AbstractConf{T}, source, pos, len, b, code, pl, options) where {T <: SupportedFloats}
     # keep track of starting pos in case of invalid, we can rewind to start of parsing
     startpos = pos
     x = zero(T)
@@ -218,7 +218,7 @@ end
     return pos, code, PosLen(pl.pos, pos - pl.pos), x
 end
 
-@inline function handlef(x::T, f::F) where {T, F}
+function handlef(x::T, f::F) where {T, F}
     if f === nothing
         return x
     else
@@ -240,7 +240,7 @@ getx(x, f) = f === nothing ? x : nothing
 @noinline _parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool, ndigits::Int, f::F) where {T, IntType, F} =
     parsedigits(conf, source, pos, len, b, code, options, digits, neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
 
-@inline function parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool=false, ndigits::Int=0, f::F=nothing) where {T, IntType, F}
+function parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool=false, ndigits::Int=0, f::F=nothing) where {T, IntType, F}
     x = zero(T)
     anydigits = false
     has_groupmark = _has_groupmark(options, code)
@@ -347,7 +347,7 @@ end
 @noinline _parsefrac(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac, overflow_invalid, ndigits, f::F) where {T, IntType, F} =
     parsefrac(conf, source, pos, len, b, code, options, digits, neg, startpos, frac, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
 
-@inline function parsefrac(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac, overflow_invalid, ndigits, f::F) where {T, IntType, F}
+function parsefrac(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac, overflow_invalid, ndigits, f::F) where {T, IntType, F}
     x = zero(T)
     parsedanyfrac = false
     FT = FLOAT64
@@ -444,7 +444,7 @@ end
 @noinline _parseexp(conf::AbstractConf{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::ExpType, negexp, FT, overflow_invalid, ndigits, f::F) where {T, ExpType, F} =
     parseexp(conf, source, pos, len, b, code, options, digits, neg, startpos, frac, exp, negexp, FT, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
 
-@inline function parseexp(conf::AbstractConf{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::ExpType, negexp, FT, overflow_invalid, ndigits, f::F) where {T, ExpType, F}
+function parseexp(conf::AbstractConf{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::ExpType, negexp, FT, overflow_invalid, ndigits, f::F) where {T, ExpType, F}
     x = zero(T)
     # note that `b` has already had `b - UInt8('0')` applied to it for parseexp
     while true
@@ -508,12 +508,12 @@ _unsigned(x::BigInt) = x
 _unsigned(x) = unsigned(x)
 
 # No fractional part or exponent, digits in `v` are already scaled
-@inline function noscale(::AbstractConf{T}, v::Integer, neg::Bool, code, ndigits, f::F, ::Options) where {T, F}
+function noscale(::AbstractConf{T}, v::Integer, neg::Bool, code, ndigits, f::F, ::Options) where {T, F}
     return handlef(ifelse(neg, -T(v), T(v)), f), code
 end
 
 # Digits in `v` need to be scaled by `exp`
-@inline function scale(::AbstractConf{T}, FT::FloatType, v, exp, neg, code, ndigits, f::F, ::Options) where {T, F}
+function scale(::AbstractConf{T}, FT::FloatType, v, exp, neg, code, ndigits, f::F, ::Options) where {T, F}
     if T === Float64
         return handlef(__scale(Float64, _unsigned(v), exp, neg), f), code
     elseif T === Float32
@@ -693,7 +693,7 @@ function _scale(::Type{T}, v::V, exp, neg) where {T, V <: BigInt}
     return convert_and_apply_neg(T, x, neg)
 end
 
-@inline function two_prod(a, b)
+function two_prod(a, b)
     x = UInt128(a) * b
     return UInt64(x >> 64), x % UInt64
 end
