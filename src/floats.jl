@@ -210,6 +210,9 @@ end
 
     # start parsing digits or decimal point; we start digits as UInt64(0) and can _widen type if needed
     x, code, pos = parsedigits(conf, source, pos, len, b, code, options, UInt64(0), neg, startpos)
+    if !isfinite(x)
+        code |= SPECIAL_VALUE
+    end
 
 @label done
     return pos, code, PosLen(pl.pos, pos - pl.pos), x

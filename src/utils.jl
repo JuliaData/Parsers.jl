@@ -370,6 +370,9 @@ function text(r)
     if r & SENTINEL > 0
         str *= ", a sentinel value was parsed"
     end
+    if r & SPECIAL_VALUE > 0
+        str *= ", a special value was parsed"
+    end
     if r & ESCAPED_STRING > 0
         str *= ", encountered escape character"
     end
@@ -400,6 +403,7 @@ codes(r) = chop(chop(string(
     ifelse(r & DELIMITED > 0, "DELIMITED | ", ""),
     ifelse(r & NEWLINE > 0, "NEWLINE | ", ""),
     ifelse(r & EOF > 0, "EOF | ", ""),
+    ifelse(r & SPECIAL_VALUE > 0, "SPECIAL_VALUE | ", ""),
     ifelse(r & (~INVALID & INVALID_QUOTED_FIELD) > 0, "INVALID_QUOTED_FIELD | ", ""),
     ifelse(r & (~INVALID & INVALID_DELIMITER) > 0, "INVALID_DELIMITER | ", ""),
     ifelse(r & (~INVALID & OVERFLOW) > 0, "OVERFLOW | ", ""),
