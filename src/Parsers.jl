@@ -209,9 +209,9 @@ _startswith(s::Char, prefix::Union{String,Char}) = ncodeunits(s) >= ncodeunits(p
 _startswith(s::String, prefix::Union{Char,String,Regex}) = startswith(s, prefix)
 _startswith(s::String, prefix::UInt8) = startswith(s, Char(prefix))
 _startswith(s::Char, prefix::Regex) = startswith(string(s), prefix)
-_startswith(s::UInt8, prefix::Regex) = startswith(Char(s), prefix)
+_startswith(s::UInt8, prefix::Regex) = startswith(string(Char(s)), prefix)
 _startswith(s::UInt8, prefix::UInt8) = s == prefix
-_startswith(s::Char, prefix::UInt8) = first(codeunits(s)) == prefix
+_startswith(s::Char, prefix::UInt8) = codepoint(s) == UInt32(prefix)
 _startswith(a::Nothing, b) = false
 _startswith(a, b::Nothing) = false
 _startswith(a::Nothing, b::Nothing) = false
@@ -306,7 +306,7 @@ function token(x::MaybeToken, arg)
         asciival(x) || throw(ArgumentError("$arg argument must be ASCII"))
         return Token(x)
     elseif x isa Char
-        return Token(asciival(x) ? UInt8(x) : String(x))
+        return Token(asciival(x) ? UInt8(x) : string(x))
     elseif x isa Regex
         return Token(mkregex(x))
     else
