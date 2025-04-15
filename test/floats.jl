@@ -88,28 +88,28 @@ testcases = [
     (str="1.7976931348623157e308", x=1.7976931348623157e+308, code=(OK | EOF), len=0, tot=0),
     (str="-1.7976931348623157e308", x=-1.7976931348623157e+308, code=(OK | EOF), len=0, tot=0),
     # next float64 - too large
-    (str="1.7976931348623159e308", x=+Inf, code=(OK | EOF), len=0, tot=0),
-    (str="-1.7976931348623159e308", x=-Inf, code=(OK | EOF), len=0, tot=0),
+    (str="1.7976931348623159e308", x=+Inf, code=(OK | EOF | SPECIAL_VALUE), len=0, tot=0),
+    (str="-1.7976931348623159e308", x=-Inf, code=(OK | EOF | SPECIAL_VALUE), len=0, tot=0),
     # the border is ...158079
     # borderline - okay
     (str="1.7976931348623158e308", x=1.7976931348623157e+308, code=(OK | EOF), len=0, tot=0),
     (str="-1.7976931348623158e308", x=-1.7976931348623157e+308, code=(OK | EOF), len=0, tot=0),
     # borderline - too large
-    (str="1.797693134862315808e308", x=+Inf, code=(OK | EOF), len=0, tot=0),
-    (str="-1.797693134862315808e308", x=-Inf, code=(OK | EOF), len=0, tot=0),
+    (str="1.797693134862315808e308", x=+Inf, code=(OK | EOF | SPECIAL_VALUE), len=0, tot=0),
+    (str="-1.797693134862315808e308", x=-Inf, code=(OK | EOF | SPECIAL_VALUE), len=0, tot=0),
 
     # a little too large
     (str="1e308", x=1e+308, code=(OK | EOF), len=0, tot=0),
-    (str="2e308", x=+Inf, code=(OK | EOF), len=0, tot=0),
-    (str="1e309", x=+Inf, code=(OK | EOF), len=0, tot=0),
+    (str="2e308", x=+Inf, code=(OK | EOF | SPECIAL_VALUE), len=0, tot=0),
+    (str="1e309", x=+Inf, code=(OK | EOF | SPECIAL_VALUE), len=0, tot=0),
 
     # way too large
-    (str="1e310", x=+Inf, code=(OK | EOF), len=0, tot=0),
-    (str="-1e310", x=-Inf, code=(OK | EOF), len=0, tot=0),
-    (str="1e400", x=+Inf, code=(OK | EOF), len=0, tot=0),
-    (str="-1e400", x=-Inf, code=(OK | EOF), len=0, tot=0),
-    (str="1e400000", x=+Inf, code=(OK | EOF), len=0, tot=0),
-    (str="-1e400000", x=-Inf, code=(OK | EOF), len=0, tot=0),
+    (str="1e310", x=+Inf, code=(OK | EOF | SPECIAL_VALUE), len=0, tot=0),
+    (str="-1e310", x=-Inf, code=(OK | EOF | SPECIAL_VALUE), len=0, tot=0),
+    (str="1e400", x=+Inf, code=(OK | EOF | SPECIAL_VALUE), len=0, tot=0),
+    (str="-1e400", x=-Inf, code=(OK | EOF | SPECIAL_VALUE), len=0, tot=0),
+    (str="1e400000", x=+Inf, code=(OK | EOF | SPECIAL_VALUE), len=0, tot=0),
+    (str="-1e400000", x=-Inf, code=(OK | EOF | SPECIAL_VALUE), len=0, tot=0),
 
     # denormalized
     (str="1e-305", x=1e-305, code=(OK | EOF), len=0, tot=0),
@@ -131,10 +131,10 @@ testcases = [
 
     # try to overflow exponent
     (str="1e-4294967296", x=0.0, code=(OK | EOF), len=0, tot=0),
-    (str="1e+4294967296", x=+Inf, code=(OK | EOF), len=0, tot=0),
+    (str="1e+4294967296", x=+Inf, code=(OK | EOF | SPECIAL_VALUE), len=0, tot=0),
     (str="1e-18446744073709551616", x=0.0, code=(OK | EOF), len=0, tot=0),
 
-    (str="1e+18446744073709551616", x=+Inf, code=(OK | EOF), len=0, tot=0),
+    (str="1e+18446744073709551616", x=+Inf, code=(OK | EOF | SPECIAL_VALUE), len=0, tot=0),
 
     # Parse errors
     # (str="1e", x=missing, code=(INVALID | EOF), len=0, tot=0),

@@ -130,13 +130,13 @@ maxdigits(d::Dates.DatePart) = d.fixed ? d.width : typemax(Int64)
 
 for c in "yYmdHIMS"
     @eval begin
-        @inline function tryparsenext(d::Dates.DatePart{$c}, source, pos, len, b, code)
+        function tryparsenext(d::Dates.DatePart{$c}, source, pos, len, b, code)
             return tryparsenext_base10(source, pos, len, b, code, maxdigits(d))
         end
     end
 end
 
-@inline function tryparsenext_base10(source, pos, len, b, code, maxdigits)
+function tryparsenext_base10(source, pos, len, b, code, maxdigits)
     x::Int64 = 0
     b -= UInt8('0')
     if b > 0x09
@@ -256,7 +256,7 @@ for (tok, fn) in zip("uUeE", Any[Dates.monthabbr_to_value, Dates.monthname_to_va
     end
 end
 
-@inline function tryparsenext(d::Dates.DatePart{'s'}, source, pos, len, b, code, options)
+function tryparsenext(d::Dates.DatePart{'s'}, source, pos, len, b, code, options)
     ms0, newpos, b, code = tryparsenext_base10(source, pos, len, b, code, maxdigits(d))
     invalid(code) && return ms0, newpos, b, code
     rounding = options.rounding
@@ -280,7 +280,7 @@ end
     return ms, newpos, b, code
 end
 
-@inline function tryparsenext(d::Delim{<:AbstractChar}, source, pos, len, b, code)
+function tryparsenext(d::Delim{<:AbstractChar}, source, pos, len, b, code)
     u = bswap(reinterpret(UInt32, d.d))
     while true
         if b != (u & 0x000000ff)
@@ -340,7 +340,7 @@ function tryparsenext(tok, source, pos, len, b, code)::Tuple{Any, Int, UInt8, Re
     return val, pos, b, code
 end
 
-@inline function typeparser(::AbstractConf{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, b, code, pl, options) where {T <: Dates.TimeType}
+function typeparser(::AbstractConf{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, b, code, pl, options) where {T <: Dates.TimeType}
     fmt = options.dateformat
     df = fmt === nothing ? default_format(T) : fmt
     tokens = df.tokens
