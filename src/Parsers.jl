@@ -496,7 +496,8 @@ end
 
 if isdefined(Base, :OncePerTask)
     const _get_bigint = OncePerTask{BigInt}(() -> BigInt(; nbits=256))
-    const _get_bigfloats = OncePerTask{BigFloat}(BigFloat)
+    # Note: This uses `() -> BigFloat()` instead of just `BigFloat` for --trim compatibility
+    const _get_bigfloats = OncePerTask{BigFloat}(() -> BigFloat())
 else
     # N.B This code is not thread safe in the presence of thread migration
     const BIGINT = BigInt[]
