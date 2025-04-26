@@ -57,6 +57,13 @@ function typeparser(::AbstractConf{BigFloat}, source, pos, len, b, code, pl, opt
         readbytes!(source, str, vlen)
         fastseek!(source, _pos) # reset IO to earlier position
     end
+    @static if v"1.11-" <= VERSION < v"1.12-"
+    	str = (str isa Vector{UInt8} || str isa Memory{UInt8}) ? copy(str) : str
+    else 
+    	str = (str isa Vector{UInt8}) ? copy(str) : str
+    end
+
+    str = Base.cconvert(Cstring, String(str))
     GC.@preserve str begin
         ptr = pointer(str, strpos)
         endptr = Ref{Ptr{UInt8}}()
