@@ -4,7 +4,7 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
 # if we eventually support non-base 10
 # overflowval(::Type{T}, base) where {T <: Integer} = div(typemax(T) - base + 1, base)
 
-function typeparser(::AbstractConf{T}, source, pos, len, b, code, pl, opts) where {T <: Integer}
+@inline function typeparser(::AbstractConf{T}, source, pos, len, b, code, pl, opts) where {T <: Integer}
     x = zero(T)
     neg = false
     has_groupmark = _has_groupmark(opts, code)
@@ -98,13 +98,13 @@ function typeparser(::AbstractConf{T}, source, pos, len, b, code, pl, opts) wher
     return pos, code, PosLen(pl.pos, pos - pl.pos), x
 end
 
-function typeparser(::AbstractConf{Number}, source, pos, len, b, code, pl, opts)
+@inline function typeparser(::AbstractConf{Number}, source, pos, len, b, code, pl, opts)
     x = Ref{Number}()
     pos, code = parsenumber(source, pos, len, b, y -> (x[] = y), opts)
     return pos, code, PosLen(pl.pos, pos - pl.pos), isdefined(x, :x) ? x[] : (0::Number)
 end
 
-function parsenumber(source, pos, len, b, f::F, opts=OPTIONS) where {F}
+@inline function parsenumber(source, pos, len, b, f::F, opts=OPTIONS) where {F}
     startpos = pos
     code = startcode = SUCCESS
     # begin parsing
