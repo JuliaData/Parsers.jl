@@ -48,11 +48,24 @@ function _copy_nulterminated(source::AbstractVector{UInt8}, pos, len)
     return buf
 end
 
+@inline _contiguous(source) = false
+@inline _contiguous(source::StridedVector{UInt8}) = stride(source, 1) == 1
+@inline _writable_contiguous(source) = false
+@inline _writable_contiguous(source::Vector{UInt8}) = true
+@inline _writable_contiguous(source::SubArray{UInt8,1}) =
+    parent(source) isa Vector{UInt8} && _contiguous(source)
+
 @inline _nulterminated(source, len) = false
 @inline _nulterminated(source::String, len) = len == sizeof(source)
 @inline _nulterminated(source::Base.CodeUnits{UInt8,String}, len) = len == length(source)
 @inline function _nulterminated(source::AbstractVector{UInt8}, len)
-    return len < length(source) && @inbounds(source[len + 1]) == 0x00
+    return _contiguous(source) && len < length(source) && @inbounds(source[len + 1]) == 0x00
+end
+
+@inline function _ends_on_delimiter(source::AbstractVector{UInt8}, len, options)
+    0 < len <= length(source) || return false
+    @inbounds b = source[len]
+    return b == UInt8('\n') || b == UInt8('\r') || (options.flags.checkdelim && options.delim == b)
 end
 
 function _bigfloat_buffer(source::AbstractVector{UInt8}, pos, len, b, code, options)
@@ -95,9 +108,13 @@ function typeparser(::AbstractConf{BigFloat}, source, pos, len, b, code, pl, opt
         GC.@preserve source begin
             return _finish_bigfloat(source, pos, code, pl, z, pointer(source, pos), base, rounding)
         end
-    elseif source isa Vector{UInt8}
-        _, _, strpl, _ = typeparser(DefaultConf{String}(), source, pos, len, b, code, poslen(pos, 0), options)
-        nulpos = strpl.pos + strpl.len
+    elseif _writable_contiguous(source)
+        nulpos = if _ends_on_delimiter(source, len, options)
+            len
+        else
+            _, _, strpl, _ = typeparser(DefaultConf{String}(), source, pos, len, b, code, poslen(pos, 0), options)
+            strpl.pos + strpl.len
+        end
         if nulpos <= length(source)
             @inbounds byte = source[nulpos]
             @inbounds source[nulpos] = 0x00
@@ -109,6 +126,7 @@ function typeparser(::AbstractConf{BigFloat}, source, pos, len, b, code, pl, opt
                 @inbounds source[nulpos] = byte
             end
         else
+            _, _, strpl, _ = typeparser(DefaultConf{String}(), source, pos, len, b, code, poslen(pos, 0), options)
             buf = _copy_nulterminated(source, strpl.pos, strpl.len)
             GC.@preserve buf begin
                 return _finish_bigfloat(source, pos, code, pl, z, pointer(buf), base, rounding)

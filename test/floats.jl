@@ -488,6 +488,19 @@ end
     @test Parsers.parse(BigFloat, Vector(codeunits("12")), Parsers.Options(), 1, 1) == BigFloat(1)
     @test Parsers.parse(BigFloat, codeunits("12"), Parsers.Options(), 1, 1) == BigFloat(1)
 
+    bytes = Vector(codeunits("xx123,yy"))
+    res = Parsers.xparse(BigFloat, @view(bytes[3:6]), 1, 4)
+    @test res.val == BigFloat(123)
+    @test res.code == (OK | DELIMITED)
+    @test res.tlen == 4
+    @test String(bytes) == "xx123,yy"
+
+    bytes = Vector(codeunits("1x2"))
+    res = Parsers.xparse(BigFloat, @view(bytes[1:2:3]), 1, 2)
+    @test res.val == BigFloat(12)
+    @test res.code == OK
+    @test res.tlen == 2
+
     res = Parsers.xparse(BigFloat, IOBuffer("1,"), 1, 2)
     @test res.val == BigFloat(1)
     @test res.code == (OK | DELIMITED)
