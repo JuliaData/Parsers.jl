@@ -148,7 +148,7 @@ end
 
 @noinline notsupported() = throw(ArgumentError("Regex matching not supported on this input type"))
 
-function checktoken(source, pos, len, b, token::Token)
+@inline function checktoken(source, pos, len, b, token::Token)
     tok = token.token
     if tok isa UInt8
         check = tok == b
@@ -172,13 +172,13 @@ function checktoken(source, pos, len, b, token::Token)
     end
 end
 
-function checktoken(source, pos, len, b, tok::UInt8)
+@inline function checktoken(source, pos, len, b, tok::UInt8)
     check = tok == b
     check && incr!(source)
     return check, pos + check
 end
 
-function checktoken(source::AbstractVector{UInt8}, pos, len, b, tok::RegexAndMatchData)
+@inline function checktoken(source::AbstractVector{UInt8}, pos, len, b, tok::RegexAndMatchData)
     rc = ccall((:pcre2_match_8, Base.PCRE.PCRE_LIB), Cint,
         (Ptr{Cvoid}, Ptr{UInt8}, Csize_t, Csize_t, UInt32, Ptr{Cvoid}, Ptr{Cvoid}),
         tok.re.regex, source, len, pos - 1, tok.re.match_options, tok.data, Base.PCRE.get_local_match_context())
@@ -187,13 +187,13 @@ function checktoken(source::AbstractVector{UInt8}, pos, len, b, tok::RegexAndMat
     return check, pos + (!check ? 0 : Base.PCRE.substring_length_bynumber(tok.data, 0))
 end
 
-function checktoken(source::AbstractVector{UInt8}, pos, len, b, tok::String)
+@inline function checktoken(source::AbstractVector{UInt8}, pos, len, b, tok::String)
     sz = sizeof(tok)
     check = (pos + sz - 1) <= len && memcmp(pointer(source, pos), pointer(tok), sz)
     return check, pos + (check * sz)
 end
 
-function checktoken(source::IO, pos, len, b, tok::String)
+@inline function checktoken(source::IO, pos, len, b, tok::String)
     bytes = codeunits(tok)
     startpos = pos
     blen = length(bytes)
@@ -450,7 +450,7 @@ _len_bits(::Union{PosLen31,Type{PosLen31}}) = Base.bitcast(Int64, 0x000000007fff
     throw(ArgumentError("length argument to $T ($len) is too large; max length allowed is $(_max_len(T))"))
 
 for T in (:PosLen, :PosLen31)
-    @eval function $T(pos::Integer, len::Integer, ismissing=false, escaped=false)
+    @eval @inline function $T(pos::Integer, len::Integer, ismissing=false, escaped=false)
         pos > _max_pos($T) && postoolarge($T, pos)
         len > _max_len($T) && lentoolarge($T, len)
         @assert pos >= 0
@@ -500,7 +500,7 @@ _unsafe_string(p, len) = ccall(:jl_pchar_to_string, Ref{String}, (Ptr{UInt8}, In
 getstring(source::Union{IO, AbstractVector{UInt8}}, x::Union{PosLen,PosLen31}, e::Token) =
     getstring(source, x, e.token::UInt8)
 
-function getstring(source::Union{IO, AbstractVector{UInt8}}, x::Union{PosLen,PosLen31}, e::UInt8)
+@inline function getstring(source::Union{IO, AbstractVector{UInt8}}, x::Union{PosLen,PosLen31}, e::UInt8)
     x.escapedvalue && return unescape(source, x, e)
     if source isa AbstractVector{UInt8}
         return _unsafe_string(pointer(source, x.pos), x.len)

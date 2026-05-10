@@ -439,10 +439,10 @@ end
 _xparse2(conf::AbstractConf{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, opts::Options=OPTIONS, ::Type{S}=returntype(T)) where {T, S} =
     Result(whitespace(false, false, false, true)(typeparser(opts)))(conf, source, pos, len, S)
 
-xparse2(::Type{T}, source::SourceType, pos, len, options=OPTIONS, ::Type{S}=returntype(T)) where {T, S} =
+@inline xparse2(::Type{T}, source::SourceType, pos, len, options=OPTIONS, ::Type{S}=returntype(T)) where {T, S} =
     result(T, xparse2(conf(T, options), source, pos, len, options, S))
 
-function xparse2(conf::AbstractConf{T}, source::SourceType, pos, len, options=OPTIONS, ::Type{S}=returntype(T)) where {T, S}
+@inline function xparse2(conf::AbstractConf{T}, source::SourceType, pos, len, options=OPTIONS, ::Type{S}=returntype(T)) where {T, S}
     buf = source isa AbstractString ? codeunits(source) : source
     if T === Number || supportedtype(T)
         return _xparse2(conf, buf, pos, len, options, S)
@@ -483,7 +483,7 @@ function checkdelim!(source::AbstractVector{UInt8}, pos, len, options::Options)
     return pos
 end
 
-function _has_groupmark(opts::Options, code::ReturnCode)
+@inline function _has_groupmark(opts::Options, code::ReturnCode)
     if opts.groupmark !== nothing
         isquoted = (code & QUOTED) != 0
         if isquoted || (opts.groupmark != opts.delim)
