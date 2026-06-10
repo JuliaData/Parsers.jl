@@ -312,7 +312,7 @@ function parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, 
         while true
             if b <= 0x09
                 if overflows(IntType) && digits > overflowval(IntType)
-                    return _parsedigits(conf, source, pos, len, b + UInt8('0'), code, options, Base.inferencebarrier(_widen(digits)), neg, startpos, overflow_invalid, ndigits, f)
+                    return _parsedigits(conf, source, pos, len, b + UInt8('0'), code, options, Base.inferencebarrier(_widen(digits)), neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
                 elseif ndigits > maxdigits(T)
                     # if input is way too big, just bail
                     fastseek!(source, startpos - 1)
@@ -392,8 +392,11 @@ function parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, 
     # now we parse any digits following decimal point (if any); start `frac` at UInt64(0)
     # `digits` still receives any fractional digits, `frac` just keeps track of how many digits
     # were parsed to combine with any "e123" exponent numbers to determine final exponent value
-    (overflows(IntType) && digits > overflowval(IntType)) && (digits = Base.inferencebarrier(_widen(digits)))
-    x, code, pos = parsefrac(conf, source, pos, len, b, code, options, digits, neg, startpos, UInt64(0), overflow_invalid, ndigits, f)
+    if overflows(IntType) && digits > overflowval(IntType)
+        x, code, pos = _parsefrac(conf, source, pos, len, b, code, options, Base.inferencebarrier(_widen(digits)), neg, startpos, UInt64(0), overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
+    else
+        x, code, pos = parsefrac(conf, source, pos, len, b, code, options, digits, neg, startpos, UInt64(0), overflow_invalid, ndigits, f)
+    end
 
 @label done
     return x, code, pos
@@ -434,7 +437,7 @@ function parsefrac(conf::AbstractConf{T}, source, pos, len, b, code, options, di
             b = peekbyte(source, pos) - UInt8('0')
             b > 0x09 && break
             if overflows(IntType) && digits > overflowval(IntType)
-                return _parsefrac(conf, source, pos, len, b + UInt8('0'), code, options, Base.inferencebarrier(_widen(digits)), neg, startpos, frac, overflow_invalid, ndigits, f)
+                return _parsefrac(conf, source, pos, len, b + UInt8('0'), code, options, Base.inferencebarrier(_widen(digits)), neg, startpos, frac, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
             end
         end
         b += UInt8('0')
@@ -535,7 +538,7 @@ function parseexp(conf::AbstractConf{T}, source, pos, len, b, code, options, dig
             @goto done
         end
         if overflows(ExpType) && exp > overflowval(ExpType)
-            return _parseexp(conf, source, pos, len, b, code, options, digits, neg, startpos, frac, Base.inferencebarrier(_widen(exp)), negexp, FT, overflow_invalid, ndigits, f)
+            return _parseexp(conf, source, pos, len, b, code, options, digits, neg, startpos, frac, Base.inferencebarrier(_widen(exp)), negexp, FT, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
         end
     end
 @label done
