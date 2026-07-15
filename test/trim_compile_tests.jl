@@ -1,7 +1,8 @@
 using Test
 
 const _TRIM_SAFE_ERROR_BUDGET = 0
-const _TRIM_SUPPORTED = VERSION >= v"1.12.0-rc1"
+const _TRIM_JULIA_SUPPORTED = VERSION >= v"1.12.0-rc1"
+const _TRIM_HOST_SUPPORTED = Sys.WORD_SIZE == 64
 const _TRIM_PRE_RELEASE = !isempty(VERSION.prerelease)
 const _TRIM_COMPILE_TIMEOUT_S = Sys.iswindows() ? 600.0 : 120.0
 const _TRIM_EXECUTABLE_TIMEOUT_S = Sys.iswindows() ? 120.0 : 30.0
@@ -165,8 +166,11 @@ function _run_trim_case(project_path::String, script_file::String, output_name::
 end
 
 @testset "Trim compile" begin
-    if !_TRIM_SUPPORTED
+    if !_TRIM_JULIA_SUPPORTED
         println("[trim] skip Julia < 1.12: JuliaC trim compilation is unavailable")
+        @test true
+    elseif !_TRIM_HOST_SUPPORTED
+        println("[trim] skip 32-bit host: JuliaC requires a compatible 32-bit C toolchain")
         @test true
     elseif _TRIM_PRE_RELEASE
         println("[trim] skip prerelease Julia: trim verifier behavior is not stable yet")
