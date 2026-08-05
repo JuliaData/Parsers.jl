@@ -101,7 +101,7 @@ end
   * `closequotechar='"'`: the ascii character that signals the end of a quoted field
   * `escapechar='"'`: an ascii character used to "escape" a `closequotechar` within a quoted field
   * `delim=','`: if `nothing`, no delimiter will be checked for; if a `Char` or `String`, a delimiter will be checked for directly after parsing a value or `closequotechar`; a newline (`\\n`), return (`\\r`), or CRLF (`"\\r\\n"`) are always considered "delimiters", in addition to EOF
-  * `decimal='.'`: an ascii character to be used when parsing float values that separates a decimal value
+  * `decimal='.'`: an ascii character to be used when parsing float values that separates a decimal value. When `decimal` matches `delim`, the character is treated as a delimiter outside quoted values and as a decimal inside quoted values.
   * `trues=nothing`: if `nothing`, `Bool` parsing will only check for the string `true` or an `Integer` value of `1` as valid values for `true`; as a `Vector{String}`, each string value will be checked to indicate a valid `true` value
   * `falses=nothing`: if `nothing`, `Bool` parsing will only check for the string `false` or an `Integer` value of `0` as valid values for `false`; as a `Vector{String}`, each string value will be checked to indicate a valid `false` value
   * `dateformat=nothing`: if `nothing`, `Date`, `DateTime`, and `Time` parsing will use a default `Dates.DateFormat` object while parsing; a `String` or `Dates.DateFormat` object can be provided for custom format parsing
@@ -437,7 +437,7 @@ end
 
 # condensed version of xparse that doesn't worry about quoting or delimiters; called from Parsers.parse/Parsers.tryparse
 _xparse2(conf::AbstractConf{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, opts::Options=OPTIONS, ::Type{S}=returntype(T)) where {T, S} =
-    Result(whitespace(false, false, false, true)(typeparser(opts)))(conf, source, pos, len, S)
+    Result(whitespace(false, false, false, true)(typeparser(opts, false)))(conf, source, pos, len, S)
 
 xparse2(::Type{T}, source::SourceType, pos, len, options=OPTIONS, ::Type{S}=returntype(T)) where {T, S} =
     result(T, xparse2(conf(T, options), source, pos, len, options, S))
@@ -491,6 +491,13 @@ function _has_groupmark(opts::Options, code::ReturnCode)
         end
     end
     return false
+end
+
+@inline function _effective_decimal(opts::Options, code::ReturnCode, checkdelim::Bool)
+    if checkdelim && !quoted(code) && opts.decimal == opts.delim
+        return 0xff
+    end
+    return opts.decimal
 end
 
 

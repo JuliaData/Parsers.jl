@@ -376,12 +376,17 @@ function delimiter(checkdelim, delim, ignorerepeated, cmt, ignoreemptylines, str
     end
 end
 
-function typeparser(opts::Options)
+typeparser(opts::Options) = typeparser(opts, opts.flags.checkdelim)
+
+function typeparser(opts::Options, checkdelim::Bool)
     function(conf::AbstractConf{T}, source, pos, len, b, code, pl) where {T}
         Base.@_inline_meta
-        return typeparser(conf, source, pos, len, b, code, pl, opts)
+        return typeparser(conf, source, pos, len, b, code, pl, opts, checkdelim)
     end
 end
+
+typeparser(conf, source, pos, len, b, code, pl, opts, ::Bool) =
+    typeparser(conf, source, pos, len, b, code, pl, opts)
 
 # backwards compat
 function typeparser(conf, source, pos, len, b, code, opts::Options)
