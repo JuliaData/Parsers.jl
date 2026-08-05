@@ -98,15 +98,23 @@ overflowval(::Type{T}) where {T <: Integer} = div(typemax(T) - T(9), T(10))
     return pos, code, PosLen(pl.pos, pos - pl.pos), x
 end
 
-function typeparser(::AbstractConf{Number}, source, pos, len, b, code, pl, opts)
+function typeparser(conf::AbstractConf{Number}, source, pos, len, b, code, pl, opts)
+    return typeparser(conf, source, pos, len, b, code, pl, opts, opts.flags.checkdelim)
+end
+
+function typeparser(::AbstractConf{Number}, source, pos, len, b, code, pl, opts, checkdelim::Bool)
     x = Ref{Number}()
-    pos, code = parsenumber(source, pos, len, b, y -> (x[] = y), opts)
+    pos, code = parsenumber(source, pos, len, b, code, y -> (x[] = y), opts, checkdelim)
     return pos, code, PosLen(pl.pos, pos - pl.pos), isdefined(x, :x) ? x[] : (0::Number)
 end
 
 function parsenumber(source, pos, len, b, f::F, opts=OPTIONS) where {F}
+    return parsenumber(source, pos, len, b, SUCCESS, f, opts, opts.flags.checkdelim)
+end
+
+function parsenumber(source, pos, len, b, code, f::F, opts, checkdelim::Bool) where {F}
     startpos = pos
-    code = startcode = SUCCESS
+    startcode = code
     # begin parsing
     neg = b == UInt8('-')
     if neg || b == UInt8('+')
@@ -119,11 +127,12 @@ function parsenumber(source, pos, len, b, f::F, opts=OPTIONS) where {F}
     end
     b = peekbyte(source, pos)
     # parse rest of number
-    _, code, pos = parsedigits(DefaultConf{Number}(), source, pos, len, b, code, OPTIONS, Int64(0), neg, startpos, true, 0, f)
+    decimal = _effective_decimal(opts, code, checkdelim)
+    _, code, pos = parsedigits(DefaultConf{Number}(), source, pos, len, b, code, opts, decimal, Int64(0), neg, startpos, true, 0, f)
     if invalid(code)
         # by default, parsedigits only has up to Float64 precision; if we overflow
         # let's try BigFloat
-        pos, code, _, x = typeparser(DefaultConf{BigFloat}(), source, startpos, len, b, startcode, poslen(pos, 0), opts)
+        pos, code, _, x = typeparser(DefaultConf{BigFloat}(), source, startpos, len, b, startcode, poslen(pos, 0), opts, checkdelim)
         if ok(code)
             f(x)
         end

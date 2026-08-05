@@ -479,6 +479,57 @@ end
     end
 end
 
+@testset "decimal matches delimiter" begin
+    source_fns = (
+        identity,
+        s -> SubString("_" * s, 2),
+        s -> collect(codeunits(s)),
+        s -> view(collect(codeunits(s)), :),
+        IOBuffer,
+    )
+
+    for T in (Float16, Float32, Float64, BigFloat, Number)
+        expected_decimal = T === BigFloat ? BigFloat("1.2") : T === Number ? 1.2 : T(1.2)
+        for decimal in (',', '.')
+            unquoted = "1$(decimal)2$(decimal)3"
+            quoted = "\"1$(decimal)2\"$(decimal)3"
+            for make_source in source_fns
+                res = Parsers.xparse(T, make_source(unquoted); decimal=decimal, delim=decimal)
+                @test Parsers.ok(res.code)
+                @test Parsers.delimited(res.code)
+                @test !Parsers.quoted(res.code)
+                @test res.tlen == 2
+                @test res.val == one(T)
+
+                res = Parsers.xparse(T, make_source(quoted); decimal=decimal, delim=decimal)
+                @test Parsers.ok(res.code)
+                @test Parsers.delimited(res.code)
+                @test Parsers.quoted(res.code)
+                @test res.tlen == 6
+                @test res.val == expected_decimal
+            end
+        end
+
+        for make_source in source_fns
+            res = Parsers.xparse(T, make_source("1,2;3"); decimal=',', delim=';')
+            @test Parsers.ok(res.code)
+            @test Parsers.delimited(res.code)
+            @test res.tlen == 4
+            @test res.val == expected_decimal
+        end
+
+        options = Parsers.Options(decimal=',')
+        @test Parsers.parse(T, "1,2", options) == expected_decimal
+        @test Parsers.parse(T, collect(codeunits("1,2")), options) == expected_decimal
+        @test Parsers.parse(T, IOBuffer("1,2"), options) == expected_decimal
+    end
+
+    bytes = collect(codeunits("1,2;3"))
+    Parsers.xparse(BigFloat, bytes; decimal=',', delim=';')
+    @test bytes == codeunits("1,2;3")
+    @test Parsers.parse(BigFloat, collect(codeunits("1.")), Parsers.Options(delim='.')) == BigFloat(1)
+end
+
 @testset "BigFloats" begin
     res = Parsers.xparse(BigFloat, Vector(codeunits("1")), 1, 1)
     @test res.val == BigFloat(1)

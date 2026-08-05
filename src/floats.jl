@@ -62,28 +62,44 @@ end
     return _contiguous(source) && len < length(source) && @inbounds(source[len + 1]) == 0x00
 end
 
-@inline function _ends_on_delimiter(source::AbstractVector{UInt8}, len, options)
+@inline function _ends_on_delimiter(source::AbstractVector{UInt8}, len, options, checkdelim)
     0 < len <= length(source) || return false
     @inbounds b = source[len]
-    return b == UInt8('\n') || b == UInt8('\r') || (options.flags.checkdelim && options.delim == b)
+    return b == UInt8('\n') || b == UInt8('\r') || (checkdelim && options.delim == b)
 end
 
-function _bigfloat_buffer(source::AbstractVector{UInt8}, pos, len, b, code, options)
-    _, _, pl, _ = typeparser(DefaultConf{String}(), source, pos, len, b, code, poslen(pos, 0), options)
+function _bigfloat_poslen(source, pos, len, b, code, options, checkdelim)
+    if quoted(code) || checkdelim
+        _, _, pl, _ = typeparser(DefaultConf{String}(), source, pos, len, b, code, poslen(pos, 0), options)
+    else
+        _, _, pl, _ = findeof(source, pos, len, b, code, poslen(pos, 0), options)
+    end
+    return pl
+end
+
+function _bigfloat_buffer(source::AbstractVector{UInt8}, pos, len, b, code, options, checkdelim)
+    pl = _bigfloat_poslen(source, pos, len, b, code, options, checkdelim)
     return _copy_nulterminated(source, pl.pos, pl.len)
 end
 
-_bigfloat_buffer(source::AbstractString, pos, len, b, code, options) =
-    _bigfloat_buffer(codeunits(source), pos, len, b, code, options)
+_bigfloat_buffer(source::AbstractString, pos, len, b, code, options, checkdelim) =
+    _bigfloat_buffer(codeunits(source), pos, len, b, code, options, checkdelim)
 
-function _bigfloat_buffer(source::IO, pos, len, b, code, options)
-    _, _, pl, _ = typeparser(DefaultConf{String}(), source, pos, len, b, code, poslen(pos, 0), options)
+function _bigfloat_buffer(source::IO, pos, len, b, code, options, checkdelim)
+    pl = _bigfloat_poslen(source, pos, len, b, code, options, checkdelim)
     vlen = max(0, pl.len)
     buf = Vector{UInt8}(undef, vlen + 1)
     fastseek!(source, pl.pos - 1)
     readbytes!(source, buf, vlen)
     @inbounds buf[vlen + 1] = 0x00
     fastseek!(source, pos - 1)
+    return buf
+end
+
+function _normalize_decimal!(buf, decimal)
+    @inbounds for i = 1:(length(buf) - 1)
+        buf[i] == decimal && (buf[i] = UInt8('.'))
+    end
     return buf
 end
 
@@ -100,19 +116,30 @@ end
     return pos, code, PosLen(pl.pos, max(0, pos - pl.pos)), z
 end
 
-function typeparser(::AbstractConf{BigFloat}, source, pos, len, b, code, pl, options)
+function typeparser(conf::AbstractConf{BigFloat}, source, pos, len, b, code, pl, options)
+    return typeparser(conf, source, pos, len, b, code, pl, options, options.flags.checkdelim)
+end
+
+function typeparser(::AbstractConf{BigFloat}, source, pos, len, b, code, pl, options, checkdelim::Bool)
     base = 0
     rounding = Base.MPFR.ROUNDING_MODE[]
     z = BigFloat(precision=Base.MPFR.DEFAULT_PRECISION[])
-    if _nulterminated(source, len)
+    decimal = _effective_decimal(options, code, checkdelim)
+    if decimal != UInt8('.')
+        buf = _bigfloat_buffer(source, pos, len, b, code, options, checkdelim)
+        decimal != 0xff && _normalize_decimal!(buf, decimal)
+        GC.@preserve buf begin
+            return _finish_bigfloat(source, pos, code, pl, z, pointer(buf), base, rounding)
+        end
+    elseif _nulterminated(source, len)
         GC.@preserve source begin
             return _finish_bigfloat(source, pos, code, pl, z, pointer(source, pos), base, rounding)
         end
     elseif _writable_contiguous(source)
-        nulpos = if _ends_on_delimiter(source, len, options)
+        nulpos = if _ends_on_delimiter(source, len, options, checkdelim)
             len
         else
-            _, _, strpl, _ = typeparser(DefaultConf{String}(), source, pos, len, b, code, poslen(pos, 0), options)
+            strpl = _bigfloat_poslen(source, pos, len, b, code, options, checkdelim)
             strpl.pos + strpl.len
         end
         if nulpos <= length(source)
@@ -126,14 +153,14 @@ function typeparser(::AbstractConf{BigFloat}, source, pos, len, b, code, pl, opt
                 @inbounds source[nulpos] = byte
             end
         else
-            _, _, strpl, _ = typeparser(DefaultConf{String}(), source, pos, len, b, code, poslen(pos, 0), options)
+            strpl = _bigfloat_poslen(source, pos, len, b, code, options, checkdelim)
             buf = _copy_nulterminated(source, strpl.pos, strpl.len)
             GC.@preserve buf begin
                 return _finish_bigfloat(source, pos, code, pl, z, pointer(buf), base, rounding)
             end
         end
     else
-        buf = _bigfloat_buffer(source, pos, len, b, code, options)
+        buf = _bigfloat_buffer(source, pos, len, b, code, options, checkdelim)
         GC.@preserve buf begin
             return _finish_bigfloat(source, pos, code, pl, z, pointer(buf), base, rounding)
         end
@@ -141,9 +168,14 @@ function typeparser(::AbstractConf{BigFloat}, source, pos, len, b, code, pl, opt
 end
 
 @inline function typeparser(conf::AbstractConf{T}, source, pos, len, b, code, pl, options) where {T <: SupportedFloats}
+    return typeparser(conf, source, pos, len, b, code, pl, options, options.flags.checkdelim)
+end
+
+@inline function typeparser(conf::AbstractConf{T}, source, pos, len, b, code, pl, options, checkdelim::Bool) where {T <: SupportedFloats}
     # keep track of starting pos in case of invalid, we can rewind to start of parsing
     startpos = pos
     x = zero(T)
+    decimal = _effective_decimal(options, code, checkdelim)
     neg = b == UInt8('-')
     if neg || b == UInt8('+')
         pos += 1
@@ -155,7 +187,7 @@ end
         @goto done
     end
     b = peekbyte(source, pos)
-    if b != options.decimal && (b - UInt8('0')) > 0x09
+    if b != decimal && (b - UInt8('0')) > 0x09
         # character isn't a digit or decimal point, check for special values, otherwise INVALID
         if b == UInt8('n') || b == UInt8('N')
             pos += 1
@@ -267,7 +299,7 @@ end
     end
 
     # start parsing digits or decimal point; we start digits as UInt64(0) and can _widen type if needed
-    x, code, pos = parsedigits(conf, source, pos, len, b, code, options, UInt64(0), neg, startpos)
+    x, code, pos = parsedigits(conf, source, pos, len, b, code, options, decimal, UInt64(0), neg, startpos)
     if !isfinite(x)
         code |= SPECIAL_VALUE
     end
@@ -302,24 +334,24 @@ getx(x, f) = f === nothing ? x : nothing
 # statically compiled (`juliac --trim`) binary the widened instance doesn't exist, so
 # parsing a wide-digit float would fail at runtime. The `@noinline` wrappers keep each
 # ladder step compiling separately, which is what bounds base-case compilation.
-@noinline _parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool, ndigits::Int, f::F) where {T, IntType, F} =
-    parsedigits(conf, source, pos, len, b, code, options, digits, neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
+@noinline _parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, decimal::UInt8, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool, ndigits::Int, f::F) where {T, IntType, F} =
+    parsedigits(conf, source, pos, len, b, code, options, decimal, digits, neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
 
-@inline function parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool=false, ndigits::Int=0, f::F=nothing) where {T, IntType, F}
+@inline function parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, decimal::UInt8, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool=false, ndigits::Int=0, f::F=nothing) where {T, IntType, F}
     x = zero(T)
     anydigits = false
     has_groupmark = _has_groupmark(options, code)
     groupmark0 = something(options.groupmark, 0xff) - UInt8('0')
 
     # we already previously checked if `b` was decimal or a digit, so don't need to check explicitly again
-    if b != options.decimal
+    if b != decimal
         b -= UInt8('0')
         prev_b0 = b
         anydigits = b <= 0x09
         while true
             if b <= 0x09
                 if overflows(IntType) && digits > overflowval(IntType)
-                    return _parsedigits(conf, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
+                    return _parsedigits(conf, source, pos, len, b + UInt8('0'), code, options, decimal, _widen(digits), neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
                 elseif ndigits > maxdigits(T)
                     # if input is way too big, just bail
                     fastseek!(source, startpos - 1)
@@ -361,7 +393,7 @@ getx(x, f) = f === nothing ? x : nothing
         # b wasn't a digit, so add back '0' to recover original Char value
         b += UInt8('0')
     end
-    if b == options.decimal
+    if b == decimal
         pos += 1
         incr!(source)
         if eof(source, pos, len)
