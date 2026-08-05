@@ -492,6 +492,10 @@ When calling `Parsers.xparse` with a `String` type argument, a `Parsers.Result{P
 
 If the actual parsed `String` _is_ needed, however, you can pass your source and the `res.val::PosLen` to `Parsers.getstring`
 to get the actual parsed `String` value.
+
+`e` is the escape character byte used by the matching `Parsers.xparse` call. Pass the same value as its `escapechar`
+option, or `options.e` when an explicit `Parsers.Options` object was used. `e` is ignored when `poslen.escapedvalue`
+is `false`, so a byte that does not occur in the value, such as `0x00`, is also valid when no escape characters were parsed.
 """
 function getstring end
 
