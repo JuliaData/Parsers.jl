@@ -128,7 +128,7 @@ function parsenumber(source, pos, len, b, code, f::F, opts, checkdelim::Bool) wh
     b = peekbyte(source, pos)
     # parse rest of number
     decimal = _effective_decimal(opts, code, checkdelim)
-    _, code, pos = parsedigits(DefaultConf{Number}(), source, pos, len, b, code, opts, decimal, Int64(0), neg, startpos, true, 0, f)
+    _, code, pos = parsedigits_context(DefaultConf{Number}(), source, pos, len, b, code, opts, decimal, Int64(0), neg, startpos, true, 0, f)
     if invalid(code)
         # by default, parsedigits only has up to Float64 precision; if we overflow
         # let's try BigFloat

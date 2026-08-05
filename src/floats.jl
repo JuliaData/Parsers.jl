@@ -299,7 +299,7 @@ end
     end
 
     # start parsing digits or decimal point; we start digits as UInt64(0) and can _widen type if needed
-    x, code, pos = parsedigits(conf, source, pos, len, b, code, options, decimal, UInt64(0), neg, startpos)
+    x, code, pos = parsedigits_context(conf, source, pos, len, b, code, options, decimal, UInt64(0), neg, startpos)
     if !isfinite(x)
         code |= SPECIAL_VALUE
     end
@@ -334,10 +334,18 @@ getx(x, f) = f === nothing ? x : nothing
 # statically compiled (`juliac --trim`) binary the widened instance doesn't exist, so
 # parsing a wide-digit float would fail at runtime. The `@noinline` wrappers keep each
 # ladder step compiling separately, which is what bounds base-case compilation.
-@noinline _parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, decimal::UInt8, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool, ndigits::Int, f::F) where {T, IntType, F} =
-    parsedigits(conf, source, pos, len, b, code, options, decimal, digits, neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
+@noinline _parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool, ndigits::Int, f::F) where {T, IntType, F} =
+    parsedigits(conf, source, pos, len, b, code, options, digits, neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
 
-@inline function parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, decimal::UInt8, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool=false, ndigits::Int=0, f::F=nothing) where {T, IntType, F}
+@noinline _parsedigits_context(conf::AbstractConf{T}, source, pos, len, b, code, options, decimal::UInt8, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool, ndigits::Int, f::F) where {T, IntType, F} =
+    parsedigits_context(conf, source, pos, len, b, code, options, decimal, digits, neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
+
+# Custom AbstractConf implementations use this entry point. Keep its historical
+# signature and decimal behavior while built-in parsers pass explicit context.
+@inline parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool=false, ndigits::Int=0, f::F=nothing) where {T, IntType, F} =
+    parsedigits_context(conf, source, pos, len, b, code, options, options.decimal, digits, neg, startpos, overflow_invalid, ndigits, f)
+
+@inline function parsedigits_context(conf::AbstractConf{T}, source, pos, len, b, code, options, decimal::UInt8, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool=false, ndigits::Int=0, f::F=nothing) where {T, IntType, F}
     x = zero(T)
     anydigits = false
     has_groupmark = _has_groupmark(options, code)
@@ -351,7 +359,7 @@ getx(x, f) = f === nothing ? x : nothing
         while true
             if b <= 0x09
                 if overflows(IntType) && digits > overflowval(IntType)
-                    return _parsedigits(conf, source, pos, len, b + UInt8('0'), code, options, decimal, _widen(digits), neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
+                    return _parsedigits_context(conf, source, pos, len, b + UInt8('0'), code, options, decimal, _widen(digits), neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
                 elseif ndigits > maxdigits(T)
                     # if input is way too big, just bail
                     fastseek!(source, startpos - 1)

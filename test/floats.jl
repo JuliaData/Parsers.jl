@@ -528,6 +528,18 @@ end
     Parsers.xparse(BigFloat, bytes; decimal=',', delim=';')
     @test bytes == codeunits("1,2;3")
     @test Parsers.parse(BigFloat, collect(codeunits("1.")), Parsers.Options(delim='.')) == BigFloat(1)
+
+    # Custom AbstractConf implementations use this historical parsedigits entry point.
+    source = codeunits("1,2")
+    options = Parsers.Options(decimal=',', delim=',')
+    x, code, pos = Parsers.parsedigits(
+        Parsers.DefaultConf{Float64}(), source, 1, length(source), source[1],
+        Parsers.SUCCESS, options, UInt64(0), false, 1, false, 0, nothing,
+    )
+    @test x == 1.2
+    @test Parsers.ok(code)
+    @test Parsers.eof(code)
+    @test pos == 4
 end
 
 @testset "BigFloats" begin
