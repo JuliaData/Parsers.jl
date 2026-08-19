@@ -1,0 +1,41 @@
+name: Documentation preview cleanup
+
+on:
+  pull_request:
+    types:
+      - closed
+
+permissions: {}
+
+concurrency:
+  group: documentation-preview-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Delete closed documentation preview
+    permissions:
+      contents: write # Delete the preview from gh-pages and compact its history.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the documentation branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: gh-pages
+          persist-credentials: false
+      - name: Delete the preview and compact branch history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.number }}
+          PREVIEW_DIR: previews/PR${{ github.event.number }}
+        run: |
+          if [ -d "$PREVIEW_DIR" ]; then
+              gh auth setup-git
+              git config user.name "Documenter.jl"
+              git config user.email "documenter@juliadocs.github.io"
+              git rm -rf "$PREVIEW_DIR"
+              git commit -m "Delete preview for PR $PR_NUMBER"
+              git branch gh-pages-new "$(echo "Compact documentation history" | git commit-tree "HEAD^{tree}")"
+              git push --force origin gh-pages-new:gh-pages
+          fi

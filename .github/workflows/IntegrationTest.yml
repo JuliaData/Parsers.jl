@@ -1,68 +1,80 @@
 name: IntegrationTest
+
 on:
   push:
-    branches: [main, v3]
-    tags: [v*]
+    branches:
+      - main
+      - v3
+    tags:
+      - "v*"
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
-  # Skip intermediate builds: always.
-  # Cancel intermediate builds: only if it is a pull request build.
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    name: ${{ matrix.package.repo }}
-    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.package.repo }} - allow incompatible ${{ matrix.package.allow_incompatible }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        julia-version: [1]
-        os: [ubuntu-latest]
         package:
-          - {user: JuliaData, repo: CSV.jl}
-          - {user: JuliaData, repo: WeakRefStrings.jl}
-          # - {user: JuliaDatabases, repo: MySQL.jl}  # Tests requires a DB.
-          - {user: JuliaIO, repo: JSON.jl}
-          - {user: JuliaStrings, repo: InlineStrings.jl}
-          - {user: nickrobinson251, repo: PowerFlowData.jl}
-          - {user: quinnj, repo: JSON3.jl}
-          - {user: RelationalAI, repo: ChunkedCSV.jl}
-          - {user: cjdoris, repo: ARFFFiles.jl}
-
+          # NanoDates supports Parsers 3. Its test suite must actually run.
+          - {user: JuliaTime, repo: NanoDates.jl, allow_incompatible: false}
+          # These default branches still cap Parsers below 3. A resolver failure
+          # is an expected SemVer guard until each downstream package migrates.
+          - {user: JuliaData, repo: CSV.jl, allow_incompatible: true}
+          - {user: JuliaData, repo: WeakRefStrings.jl, allow_incompatible: true}
+          - {user: JuliaIO, repo: JSON.jl, allow_incompatible: true}
+          - {user: JuliaStrings, repo: InlineStrings.jl, allow_incompatible: true}
+          - {user: nickrobinson251, repo: PowerFlowData.jl, allow_incompatible: true}
+          - {user: quinnj, repo: JSON3.jl, allow_incompatible: true}
+          - {user: RelationalAI, repo: ChunkedCSV.jl, allow_incompatible: true}
+          - {user: cjdoris, repo: ARFFFiles.jl, allow_incompatible: true}
     steps:
-      - uses: actions/checkout@v2
-      - uses: julia-actions/setup-julia@v1
+      - name: Check out Parsers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          version: ${{ matrix.julia-version }}
+          persist-credentials: false
+      - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3.0.2
+        with:
+          version: "1"
           arch: x64
-      - uses: julia-actions/julia-buildpkg@latest
-      - name: Clone Downstream
-        uses: actions/checkout@v2
+      - name: Check out downstream package
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ matrix.package.user }}/${{ matrix.package.repo }}
           path: downstream
-      - name: Load this and run the downstream tests
-        shell: julia --project=downstream {0}
+          persist-credentials: false
+      - name: Test downstream package
+        env:
+          ALLOW_INCOMPATIBLE: ${{ matrix.package.allow_incompatible }}
+          DOWNSTREAM_REPO: ${{ matrix.package.repo }}
+        shell: julia --project=downstream --color=yes {0}
         run: |
           using Pkg
+
+          allow_incompatible = lowercase(ENV["ALLOW_INCOMPATIBLE"]) == "true"
           try
-            # Force downstream tests to use this PR's version of the package.
-            Pkg.develop(PackageSpec(path="."))  # resolver may fail with main deps
-            if "${{ matrix.package.repo }}" == "ARFFFiles.jl"
-              # ARFFFiles still constructs Tables.DictColumnTable from unordered
-              # Dicts, which OrderedCollections 2 rejects. Keep this downstream
-              # compatibility check useful until ARFFFiles migrates those inputs.
-              Pkg.add(PackageSpec(name="OrderedCollections", version="1"))
-            end
-            Pkg.update()
-            Pkg.test()  # resolver may fail with test time deps
+              Pkg.develop(PackageSpec(path=pwd()))
+              if ENV["DOWNSTREAM_REPO"] == "ARFFFiles.jl"
+                  # ARFFFiles constructs Tables.DictColumnTable from unordered
+                  # Dicts. OrderedCollections 2 rejects those inputs.
+                  Pkg.add(PackageSpec(name="OrderedCollections", version="1"))
+              end
+              Pkg.resolve()
+              Pkg.test()
           catch err
-            err isa Pkg.Resolve.ResolverError || rethrow()
-            # If we can't resolve that means this is incompatible by SemVer and this is fine;
-            # it means we marked this as a breaking change, so we don't need to worry about
-            # mistakenly introducing a breaking change, as we have intentionally made one
-            @info "Not compatible with this release. No problem." exception=err
-            exit(0)  # Exit immediately as a success.
+              if err isa Pkg.Resolve.ResolverError && allow_incompatible
+                  @info "SKIPPED: downstream compat excludes Parsers 3" package=ENV["DOWNSTREAM_REPO"] exception=err
+              else
+                  rethrow()
+              end
           end
