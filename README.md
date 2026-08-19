@@ -1,149 +1,189 @@
-Parsers.jl
-==========
+# Parsers.jl
 
-[![CI](https://github.com/JuliaData/Parsers.jl/workflows/CI/badge.svg)](https://github.com/JuliaData/Parsers.jl/actions?query=workflow%3ACI)
-[![codecov](https://codecov.io/gh/JuliaData/Parsers.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/JuliaData/Parsers.jl)
-[![deps](https://juliahub.com/docs/Parsers/deps.svg)](https://juliahub.com/ui/Packages/Parsers/833b9?t=2)
-[![version](https://juliahub.com/docs/Parsers/version.svg)](https://juliahub.com/ui/Packages/Parsers/833b9)
+[![CI](https://github.com/JuliaData/Parsers.jl/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/JuliaData/Parsers.jl/actions/workflows/ci.yml)
+[![Documentation](https://img.shields.io/badge/docs-stable-blue.svg)](https://JuliaData.github.io/Parsers.jl/stable/)
+[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://JuliaData.github.io/Parsers.jl/dev/)
+[![Codecov](https://codecov.io/gh/JuliaData/Parsers.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/JuliaData/Parsers.jl)
+[![PkgEval](https://juliahub.com/docs/Parsers/pkgeval.svg)](https://juliahub.com/ui/Packages/Parsers/833b9)
+[![Version](https://juliahub.com/docs/Parsers/version.svg)](https://juliahub.com/ui/Packages/Parsers/833b9)
 
-Fast, exact, self-contained parsers for Julia's scalar types — and a thin
-layer that reproduces `Base.parse` / `Base.tryparse` on top of them.
+Parsers.jl provides fast, exact parsers for Julia scalar types. Its public API
+has two levels:
 
-**Installation**: `import Pkg; Pkg.add("Parsers")`
+- `Parsers.parse`, `Parsers.tryparse`, and `Parsers.parsenext` provide the
+  checked user-facing interface.
+- Span-exact kernels provide low-level `(value, code)` results for readers and
+  tokenizers that already control their input bounds.
 
-**Maintenance**: Parsers is maintained collectively by the
-[JuliaData collaborators](https://github.com/orgs/JuliaData/people).
+Parsers 3 is a rewrite. It keeps the common whole-value calls and removes the
+delimited-field machinery from Parsers 2. That machinery belongs in the reader
+that owns quoting, delimiters, escaping, and missing-value rules.
 
-> **3.0 is a rewrite.** Version 3 keeps the two calls almost everyone uses —
-> `Parsers.parse(T, str)` and `Parsers.tryparse(T, str)` — makes them faster
-> and Base-identical, adds byte-span and tokenizer forms, and **removes the
-> delimited-field machinery** (`Parsers.Options` with `delim`/`quoted`/
-> `sentinel`/`escapechar`, `Parsers.xparse`, `Result`/return codes, `PosLen`,
-> `getstring`, `typeparser` extension). That machinery now lives where it is
-> used, in CSV.jl. See [Migrating from 2.x](#migrating-from-2x).
+Parsers 3 requires Julia 1.10 or later. The package exports no names. Use its
+API through the `Parsers` namespace.
 
-## Usage
+## Installation
 
 ```julia
-using Parsers
-
-Parsers.parse(Int, "101")             # 101
-Parsers.parse(Float64, "101.101")     # 101.101
-Parsers.parse(Float64, "101,101"; decimal=',')
-Parsers.parse(Int, "1,000,000"; groupmark=',')
-Parsers.parse(Int, "0x1f")            # 31   (0x / 0o / 0b prefixes, like Base)
-Parsers.parse(Int, "z"; base=36)      # 35   (2 ≤ base ≤ 62)
-Parsers.parse(Float32, "0.1")         # 0.1f0 — parsed natively, never via Float64
-Parsers.parse(Float64, "0x1.8p1")     # 3.0  (C99 hexadecimal floats, like Base)
-Parsers.parse(Bool, "true")           # true (also "1"/"0", like Base)
-Parsers.parse(Bool, "yes"; trues=["yes"], falses=["no"])
-Parsers.parse(BigInt, "123456789012345678901234567890")
-Parsers.parse(BigFloat, "0.1")        # correctly rounded at precision(BigFloat)
-Parsers.parse(Base.UUID, "123e4567-e89b-12d3-a456-426614174000")
-
-using Dates
-Parsers.parse(Date, "2018-01-01")
-Parsers.parse(Date, "01/20/2018"; dateformat="mm/dd/yyyy")   # a String or a DateFormat
-Parsers.parse(DateTime, "2024-01-02T03:04:05.125")
-Parsers.parse(Time, "1:05 PM"; dateformat="I:MM p")
-
-Parsers.parse(Int, "abc")             # ArgumentError, the message Base gives
-Parsers.parse(Int8, "200")            # OverflowError
-Parsers.tryparse(Int, "abc")          # nothing
+import Pkg
+Pkg.add("Parsers")
 ```
 
-Numbers and `Bool` tolerate surrounding ASCII whitespace; dates and UUIDs
-must fill the input exactly — the same rules `Base.parse` follows.
+## Basic use
 
-### Byte spans and tokenizing
+```julia
+import Parsers
 
-The whole-input forms are conveniences over span parsing: `s` may be any
-`AbstractString` or byte vector, and the span forms take an explicit range —
-no substring, no copy.
+Parsers.parse(Int, "101")                         # 101
+Parsers.parse(Float64, "101.101")                # 101.101
+Parsers.parse(Float64, "101,101"; decimal=',')   # 101.101
+Parsers.parse(Int, "1,000,000"; groupmark=',')   # 1000000
+Parsers.parse(Int, "0x1f")                       # 31
+Parsers.parse(Int, "z"; base=36)                 # 35
+Parsers.parse(Float32, "0.1")                    # 0.1f0
+Parsers.parse(Float64, "0x1.8p1")                # 3.0
+Parsers.parse(Bool, "true")                      # true
+Parsers.parse(Bool, "yes"; trues=["yes"], falses=["no"])
+Parsers.parse(BigInt, "123456789012345678901234567890")
+Parsers.parse(BigFloat, "0.1")
+Parsers.parse(Base.UUID, "123e4567-e89b-12d3-a456-426614174000")
+```
+
+Temporal parsing uses `Dates` types:
+
+```julia
+using Dates
+
+Parsers.parse(Date, "2018-01-01")
+Parsers.parse(Date, "01/20/2018"; dateformat="mm/dd/yyyy")
+Parsers.parse(DateTime, "2024-01-02T03:04:05.125")
+Parsers.parse(Time, "1:05 PM"; dateformat="I:MM p")
+```
+
+For repeated custom temporal parsing, compile the format once with
+`Parsers.compilepattern` and pass the returned pattern through `dateformat`.
+
+`parse` throws for malformed or out-of-range input. `tryparse` returns
+`nothing`:
+
+```julia
+Parsers.tryparse(Int, "abc")  # nothing
+```
+
+Numbers and `Bool` accept surrounding ASCII whitespace. Dates and UUIDs must
+fill the input exactly. Custom `trues` and `falses` lists replace the default
+Boolean spellings; they do not extend them.
+
+## Byte spans and tokenizing
+
+The span forms use an inclusive `first:last` byte range:
 
 ```julia
 buf = Vector{UInt8}("12,3.5e2,true")
+
 Parsers.parse(Int, buf, 1, 2)          # 12
 Parsers.parse(Float64, buf, 4, 8)      # 350.0
 Parsers.tryparse(Bool, buf, 10, 13)    # true
-
-# a tokenizer wants "the value that starts HERE, and where it ended":
-value, nextpos, code = Parsers.parsenext(Float64, buf, 4, length(buf))   # (350.0, 9, RC_OK)
 ```
 
-`parsenext` recognizes the value's own grammar (`[+-]digits[.digits][e±digits]`,
-`inf`/`nan`, `true`/`false`) — the caller does not have to know where the
-number ends. This is the primitive JSON- and SQL-wire-format parsers need.
+`String`, `SubString{String}`, their `codeunits` views, and `Vector{UInt8}`
+use their existing byte storage. Other `AbstractString` and
+`AbstractVector{UInt8}` inputs can require a contiguous copy.
 
-### Supported types
+`parsenext` finds and parses the longest supported token at a byte position. It
+does not skip whitespace:
 
-`Int8`…`Int128`, `UInt8`…`UInt128`, `Bool`, `Float16`, `Float32`, `Float64`,
-`BigInt`, `BigFloat`, `Base.UUID`, and `Date`/`DateTime`/`Time` (with
-`dateformat=` for custom formats; the token set is Dates', including
-`I`/`p` for 12-hour clocks and `e`/`E` for day names).
+```julia
+value, nextpos, code = Parsers.parsenext(Float64, buf, 4, length(buf))
+# (350.0, 9, Parsers.RC_OK)
+```
 
-Keywords: `base` (integers), `decimal` and `groupmark` (numbers),
-`trues`/`falses` (extra Bool spellings), `dateformat` (temporals).
+For integers, floats, `BigInt`, `BigFloat`, and `Bool`, the tokenizer uses the
+same value grammar and applicable keywords as whole-input parsing. This
+includes integer radix prefixes, digit-group marks, C99 hexadecimal floats,
+and custom Boolean spellings. It does not scan dates or UUIDs. See the
+[API reference](https://JuliaData.github.io/Parsers.jl/dev/api/) for the exact
+return-code and bounds contract.
 
-## The kernels
+## Supported whole-value types
 
-Underneath the Base-compatible layer sits a family of **span-exact kernels**:
+- `Int8` through `Int128` and `UInt8` through `UInt128`
+- `Float16`, `Float32`, and `Float64`
+- `BigInt` and `BigFloat`
+- `Bool` and `Base.UUID`
+- `Dates.Date`, `Dates.DateTime`, and `Dates.Time`
 
-| kernel | what it does |
+Keyword support is type-specific. Fixed-width integers and `BigInt` accept
+`base` and `groupmark`. Fixed-width floats accept `decimal` and `groupmark`.
+`BigFloat` accepts `decimal`, `groupmark`, and `rounding`. `Bool` accepts
+`trues` and `falses`. Temporal types accept `dateformat`.
+
+## Low-level kernels
+
+The low-level kernels consume exactly `buf[i:j]`. Their bounds are a caller
+contract; use the checked public span forms for untrusted indices.
+
+| Call | Result |
 |---|---|
-| `Parsers.parseint(T, buf, i, j[, base])` | any integer width; SWAR eight-digits-at-a-time |
-| `Parsers.parsefloat(T, buf, i, j, decimal)` | `Float64` / `Float32`: Clinger → Eisel–Lemire → exact decimal fallback |
-| `Parsers.parsebool`, `parsebigint`, `parsebigfloat`, `parseuuid` | |
-| `Parsers.parsecivil(buf, i, j, pattern)` | a `CivilParts` record from a compiled format program — no `Dates` dependency |
-| `Parsers.compilepattern("yyyy-mm-dd")` | Dates' format tokens → a plain-data pattern |
+| `Parsers.parseint(T, buf, i, j)` | `(value, code)` for a decimal integer |
+| `Parsers.parseint(T, buf, i, j, base)` | `(value, code, badpos)` for base 2 through 62 |
+| `Parsers.parsefloat(T, buf, i, j, decimal)` | `(value, code)` for `Float32` or `Float64` |
+| `Parsers.parsebool(buf, i, j)` | `(value, code)` for `true` or `false` |
+| `Parsers.parsebigint(buf, i, j)` | `(value, code)` for a decimal `BigInt` |
+| `Parsers.parsebigint(buf, i, j, base)` | `(value, code, badpos)` for an arbitrary-base `BigInt` |
+| `Parsers.parsebigfloat(buf, i, j, decimal; prec, rounding)` | `(value, code)` for a `BigFloat` |
+| `Parsers.parseuuid(buf, i, j)` | `(UInt128, code)` |
+| `Parsers.parsecivil(buf, i, j, pattern)` | `(CivilParts, code)` |
 
-Each returns `(value, code)` with `code` one of `RC_OK`, `RC_INVALID`,
-`RC_OVERFLOW`, `RC_UNDERFLOW`. They never throw, never allocate on the
-fixed-width paths, and never fall back to C, `Base.parse`, or GMP/MPFR string
-routines: 768-digit halfway floats, subnormals, `Int128`, arbitrary bases,
-and hexadecimal floats are handled by self-contained code. That is what makes
-them candidates for Base itself, and what CSV.jl builds its columnar loops on.
-The float range codes carry the value they rounded to (`±Inf` / `±0`), so a
-caller that wants strtod semantics simply treats them as success — while
-`Parsers.parse` rejects them exactly as `Base.parse` does.
+Codes are `Parsers.RC_OK`, `Parsers.RC_INVALID`, `Parsers.RC_OVERFLOW`, and
+`Parsers.RC_UNDERFLOW`. Given a valid span and configuration, fixed-width
+numeric kernels report parse failures through a code that the caller must
+check. `Parsers.compilepattern` compiles a temporal format for `parsecivil`; it
+is not a parsing kernel and can throw for an invalid format.
 
-Two design commitments worth knowing:
+## Compatibility notes
 
-* **Strict spellings.** `parsebool` accepts exactly `true`/`false` (the
-  Base-parity layer adds `1`/`0`; custom lists replace the defaults);
-  temporal patterns are field-exact — `yyyy` is four digits, a bare date is
-  not a `DateTime`, and the whole input must be consumed. This is stricter than
-  the Dates stdlib (which parses `"24-01-01"` with `yyyy-mm-dd` as year 24 and
-  lets trailing fields default), and deliberately so: parse-set ≡ detect-set is
-  what lets a type-inferring reader stay sample-independent.
-* **`Dates` independence.** Date/time parsing produces integers (`CivilParts`,
-  Rata Die days via the same formula `Dates.totaldays` uses); the adapters in
-  `src/dates.jl` are the only code that touches the stdlib.
+Parsers aims to match `Base.parse` and `Base.tryparse` for the documented
+whole-value grammar. The test suite compares results and errors against Base.
+Known deliberate differences are:
+
+- Whitespace tolerance is limited to ASCII whitespace.
+- Temporal patterns are field-exact, with an optional sign on year fields.
+  String formats use the default English names; a `Dates.DateFormat`
+  preserves its locale tables.
+- Fractional-second fields accept up to nine digits. `Time` preserves
+  nanoseconds; `DateTime` truncates to its millisecond resolution. The Dates
+  stdlib parser accepts at most three fractional digits.
+- Temporal errors use Parsers-specific message text.
+- BigFloat decimal magnitudes beyond the documented kernel range return a
+  range failure instead of using MPFR's full exponent range.
+- `Parsers.parse(BigInt, "")` reports an invalid BigInt rather than Base's
+  unrelated base error.
 
 ## Performance
 
-`benchmarks/values.jl` reports ns/value for the kernels against `Base.parse`
-across shapes. On an M-series laptop: ints 4–5 ns (Base 37–55), short floats
-9–12 ns (Base 37), 17-digit floats 27 ns (Base 54), ISO dates 3 ns (Base 55),
-UUIDs 6 ns (Base 117), 256-bit `BigFloat` 209 ns (MPFR's own `strtofr` 357).
-Against `fast_float`, the C++ reference: parity or better on nine of sixteen
-float shapes, within 1.2–1.9× on the rest.
+Run the dependency-free benchmark from a clean checkout:
 
-## Migrating from 2.x
+```sh
+julia --project=. benchmarks/values.jl
+```
 
-| 2.x | 3.0 |
-|---|---|
-| `Parsers.parse(T, str)`, `Parsers.tryparse(T, str)` | unchanged (faster; errors/whitespace now identical to `Base.parse`) |
-| `Parsers.parse(T, str, Parsers.Options(decimal=','))` | `Parsers.parse(T, str; decimal=',')` — likewise `groupmark`, `dateformat`, `trues`/`falses` |
-| `Parsers.xparse(T, buf, pos, len, opts)` on a *value* span | `Parsers.parse`/`tryparse(T, buf, first, last)` |
-| `Parsers.xparse` to find where a number *ends* (JSON, MySQL) | `Parsers.parsenext(T, buf, pos, last)` |
-| `Parsers.Result`, `Parsers.ok/invalid/eof/…` return codes | `tryparse` → `nothing`; kernels return `(value, RC_*)` |
-| `Options(delim=, quoted=, sentinel=, escapechar=, ignorerepeated=, stripwhitespace=)` — field-level parsing | removed: quote/delimiter/sentinel handling is the reader's job (CSV.jl 1.0 does it on its structural index) |
-| `Parsers.PosLen`, `Parsers.getstring` | removed |
-| `Parsers.typeparser` / `Parsers.supportedtype` extension seam | removed; unsupported types get a clear `ArgumentError` — open an issue for a type that belongs in the core set |
-| `Parsers.Format` | `dateformat=` accepts a String or `Dates.DateFormat` |
+The script prints the Julia version, package version, commit, CPU, corpus size,
+seed, and timing statistic with its results. Treat the output as a local
+microbenchmark. Record the complete header when publishing comparisons.
 
-Deliberate deltas from Base, all pinned by tests: `Parsers.parse(BigInt, "")`
-says "invalid BigInt" (Base reports an odd base error); whitespace tolerance is
-ASCII whitespace; date formats are strict as described above and date errors
-carry Parsers' own message text.
+## Migrating from Parsers 2
+
+Read the [Parsers 2 to 3 migration guide](docs/src/migration.md) before raising
+compatibility to Parsers 3. The largest changes are the removal of `Options`,
+`xparse`, `Result`, `PosLen`, IO input, string-like target parsing, and the old
+custom-type extension seam. Span endpoints are now inclusive indices, not a
+`pos` plus a byte length.
+
+## Maintenance and contributing
+
+Parsers is maintained collectively by the
+[JuliaData collaborators](https://github.com/orgs/JuliaData/people). See
+[CONTRIBUTING.md](CONTRIBUTING.md) for development commands and
+[SECURITY.md](SECURITY.md) for private vulnerability reports. User-visible
+changes are recorded in [CHANGELOG.md](CHANGELOG.md).
