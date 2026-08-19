@@ -3,15 +3,6 @@
 # with the oracle on the accept-set; deliberate deltas are pinned explicitly.
 using Test, Random, Dates, Parsers
 
-b(s) = Vector{UInt8}(codeunits(s))
-pint(s) = Parsers.parseint64(b(s), 1, ncodeunits(s))
-pint128(s) = Parsers.parseint128(b(s), 1, ncodeunits(s))
-pflt(s) = Parsers.parsefloat64(b(s), 1, ncodeunits(s))
-pbool(s) = Parsers.parsebool(b(s), 1, ncodeunits(s))
-const todate = Parsers.todate
-const todatetime = Parsers.todatetime
-const totime = Parsers.totime
-
 @testset "parseint64: oracle differential" begin
     for s in ("0", "-0", "+0", "1", "-1", "42", "123456789", "-123456789",
               "9223372036854775807", "-9223372036854775808", "00042", "-007",
@@ -134,4 +125,3 @@ end
         @test Parsers.parsebigint(b(s), 1, ncodeunits(s))[2] == Parsers.RC_INVALID
     end
 end
-

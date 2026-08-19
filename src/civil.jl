@@ -49,10 +49,10 @@ end
 # --- format programs -----------------------------------------------------------
 #
 # A compiled pattern is a flat vector of ops. Numeric fields consume 1..width
-# digits (fixed = exactly width); literals must match exactly; month-name ops
-# consume letters and match against a supplied table. This is the engine that
-# Dates-the-stdlib would drive with its locales; here we carry the English
-# month/day names it needs.
+# digits (fixed = exactly width); literals must match exactly; month/day-name
+# ops consume letters and match the plain String tables stored in DatePattern.
+# The default tables are English. dates.jl copies a DateFormat's locale tables
+# into the pattern without making this kernel depend on Dates types.
 
 struct PatternOp
     kind::UInt8     # 1=year 2=month 3=day 4=hour 5=minute 6=second 7=subsec
@@ -62,25 +62,68 @@ struct PatternOp
     fixed::Bool
 end
 
+"""
+    DatePattern
+
+A compiled, plain-data date/time parse program. Create one with
+[`compilepattern`](@ref), then reuse it with [`parsecivil`](@ref) or as the
+`dateformat` keyword of [`Parsers.parse`](@ref). The pattern stores its literal
+bytes, numeric field rules, and month/day name tables.
+"""
 struct DatePattern
     ops::Vector{PatternOp}
     hasdate::Bool
     hastime::Bool
+    months_abbr::NTuple{12, String}
+    months_full::NTuple{12, String}
+    days_abbr::NTuple{7, String}
+    days_full::NTuple{7, String}
 end
 
-const ENGLISH_MONTHS_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
-const ENGLISH_DAYS_ABBR = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
-const ENGLISH_DAYS_FULL = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
-const ENGLISH_MONTHS_FULL = ["January","February","March","April","May","June","July",
-                             "August","September","October","November","December"]
+const ENGLISH_MONTHS_ABBR = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+const ENGLISH_DAYS_ABBR = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+const ENGLISH_DAYS_FULL = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+                           "Saturday", "Sunday")
+const ENGLISH_MONTHS_FULL = ("January", "February", "March", "April", "May", "June",
+                             "July", "August", "September", "October", "November",
+                             "December")
+
+DatePattern(ops::Vector{PatternOp}, hasdate::Bool, hastime::Bool) =
+    DatePattern(ops, hasdate, hastime, ENGLISH_MONTHS_ABBR, ENGLISH_MONTHS_FULL,
+                ENGLISH_DAYS_ABBR, ENGLISH_DAYS_FULL)
+
+# `Dates.DateFormat` is compiled directly in dates.jl and passes the resulting
+# pattern through the existing API hook. Keeping this identity method here
+# avoids converting a typed token program back to a format string.
+compilepattern(p::DatePattern) = p
+
+@inline _patternkind(c::Char) =
+    c == 'y' || c == 'Y' ? UInt8(1) :
+    c == 'm' ? UInt8(2) : c == 'd' ? UInt8(3) : c == 'H' ? UInt8(4) :
+    c == 'M' ? UInt8(5) : c == 'S' ? UInt8(6) : c == 's' ? UInt8(7) :
+    c == 'u' ? UInt8(9) : c == 'U' ? UInt8(10) : c == 'I' ? UInt8(11) :
+    c == 'p' ? UInt8(12) : c == 'e' ? UInt8(13) : c == 'E' ? UInt8(14) : UInt8(0)
+
+@inline _kindhasdate(kind::UInt8) = kind in (0x01, 0x02, 0x03, 0x09, 0x0a)
+@inline _kindhastime(kind::UInt8) = kind in (0x04, 0x05, 0x06, 0x07, 0x0b, 0x0c)
+@inline _isdateformattoken(c::Char) = _patternkind(c) != 0
+
+function _pushliteralchar!(ops::Vector{PatternOp}, c::Char)
+    for b in codeunits(string(c))
+        push!(ops, PatternOp(8, b, true))
+    end
+    return ops
+end
 
 """
     compilepattern(fmt::AbstractString) -> DatePattern
 
 Compile a Dates-style format string (tokens `y m d H M S s u U`, plus literal
 separators; repeated letters set the width, `yyyy`-style runs are fixed-width).
-Unsupported tokens throw at compile time — configuration errors surface when
-the format is pinned, never per cell.
+A backslash escapes a token letter, as in `yyyy\\mdd`, and literals are stored
+as their UTF-8 bytes. Unsupported tokens throw at compile time — configuration
+errors surface when the format is pinned, never per cell.
 """
 function compilepattern(fmt::AbstractString)
     ops = PatternOp[]
@@ -89,54 +132,50 @@ function compilepattern(fmt::AbstractString)
     i = firstindex(fmt)
     while i <= lastindex(fmt)
         c = fmt[i]
-        n = 1
-        while i + n <= lastindex(fmt) && fmt[i + n] == c
-            n += 1
+
+        # Dates recognizes a token only when a backslash does not immediately
+        # precede it. Consume escape pairs without first rebuilding a String;
+        # this also reproduces DateFormat's `\\\\m` -> literal `\\m` rule.
+        if c == '\\'
+            ni = nextind(fmt, i)
+            if ni <= lastindex(fmt)
+                _pushliteralchar!(ops, fmt[ni])
+                i = nextind(fmt, ni)
+            else
+                _pushliteralchar!(ops, c)
+                i = ni
+            end
+            continue
+        elseif !_isdateformattoken(c)
+            c in ('Q', 'q') &&
+                throw(ArgumentError("unsupported date format token '$c' in \"$fmt\""))
+            _pushliteralchar!(ops, c)
+            i = nextind(fmt, i)
+            continue
         end
-        if c == 'y' || c == 'Y'
+
+        n = 1
+        ni = nextind(fmt, i)
+        while ni <= lastindex(fmt) && fmt[ni] == c
+            n += 1
+            ni = nextind(fmt, ni)
+        end
+        kind = _patternkind(c)
+        width, fixed = if kind == 1
             n <= typemax(UInt8) ||
                 throw(ArgumentError("year token run exceeds 255 bytes in \"$fmt\""))
-            push!(ops, PatternOp(1, UInt8(max(n, 4)), n >= 4)); hasdate = true
-        elseif c == 'm'
-            push!(ops, PatternOp(2, UInt8(2), n >= 2)); hasdate = true
-        elseif c == 'd'
-            push!(ops, PatternOp(3, UInt8(2), n >= 2)); hasdate = true
-        elseif c == 'H'
-            push!(ops, PatternOp(4, UInt8(2), n >= 2)); hastime = true
-        elseif c == 'M'
-            push!(ops, PatternOp(5, UInt8(2), n >= 2)); hastime = true
-        elseif c == 'S'
-            push!(ops, PatternOp(6, UInt8(2), n >= 2)); hastime = true
-        elseif c == 's'
-            push!(ops, PatternOp(7, UInt8(9), false)); hastime = true
-        elseif c == 'u'
-            push!(ops, PatternOp(9, UInt8(0), false)); hasdate = true
-        elseif c == 'U'
-            push!(ops, PatternOp(10, UInt8(0), false)); hasdate = true
-        elseif c == 'I'
-            # 12-hour clock: same width rules as 'H'; `p` (if present) adjusts
-            push!(ops, PatternOp(11, UInt8(2), n >= 2)); hastime = true
-        elseif c == 'p'
-            # AM/PM: exactly two letters, case-insensitive (Dates' rule)
-            push!(ops, PatternOp(12, UInt8(0), false)); hastime = true
-        elseif c == 'e'
-            # day-of-week names are consumed and validated, never used
-            # (Dates' DayOfWeekToken) — they do not make a pattern a date
-            push!(ops, PatternOp(13, UInt8(0), false))
-        elseif c == 'E'
-            push!(ops, PatternOp(14, UInt8(0), false))
-        elseif c in ('Q', 'q')
-            throw(ArgumentError("unsupported date format token '$c' in \"$fmt\""))
-        elseif isascii(c)
-            # any other ASCII char is a literal (Dates' rule: only token letters
-            # are special — 'T' in ISO datetime is a plain separator)
-            for _ in 1:n
-                push!(ops, PatternOp(8, UInt8(c), true))
-            end
+            (UInt8(max(n, 4)), n >= 4)
+        elseif kind in (0x02, 0x03, 0x04, 0x05, 0x06, 0x0b)
+            (UInt8(2), n >= 2)
+        elseif kind == 7
+            (UInt8(9), false)
         else
-            throw(ArgumentError("non-ASCII literal '$c' in date format \"$fmt\""))
+            (UInt8(0), false)
         end
-        i += n
+        push!(ops, PatternOp(kind, width, fixed))
+        hasdate |= _kindhasdate(kind)
+        hastime |= _kindhastime(kind)
+        i = ni
     end
     return DatePattern(ops, hasdate, hastime)
 end
@@ -163,17 +202,53 @@ const ISO_DATETIME = compilepattern("yyyy-mm-ddTHH:MM:SS.s")
     return (v, k, true)
 end
 
+@inline function _readyear(buf, i, j, maxw, fixed)
+    i <= j || return (0, i, false)
+    @inbounds signed = buf[i] == UInt8('-') || buf[i] == UInt8('+')
+    sign = @inbounds signed && buf[i] == UInt8('-') ? -1 : 1
+    firstdigit = i + signed
+    v, k, ok = _readnum(buf, firstdigit, j, maxw, fixed)
+    return (sign * v, k, ok)
+end
+
+@inline _lowernamebyte(b::UInt8) = UInt8('A') <= b <= UInt8('Z') ? b + 0x20 : b
+
 function _matchname(buf, i, j, table)
-    # case-insensitive prefix match against table entries; returns (idx, next, ok)
+    # Fast ASCII case-insensitive prefix match against table entries.
+    bestidx = 0
+    bestn = 0
     @inbounds for (mi, name) in enumerate(table)
         ncu = ncodeunits(name)
         i + ncu - 1 <= j || continue
         ok = true
         for k in 1:ncu
-            _lower(buf[i + k - 1]) == _lower(UInt8(codeunit(name, k))) || (ok = false; break)
+            _lowernamebyte(buf[i + k - 1]) == _lowernamebyte(UInt8(codeunit(name, k))) ||
+                (ok = false; break)
         end
-        ok && return (mi, i + ncu, true)
+        if ok && ncu > bestn
+            bestidx = mi
+            bestn = ncu
+        end
     end
+
+    # Dates locales may contain non-ASCII names. Keep the common path
+    # allocation-free, then use Julia's Unicode lowercase rules when the byte
+    # comparison cannot distinguish (for example, `É` from `é`).
+    for (mi, name) in enumerate(table)
+        ncu = ncodeunits(name)
+        ncu > bestn || continue
+        i + ncu - 1 <= j || continue
+        bytes = Vector{UInt8}(undef, ncu)
+        @inbounds for k in 1:ncu
+            bytes[k] = buf[i + k - 1]
+        end
+        candidate = String(bytes)
+        if isvalid(candidate) && lowercase(candidate) == lowercase(name)
+            bestidx = mi
+            bestn = ncu
+        end
+    end
+    bestidx != 0 && return (bestidx, i + bestn, true)
     return (0, i, false)
 end
 
@@ -187,7 +262,7 @@ end
 
 @inline _dig(b::UInt8) = b - UInt8('0')
 
-@inline function _iso_ymd(buf::Vector{UInt8}, i::Int)
+@inline function _iso_ymd(buf::AbstractVector{UInt8}, i::Int)
     @inbounds begin
         (buf[i + 4] == UInt8('-')) & (buf[i + 7] == UInt8('-')) || return (0, 0, 0, false)
         y0 = _dig(buf[i]); y1 = _dig(buf[i + 1]); y2 = _dig(buf[i + 2]); y3 = _dig(buf[i + 3])
@@ -201,7 +276,7 @@ end
     end
 end
 
-@inline function _iso_hms(buf::Vector{UInt8}, i::Int)
+@inline function _iso_hms(buf::AbstractVector{UInt8}, i::Int)
     @inbounds begin
         (buf[i + 2] == UInt8(':')) & (buf[i + 5] == UInt8(':')) || return (0, 0, 0, false)
         h0 = _dig(buf[i]); h1 = _dig(buf[i + 1])
@@ -220,7 +295,7 @@ end
 "not this shape or not a real date" — the caller falls through to
 [`parsecivil`](@ref), which agrees on every 10-byte input.
 """
-@inline function parseiso10(buf::Vector{UInt8}, i::Int)
+@inline function parseiso10(buf::AbstractVector{UInt8}, i::Int)
     y, m, d, ok = _iso_ymd(buf, i)
     (ok && _validymd(y, m, d)) || return (CivilParts(), RC_INVALID)
     return (CivilParts(Int32(y), Int8(m), Int8(d), Int8(0), Int8(0), Int8(0), Int32(0)), RC_OK)
@@ -231,7 +306,7 @@ end
 
 `yyyy-mm-ddTHH:MM:SS` in exactly 19 bytes (no subseconds; those fall through).
 """
-@inline function parseiso19(buf::Vector{UInt8}, i::Int)
+@inline function parseiso19(buf::AbstractVector{UInt8}, i::Int)
     @inbounds buf[i + 10] == UInt8('T') || return (CivilParts(), RC_INVALID)
     y, mo, d, okd = _iso_ymd(buf, i)
     h, mi, s, okt = _iso_hms(buf, i + 11)
@@ -245,7 +320,7 @@ end
 
 `HH:MM:SS` in exactly 8 bytes.
 """
-@inline function parseiso8(buf::Vector{UInt8}, i::Int)
+@inline function parseiso8(buf::AbstractVector{UInt8}, i::Int)
     h, mi, s, ok = _iso_hms(buf, i)
     (ok && _validhms(h, mi, s)) || return (CivilParts(), RC_INVALID)
     return (CivilParts(Int32(1), Int8(1), Int8(1), Int8(h), Int8(mi), Int8(s), Int32(0)), RC_OK)
@@ -259,7 +334,22 @@ beyond the pattern (`.s` matching 1–9 digits) is scaled to nanoseconds. The
 whole span must be consumed. Calendar validity (month/day ranges, leap years)
 is checked here — structurally valid but impossible dates are INVALID.
 """
-function parsecivil(buf::Vector{UInt8}, i::Int, j::Int, pat::DatePattern)
+function parsecivil(buf::AbstractVector{UInt8}, i::Int, j::Int, pat::DatePattern)
+    # The default patterns have exact fixed-width prefixes. Keep custom
+    # DatePattern programs on the interpreter path, because their token widths
+    # and locale may differ even when they print like an ISO format.
+    n = j - i + 1
+    if n == 10 && pat === ISO_DATE
+        c, rc = parseiso10(buf, i)
+        rc == RC_OK && return (c, rc)
+    elseif n == 19 && pat === ISO_DATETIME
+        c, rc = parseiso19(buf, i)
+        rc == RC_OK && return (c, rc)
+    elseif n == 8 && pat === ISO_TIME
+        c, rc = parseiso8(buf, i)
+        rc == RC_OK && return (c, rc)
+    end
+
     y = 1; mo = 1; dy = 1; h = 0; mi = 0; s = 0; ns = 0
     ampm = 0x00                                          # 0 none, 1 AM, 2 PM
     k = i
@@ -278,12 +368,14 @@ function parsecivil(buf::Vector{UInt8}, i::Int, j::Int, pat::DatePattern)
             end
             k += 1
         elseif op.kind == 9 || op.kind == 10
-            idx, k2, ok = _matchname(buf, k, j, op.kind == 9 ? ENGLISH_MONTHS_ABBR : ENGLISH_MONTHS_FULL)
+            table = op.kind == 9 ? pat.months_abbr : pat.months_full
+            idx, k2, ok = _matchname(buf, k, j, table)
             ok || return (CivilParts(), RC_INVALID)
             mo = idx
             k = k2
         elseif op.kind == 13 || op.kind == 14
-            _, k2, ok = _matchname(buf, k, j, op.kind == 13 ? ENGLISH_DAYS_ABBR : ENGLISH_DAYS_FULL)
+            table = op.kind == 13 ? pat.days_abbr : pat.days_full
+            _, k2, ok = _matchname(buf, k, j, table)
             ok || return (CivilParts(), RC_INVALID)      # validated, value unused (Dates' rule)
             k = k2
         elseif op.kind == 12
@@ -294,13 +386,14 @@ function parsecivil(buf::Vector{UInt8}, i::Int, j::Int, pat::DatePattern)
             ampm = a == UInt8('a') ? 0x01 : 0x02
             k += 2
         elseif op.kind == 7
-            v, k2, ok = _readnum(buf, k, j, 9, false)
+            v, k2, ok = _readnum(buf, k, j, op.width, op.fixed)
             ok || return (CivilParts(), RC_INVALID)
             nd = k2 - k
             ns = v * Int(10)^(9 - nd)
             k = k2
         else
-            v, k2, ok = _readnum(buf, k, j, op.width, op.fixed)
+            v, k2, ok = op.kind == 1 ? _readyear(buf, k, j, op.width, op.fixed) :
+                                       _readnum(buf, k, j, op.width, op.fixed)
             ok || return (CivilParts(), RC_INVALID)
             if op.kind == 1
                 y = v

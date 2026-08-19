@@ -8,14 +8,17 @@
 # mpfr_strtofr are never involved.
 # =============================================================================
 
-const _POW10_INT = Int64[Int64(10)^k for k in 0:17]
-const _POW10_18 = Int64(10)^18
+# GMP's `*_si` entry points take a C `long`, which is only 32 bits on Julia's
+# x86 builds. Keep every chunk and multiplier within that native width.
+const _BIG_CHUNK_DIGITS = Sys.WORD_SIZE == 32 ? 9 : 18
+const _POW10_INT = Int[Int(10)^k for k in 0:(_BIG_CHUNK_DIGITS - 1)]
+const _POW10_CHUNK = Int(10)^_BIG_CHUNK_DIGITS
 
 # Powers of five for the BigFloat scaling path, built at precompile time.
 # Covers every exponent reachable from ~150 significant digits around the
 # double range; rarer exponents compute fresh. Entries are READ-ONLY — the
 # scaling code must never hand them to an in-place GMP op's output slot.
-for f in (:set_si!, :mul!, :mul_si!, :add_ui!, :mul_2exp!, :tdiv_qr!,
+for f in (:set_si!, :mul!, :mul_si!, :mul_ui!, :add_ui!, :mul_2exp!, :tdiv_qr!,
           :fdiv_q_2exp!, :tstbit, :scan1, :sizeinbase, :pow_ui, :neg!)
     isdefined(Base.GMP.MPZ, f) ||
         error("Parsers requires Base.GMP.MPZ.$f (Julia internals moved?)")
@@ -54,13 +57,51 @@ function _assemble(M::BigInt, e::Int, neg::Bool, prec::Int)
     return v
 end
 
-# 18-digit chunks flush through in-place GMP ops — one BigInt allocated per
-# value, zero per chunk (the allocating `big = big*10^18 + acc` form measured
-# ~40% slower than mpz_set_str; this form beats it).
-@inline function _flushchunk!(big::BigInt, started::Bool, acc::Int64, mult::Int64)
+@inline _roundup(::RoundingMode{:Nearest}, neg, rbit, sticky, odd) =
+    rbit && (sticky || odd)
+@inline _roundup(::RoundingMode{:ToZero}, neg, rbit, sticky, odd) = false
+@inline _roundup(::RoundingMode{:FromZero}, neg, rbit, sticky, odd) = rbit || sticky
+@inline _roundup(::RoundingMode{:Up}, neg, rbit, sticky, odd) =
+    !neg && (rbit || sticky)
+@inline _roundup(::RoundingMode{:Down}, neg, rbit, sticky, odd) =
+    neg && (rbit || sticky)
+_roundup(mode::RoundingMode, neg, rbit, sticky, odd) =
+    throw(ArgumentError("BigFloat does not support rounding mode $mode"))
+
+# Round the nonnegative integer magnitude `M * 2^e2` once at `prec` bits, then
+# apply the sign. `sticky` states that nonzero bits exist below M's low bit.
+function _roundbig!(M::BigInt, e2::Int, neg::Bool, prec::Int,
+                    mode::RoundingMode, sticky::Bool=false)
+    MPZ = Base.GMP.MPZ
+    nb = Int(MPZ.sizeinbase(M, 2))
+    if nb > prec
+        drop = nb - prec
+        rbit = MPZ.tstbit(M, (drop - 1) % Culong)
+        sticky = sticky || (drop > 1 && Int(MPZ.scan1(M, 0)) < drop - 1)
+        MPZ.fdiv_q_2exp!(M, drop % Culong)
+        odd = MPZ.tstbit(M, Culong(0))
+        if _roundup(mode, neg, rbit, sticky, odd)
+            MPZ.add_ui!(M, 1)
+            if Int(MPZ.sizeinbase(M, 2)) > prec
+                MPZ.fdiv_q_2exp!(M, Culong(1))
+                drop += 1
+            end
+        end
+        return _assemble(M, Base.checked_add(e2, drop), neg, prec)
+    end
+    # Decimal division always keeps guard bits, so a sticky remainder cannot
+    # reach this exact branch. Validate the mode here as well for exact inputs.
+    _roundup(mode, neg, false, false, false)
+    return _assemble(M, e2, neg, prec)
+end
+
+# Native-long chunks flush through in-place GMP ops — one BigInt allocated per
+# value, zero per chunk. They hold 18 digits on 64-bit hosts and 9 on 32-bit
+# hosts, so `set_si!` and `mul_si!` never narrow a large Int64 to `Clong`.
+@inline function _flushchunk!(big::BigInt, started::Bool, acc::Int, mult::Int)
     if started
         Base.GMP.MPZ.mul_si!(big, mult)
-        Base.GMP.MPZ.add_ui!(big, acc % UInt64)
+        Base.GMP.MPZ.add_ui!(big, acc % UInt)
     else
         Base.GMP.MPZ.set_si!(big, acc)
     end
@@ -72,10 +113,11 @@ end
 
 Exact-span BigInt: sign and decimal digits only (the strict integer grammar,
 same as `parseint64` without the width limit). Digits accumulate through
-18-digit Int64 chunks, so the big-number work is O(n/18) multiply-adds on the
-result type rather than per-digit ops or a string round-trip.
+native-long chunks (18 digits on 64-bit hosts, 9 on 32-bit), so the
+big-number work uses chunked multiply-adds rather than per-digit ops or a
+string round-trip.
 """
-function parsebigint(buf::Vector{UInt8}, i::Int, j::Int)
+function parsebigint(buf::AbstractVector{UInt8}, i::Int, j::Int)
     i > j && return (BigInt(0), RC_INVALID)
     neg = false
     @inbounds begin
@@ -86,17 +128,17 @@ function parsebigint(buf::Vector{UInt8}, i::Int, j::Int)
         end
     end
     i > j && return (BigInt(0), RC_INVALID)
-    acc = Int64(0)
+    acc = 0
     nacc = 0
     big = BigInt(0)
     started = false
     @inbounds for k in i:j
         d = buf[k] - UInt8('0')
         d > 0x09 && return (BigInt(0), RC_INVALID)
-        acc = acc * 10 + Int64(d)
+        acc = acc * 10 + Int(d)
         nacc += 1
-        if nacc == 18
-            started = _flushchunk!(big, started, acc, _POW10_18)
+        if nacc == _BIG_CHUNK_DIGITS
+            started = _flushchunk!(big, started, acc, _POW10_CHUNK)
             acc = 0
             nacc = 0
         end
@@ -107,10 +149,43 @@ function parsebigint(buf::Vector{UInt8}, i::Int, j::Int)
 end
 
 """
+    parsebigint(buf, i, j, base) -> (BigInt, rc, badpos)
+
+Exact-span arbitrary-radix BigInt parser for bases 2 through 62. The digit
+mapping is identical to [`parseint`](@ref). `badpos` identifies an invalid
+digit; arbitrary precision means this overload cannot return `RC_OVERFLOW`.
+"""
+function parsebigint(buf::AbstractVector{UInt8}, i::Int, j::Int, base::Int)
+    2 <= base <= 62 || throw(ArgumentError("base must be between 2 and 62"))
+    i > j && return (BigInt(0), RC_INVALID, i)
+    neg = false
+    @inbounds begin
+        b = buf[i]
+        if b == UInt8('-') || b == UInt8('+')
+            neg = b == UInt8('-')
+            i += 1
+        end
+    end
+    i > j && return (BigInt(0), RC_INVALID, i)
+    big = BigInt(0)
+    MPZ = Base.GMP.MPZ
+    @inbounds while i <= j
+        d = _digitvalue(buf[i], base)
+        (d == 0xff || d >= base) && return (BigInt(0), RC_INVALID, i)
+        MPZ.mul_ui!(big, base % UInt)
+        MPZ.add_ui!(big, d % UInt)
+        i += 1
+    end
+    neg && MPZ.neg!(big)
+    return (big, RC_OK, 0)
+end
+
+"""
     parsebigfloat(buf, i, j, decimal=UInt8('.'); prec=precision(BigFloat)) -> (BigFloat, rc)
 
-Correctly rounded (round-half-even) BigFloat at `prec` bits, same grammar and
-special spellings as `parsefloat64`. The high-precision decimal machinery from
+Correctly rounded BigFloat at `prec` bits, with `rounding` defaulting to the
+current MPFR rounding mode. It accepts the decimal and hexadecimal grammar and
+special spellings of `parsefloat64`. The high-precision decimal machinery from
 tier 3 generalizes: scale the exact decimal into [1, 2), generate `prec`
 binary digits, round once with the sticky bit. MPFR only STORES the result —
 the value is assembled from an exactly-representable prec-bit integer and an
@@ -122,13 +197,23 @@ gets power-of-ten jump tables the way Eisel-Lemire's POW5 works). No
 subnormal handling is needed inside that range — BigFloat's exponent field
 dwarfs it.
 """
-parsebigfloat(buf::Vector{UInt8}, i::Int, j::Int, decimal::UInt8=UInt8('.');
-              prec::Int=precision(BigFloat)) =
-    parsebigfloat(buf, i, j, decimal, BigWork(); prec)
+parsebigfloat(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8=UInt8('.');
+              prec::Int=precision(BigFloat),
+              rounding::RoundingMode=Base.Rounding.rounding(BigFloat)) =
+    parsebigfloat(buf, i, j, decimal, BigWork(); prec, rounding)
 
-function parsebigfloat(buf::Vector{UInt8}, i::Int, j::Int,
-                       decimal::UInt8, ws::BigWork; prec::Int=precision(BigFloat))
+function parsebigfloat(buf::AbstractVector{UInt8}, i::Int, j::Int,
+                       decimal::UInt8, ws::BigWork; prec::Int=precision(BigFloat),
+                       rounding::RoundingMode=Base.Rounding.rounding(BigFloat))
     prec >= 2 || throw(ArgumentError("prec must be ≥ 2"))
+    _roundup(rounding, false, false, false, false)  # validate even for zero/specials
+    k = i
+    @inbounds if k <= j && (buf[k] == UInt8('-') || buf[k] == UInt8('+'))
+        k += 1
+    end
+    @inbounds if k + 1 <= j && buf[k] == UInt8('0') && _lower(buf[k + 1]) == UInt8('x')
+        return _parsebigfloathex(buf, i, j, ws; prec, rounding)
+    end
     sp, matched = _matchspecial(buf, i, j)
     matched && return (BigFloat(sp; precision=prec), RC_OK)
     parts, rc = _decompose(buf, i, j, decimal)
@@ -166,34 +251,125 @@ function parsebigfloat(buf::Vector{UInt8}, i::Int, j::Int,
         sticky = !iszero(R)
         e2 = q - s
     end
-    nb = Int(MPZ.sizeinbase(M, 2))                  # exact for base 2
-    if nb > prec
-        drop = nb - prec
-        rbit = MPZ.tstbit(M, (drop - 1) % Culong)
-        # sticky below the round bit: lowest set bit sits under it
-        sticky = sticky || (drop > 1 && Int(MPZ.scan1(M, 0)) < drop - 1)
-        MPZ.fdiv_q_2exp!(M, drop % Culong)          # M >>= drop (M ≥ 0 here)
-        if rbit && (sticky || MPZ.tstbit(M, Culong(0)))
-            MPZ.add_ui!(M, 1)
-            if Int(MPZ.sizeinbase(M, 2)) > prec     # carry out of the mantissa
-                MPZ.fdiv_q_2exp!(M, Culong(1))
-                drop += 1
-            end
-        end
-        return (_assemble(M, e2 + drop, parts.neg, prec), RC_OK)
+    return (_roundbig!(M, e2, parts.neg, prec, rounding, sticky), RC_OK)
+end
+
+# Arbitrary-precision C99 hexadecimal float. Hexadecimal input is already a
+# binary rational, so collecting every nibble into a BigInt and applying one
+# `_roundbig!` operation gives exact MPFR-compatible rounding without a string
+# conversion.
+function _parsebigfloathex(buf::AbstractVector{UInt8}, i::Int, j::Int,
+                           ws::BigWork; prec::Int, rounding::RoundingMode)
+    neg = false
+    @inbounds begin
+        b = buf[i]
+        neg = b == UInt8('-')
+        (neg || b == UInt8('+')) && (i += 1)
+        (i + 1 <= j && buf[i] == UInt8('0') && _lower(buf[i + 1]) == UInt8('x')) ||
+            return (BigFloat(0; precision=prec), RC_INVALID)
     end
-    # exact case (only reachable when q ≥ 0, where sticky is impossible)
-    return (_assemble(M, e2, parts.neg, prec), RC_OK)
+    i += 2
+    M = ws.M
+    MPZ = Base.GMP.MPZ
+    MPZ.set_si!(M, 0)
+    sawdigit = false
+    infrac = false
+    nfrac = 0
+    @inbounds while i <= j
+        b = buf[i]
+        d = b - UInt8('0')
+        if d > 0x09
+            d = _lower(b) - UInt8('a')
+            if d > 0x05
+                if b == UInt8('.') && !infrac
+                    infrac = true
+                    i += 1
+                    continue
+                end
+                break
+            end
+            d += 0x0a
+        end
+        sawdigit = true
+        if infrac
+            if nfrac == typemax(Int)
+                z = BigFloat(0; precision=prec)
+                return (neg ? -z : z, RC_UNDERFLOW)
+            end
+            nfrac += 1
+        end
+        MPZ.mul_2exp!(M, Culong(4))
+        MPZ.add_ui!(M, d % UInt)
+        i += 1
+    end
+    sawdigit || return (BigFloat(0; precision=prec), RC_INVALID)
+    pexp = 0
+    eneg = false
+    expoverflow = false
+    @inbounds if i <= j
+        _lower(buf[i]) == UInt8('p') || return (BigFloat(0; precision=prec), RC_INVALID)
+        i += 1
+        if i <= j
+            b = buf[i]
+            eneg = b == UInt8('-')
+            (eneg || b == UInt8('+')) && (i += 1)
+        end
+        i > j && return (BigFloat(0; precision=prec), RC_INVALID)
+        while i <= j
+            d = buf[i] - UInt8('0')
+            d > 0x09 && return (BigFloat(0; precision=prec), RC_INVALID)
+            if !expoverflow
+                if pexp > (typemax(Int) - Int(d)) ÷ 10
+                    expoverflow = true
+                else
+                    pexp = pexp * 10 + Int(d)
+                end
+            end
+            i += 1
+        end
+    end
+    iszero(M) && begin
+        z = BigFloat(0; precision=prec)
+        return (neg ? -z : z, RC_OK)
+    end
+    if expoverflow
+        if eneg
+            z = BigFloat(0; precision=prec)
+            return (neg ? -z : z, RC_UNDERFLOW)
+        end
+        inf = BigFloat(Inf; precision=prec)
+        return (neg ? -inf : inf, RC_OVERFLOW)
+    end
+    ewide = Int128(eneg ? -pexp : pexp) - Int128(4) * Int128(nfrac)
+    if ewide < typemin(Int)
+        z = BigFloat(0; precision=prec)
+        return (neg ? -z : z, RC_UNDERFLOW)
+    elseif ewide > typemax(Int)
+        inf = BigFloat(Inf; precision=prec)
+        return (neg ? -inf : inf, RC_OVERFLOW)
+    end
+    v = try
+        _roundbig!(M, Int(ewide), neg, prec, rounding)
+    catch err
+        err isa OverflowError || rethrow()
+        Int(ewide) < 0 && begin
+            z = BigFloat(0; precision=prec)
+            return (neg ? -z : z, RC_UNDERFLOW)
+        end
+        inf = BigFloat(Inf; precision=prec)
+        return (neg ? -inf : inf, RC_OVERFLOW)
+    end
+    return (v, isinf(v) ? RC_OVERFLOW : iszero(v) ? RC_UNDERFLOW : RC_OK)
 end
 
 # All significant digits from `digstart` (first significant digit, per
 # _decompose) through the end of the digit run, skipping the decimal byte.
 # Returns `(M, q, inrange)` with value `M × 10^q` when `inrange`; the
 # boolean is false when `abs(q + ndig) > 65536`. Shape is already validated.
-function _bigmantissa!(big::BigInt, buf::Vector{UInt8}, i::Int, digstart::Int, j::Int,
+function _bigmantissa!(big::BigInt, buf::AbstractVector{UInt8}, i::Int, digstart::Int, j::Int,
                        decimal::UInt8)
     started = false
-    acc = Int64(0)
+    acc = 0
     nacc = 0
     # A decimal point BEFORE the first significant digit ("0.001") puts the
     # whole mantissa in the fraction, and the skipped zeros between the point
@@ -213,12 +389,12 @@ function _bigmantissa!(big::BigInt, buf::Vector{UInt8}, i::Int, digstart::Int, j
         b = buf[k]
         d = b - UInt8('0')
         if d <= 0x09
-            acc = acc * 10 + Int64(d)
+            acc = acc * 10 + Int(d)
             nacc += 1
             ndig += 1
             infrac && (frac += 1)
-            if nacc == 18
-                started = _flushchunk!(big, started, acc, _POW10_18)
+            if nacc == _BIG_CHUNK_DIGITS
+                started = _flushchunk!(big, started, acc, _POW10_CHUNK)
                 acc = 0
                 nacc = 0
             end
@@ -273,7 +449,7 @@ The canonical 8-4-4-4-12 dashed hex form, case-insensitive — exactly the
 spellings `Base.tryparse(UUID, s)` accepts. Returns the raw UInt128; thin
 adapters construct `Base.UUID` (mirroring the CivilParts/Dates split).
 """
-function parseuuid(buf::Vector{UInt8}, i::Int, j::Int)
+function parseuuid(buf::AbstractVector{UInt8}, i::Int, j::Int)
     j - i + 1 == 36 || return (UInt128(0), RC_INVALID)
     @inbounds begin
         (buf[i + 8] == UInt8('-')) & (buf[i + 13] == UInt8('-')) &

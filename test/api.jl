@@ -147,7 +147,6 @@ end
 end
 
 @testset "range codes on the kernels; Base rejects, the values are still there" begin
-    b(s) = Vector{UInt8}(codeunits(s))
     v, rc = Parsers.parsefloat(Float64, b("1e400"), 1, 5)
     @test rc == Parsers.RC_OVERFLOW && v == Inf
     v, rc = Parsers.parsefloat(Float64, b("-1e-400"), 1, 7)

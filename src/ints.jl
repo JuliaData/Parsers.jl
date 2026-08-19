@@ -25,6 +25,24 @@ end
 @inline _load8(buf::Vector{UInt8}, i::Int) =
     GC.@preserve buf ltoh(unsafe_load(Ptr{UInt64}(pointer(buf, i))))
 
+@inline _load8(buf::Base.CodeUnits{UInt8, <:Union{String, SubString{String}}},
+               i::Int) =
+    GC.@preserve buf ltoh(unsafe_load(Ptr{UInt64}(pointer(buf.s, i))))
+
+# Low-level kernels also accept arbitrary byte vectors. Those may be strided
+# or lack a stable pointer, so gather their logical elements instead of using
+# the contiguous fast load above.
+@inline function _load8(buf::AbstractVector{UInt8}, i::Int)
+    @inbounds return UInt64(buf[i]) |
+                     (UInt64(buf[i + 1]) << 8) |
+                     (UInt64(buf[i + 2]) << 16) |
+                     (UInt64(buf[i + 3]) << 24) |
+                     (UInt64(buf[i + 4]) << 32) |
+                     (UInt64(buf[i + 5]) << 40) |
+                     (UInt64(buf[i + 6]) << 48) |
+                     (UInt64(buf[i + 7]) << 56)
+end
+
 """
     parseint64(buf, i, j) -> (Int64, rc)
 
@@ -33,14 +51,13 @@ more ASCII digits, nothing else. Leading zeros are accepted (a caller's
 inference policy for zero-padded identifiers lives above this). `rc` is
 OVERFLOW when the digits are well-formed but exceed Int64, INVALID otherwise.
 """
-function parseint64(buf::Vector{UInt8}, i::Int, j::Int)
+function parseint64(buf::AbstractVector{UInt8}, i::Int, j::Int)
     i > j && return (zero(Int64), RC_INVALID)
     @inbounds b = buf[i]
     neg = b == UInt8('-')
     (neg | (b == UInt8('+'))) && (i += 1)
     i > j && return (zero(Int64), RC_INVALID)
     # skip (but count) leading zeros so the digit-count overflow bound is exact
-    z = i
     @inbounds while i <= j && buf[i] == UInt8('0')
         i += 1
     end
@@ -77,7 +94,7 @@ end
 Parse the strict integer grammar as `Int128`. This is the exact-width fallback
 after `parseint64` reports overflow.
 """
-function parseint128(buf::Vector{UInt8}, i::Int, j::Int)
+function parseint128(buf::AbstractVector{UInt8}, i::Int, j::Int)
     i > j && return (zero(Int128), RC_INVALID)
     @inbounds b = buf[i]
     neg = b == UInt8('-')
@@ -109,7 +126,7 @@ function parseint128(buf::Vector{UInt8}, i::Int, j::Int)
     return (Int128(v), RC_OK)
 end
 
-@inline function _digitsonly(buf::Vector{UInt8}, i::Int, j::Int)
+@inline function _digitsonly(buf::AbstractVector{UInt8}, i::Int, j::Int)
     @inbounds for k in i:j
         (buf[k] - UInt8('0')) > 0x09 && return false
     end
@@ -128,7 +145,7 @@ the span contains no separator at all (parse the original span — the common
 case costs one scan), or `-2` when a separator is misplaced (leading, trailing,
 adjacent to another separator, or in the fraction/exponent).
 """
-function degroup!(scratch::Vector{UInt8}, buf::Vector{UInt8}, i::Int, j::Int,
+function degroup!(scratch::Vector{UInt8}, buf::AbstractVector{UInt8}, i::Int, j::Int,
                   gm::UInt8, decimal::UInt8)
     _hasbyte(buf, i, j, gm) || return -1
     n = j - i + 1
@@ -153,7 +170,7 @@ end
 # Does `buf[i:j]` contain byte `b`? Word-at-a-time (eq-mask) while eight bytes
 # remain inside the buffer, byte tail otherwise — the mark pre-scan every cell
 # of a grouped column pays, so it must be nearly free when there are no marks.
-@inline function _hasbyte(buf::Vector{UInt8}, i::Int, j::Int, b::UInt8)
+@inline function _hasbyte(buf::AbstractVector{UInt8}, i::Int, j::Int, b::UInt8)
     k = i
     lim = min(j, length(buf)) - 7
     @inbounds while k <= lim
@@ -177,10 +194,11 @@ each digit run gathers straight out of the loaded word. Runs longer than
 eight digits, or spans within eight bytes of the buffer's end, take the
 reference path so nothing reads past the buffer.
 """
-parsegroupedint64(buf::Vector{UInt8}, i::Int, j::Int, gm::UInt8) =
+parsegroupedint64(buf::AbstractVector{UInt8}, i::Int, j::Int, gm::UInt8) =
     parsegroupedint64(buf, i, j, gm, Vector{UInt8}(undef, 64))
 
-function parsegroupedint64(buf::Vector{UInt8}, i::Int, j::Int, gm::UInt8, scratch::Vector{UInt8})
+function parsegroupedint64(buf::AbstractVector{UInt8}, i::Int, j::Int, gm::UInt8,
+                           scratch::Vector{UInt8})
     i > j && return (zero(Int64), RC_INVALID)
     i0 = i                                       # the reference path re-reads the sign itself
     @inbounds b = buf[i]
@@ -236,7 +254,7 @@ end
 # reference semantics for the guarded cases: degroup the WHOLE span (sign
 # included) into the caller's scratch (degroup! grows it if needed), then
 # parseint64 — allocation-free on the column loop's per-chunk scratch
-@noinline function _parsegroupedint64_slow(buf::Vector{UInt8}, i::Int, j::Int, gm::UInt8,
+@noinline function _parsegroupedint64_slow(buf::AbstractVector{UInt8}, i::Int, j::Int, gm::UInt8,
                                            scratch::Vector{UInt8})
     n = degroup!(scratch, buf, i, j, gm, 0xff)
     n == -2 && return (zero(Int64), RC_INVALID)
@@ -251,7 +269,7 @@ const _SIGNED   = Union{Int8, Int16, Int32, Int64, Int128}
 const _UNSIGNED = Union{UInt8, UInt16, UInt32, UInt64, UInt128}
 
 # UInt64: the parseint64 SWAR core without a sign, with the 20-digit bound
-function _parseuint64(buf::Vector{UInt8}, i::Int, j::Int)
+function _parseuint64(buf::AbstractVector{UInt8}, i::Int, j::Int)
     i > j && return (zero(UInt64), RC_INVALID)          # no sign of any kind (Base's rule for unsigned)
     @inbounds while i <= j && buf[i] == UInt8('0')
         i += 1
@@ -283,7 +301,7 @@ function _parseuint64(buf::Vector{UInt8}, i::Int, j::Int)
 end
 
 # UInt128: 8-digit blocks with checked accumulation (39 digits max)
-function _parseuint128(buf::Vector{UInt8}, i::Int, j::Int)
+function _parseuint128(buf::AbstractVector{UInt8}, i::Int, j::Int)
     i > j && return (zero(UInt128), RC_INVALID)
     @inbounds while i <= j && buf[i] == UInt8('0')
         i += 1
@@ -320,7 +338,7 @@ unsigned), digits, nothing else. `rc` is `RC_OK`, `RC_INVALID`, or
 type lattice uses to widen). Int64/UInt64 and narrower go through the SWAR
 kernels; Int128/UInt128 through 8-digit checked blocks.
 """
-@inline function parseint(::Type{T}, buf::Vector{UInt8}, i::Int, j::Int) where {T <: _SIGNED}
+@inline function parseint(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int) where {T <: _SIGNED}
     if T === Int128
         return parseint128(buf, i, j)
     end
@@ -330,7 +348,7 @@ kernels; Int128/UInt128 through 8-digit checked blocks.
     typemin(T) <= v <= typemax(T) || return (zero(T), RC_OVERFLOW)
     return (T(v), RC_OK)
 end
-@inline function parseint(::Type{T}, buf::Vector{UInt8}, i::Int, j::Int) where {T <: _UNSIGNED}
+@inline function parseint(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int) where {T <: _UNSIGNED}
     if T === UInt128
         return _parseuint128(buf, i, j)
     end
@@ -352,6 +370,36 @@ end
 end
 
 """
+    degroupint!(scratch, buf, i, j, groupmark, base) -> n
+
+Copy an integer span into `scratch` and remove valid group marks. A mark must
+sit between two digits that are valid in `base`; signs are copied unchanged.
+Returns the same sentinel values as [`degroup!`](@ref).
+"""
+function degroupint!(scratch::Vector{UInt8}, buf::AbstractVector{UInt8},
+                     i::Int, j::Int, gm::UInt8, base::Int)
+    _hasbyte(buf, i, j, gm) || return -1
+    n = j - i + 1
+    length(scratch) < n && resize!(scratch, max(n, 64))
+    m = 0
+    @inbounds for k in i:j
+        b = buf[k]
+        if b == gm
+            if k <= i || k >= j
+                return -2
+            end
+            prev = _digitvalue(buf[k - 1], base)
+            next = _digitvalue(buf[k + 1], base)
+            (prev < base && next < base) || return -2
+        else
+            m += 1
+            scratch[m] = b
+        end
+    end
+    return m
+end
+
+"""
     parseint(T, buf, i, j, base) -> (T, rc, badpos)
 
 Integer in `base` (2 ≤ base ≤ 62; base 10 takes the SWAR path above), any
@@ -359,7 +407,8 @@ width; `badpos` is the position of the offending byte when `rc == RC_INVALID`
 (0 otherwise) so the caller can name it the way `Base.parse` does. Overflow
 is detected with checked arithmetic.
 """
-function parseint(::Type{T}, buf::Vector{UInt8}, i::Int, j::Int, base::Int) where {T <: Union{_SIGNED, _UNSIGNED}}
+function parseint(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
+                  base::Int) where {T <: Union{_SIGNED, _UNSIGNED}}
     if base == 10
         v, rc = parseint(T, buf, i, j)
         return (v, rc, rc == RC_INVALID ? _firstbad10(buf, i, j) : 0)
@@ -389,9 +438,26 @@ function parseint(::Type{T}, buf::Vector{UInt8}, i::Int, j::Int, base::Int) wher
     return (v, RC_OK, 0)
 end
 
+# A radix prefix sits between the sign and the digits, so the ordinary
+# exact-span kernel cannot see both at once. Parse a negative magnitude as the
+# corresponding unsigned type, then apply the one-extra-value signed bound so
+# `-0x80` and its wider forms produce `typemin(T)`.
+@inline function parseprefixedint(::Type{T}, buf::AbstractVector{UInt8},
+                                  i::Int, j::Int, base::Int,
+                                  neg::Bool) where {T <: _SIGNED}
+    neg || return parseint(T, buf, i, j, base)
+    U = unsigned(T)
+    mag, rc, bad = parseint(U, buf, i, j, base)
+    rc == RC_OK || return (zero(T), rc, bad)
+    limit = U(typemax(T)) + one(U)
+    mag > limit && return (zero(T), RC_OVERFLOW, 0)
+    mag == limit && return (typemin(T), RC_OK, 0)
+    return (-T(mag), RC_OK, 0)
+end
+
 # position of the first byte that is not part of a base-10 integer (for the
 # error message); i when the span is empty/sign-only
-function _firstbad10(buf::Vector{UInt8}, i::Int, j::Int)
+function _firstbad10(buf::AbstractVector{UInt8}, i::Int, j::Int)
     k = i
     @inbounds if k <= j && (buf[k] == UInt8('-') || buf[k] == UInt8('+'))
         k += 1

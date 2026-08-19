@@ -21,7 +21,7 @@ end
 
 # Split [i,j] into sign/digits/point/exponent. Returns (parts, rc) with
 # rc=INVALID for structure errors; special spellings handled by caller.
-function _decompose(buf::Vector{UInt8}, i::Int, j::Int, decimal::UInt8)
+function _decompose(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8)
     # Phase-structured: sign → integer run → decimal point → fraction run →
     # (>19-digit tail) → exponent. Each digit run gathers eight digits per word
     # while the 19-digit significand has room (and a whole word is in bounds);
@@ -378,7 +378,7 @@ mutable struct HPD
     sticky::Bool
 end
 
-function _hpd(buf::Vector{UInt8}, i::Int, j::Int, decimal::UInt8)
+function _hpd(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8)
     d = Vector{UInt8}(undef, SDC_MAXDIG)
     n = 0
     dp = 0
@@ -508,10 +508,10 @@ end
 
 # @noinline is load-bearing: this is the ~1-in-10^4 cold tier, and letting it
 # inline bloats parsefloat64's hot path ~7x (measured 29ns -> 203ns per value).
-_sdc(buf::Vector{UInt8}, i::Int, j::Int, neg::Bool, decimal::UInt8) =
+_sdc(buf::AbstractVector{UInt8}, i::Int, j::Int, neg::Bool, decimal::UInt8) =
     _sdc(Float64, buf, i, j, neg, decimal)
 
-@noinline function _sdc(::Type{T}, buf::Vector{UInt8}, i::Int, j::Int, neg::Bool,
+@noinline function _sdc(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int, neg::Bool,
                         decimal::UInt8) where {T <: Union{Float64, Float32}}
     MB = _mantbits(T)
     h = _hpd(buf, i, j, decimal)
@@ -587,7 +587,7 @@ end
 # --- special spellings ---------------------------------------------------------
 
 @inline _lower(b::UInt8) = b | 0x20
-function _matchspecial(buf::Vector{UInt8}, i::Int, j::Int)
+function _matchspecial(buf::AbstractVector{UInt8}, i::Int, j::Int)
     # returns (Float64, matched)
     neg = false
     @inbounds if i <= j
@@ -637,7 +637,7 @@ const _P10U = (UInt64(1), UInt64(10), UInt64(100), UInt64(1000), UInt64(10_000),
 # runs, specials, spans within 16 bytes of the buffer's end — returns
 # handled=false and the general state machine decides, so the accepted set is
 # unchanged by construction. Undecided Eisel-Lemire edges also fall back.
-@inline function _float_fast(buf::Vector{UInt8}, i::Int, j::Int, decimal::UInt8)
+@inline function _float_fast(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8)
     neg = false
     @inbounds if i <= j
         b = buf[i]
@@ -675,7 +675,7 @@ const _P10U = (UInt64(1), UInt64(10), UInt64(100), UInt64(1000), UInt64(10_000),
     return (neg ? -f : f, true)
 end
 
-@inline function _parsefloat_core(::Type{T}, buf::Vector{UInt8}, i::Int, j::Int,
+@inline function _parsefloat_core(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
                                   decimal::UInt8) where {T <: Union{Float64, Float32}}
     if T === Float64
         v, handled = _float_fast(buf, i, j, decimal)   # the dominant [sign]digits[.digits] shape
@@ -747,7 +747,7 @@ follows `Base.parse` and rejects them.
 Structured as an @inline hot core plus a thin wrapper owning the cold tier-3
 tail (kept @noinline so its ~1000-step scaling loops never bloat the hot path).
 """
-function parsefloat(::Type{T}, buf::Vector{UInt8}, i::Int, j::Int,
+function parsefloat(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
                     decimal::UInt8=UInt8('.')) where {T <: Union{Float64, Float32}}
     v, rc, done = _parsefloat_core(T, buf, i, j, decimal)
     done && return (v, rc)
@@ -755,7 +755,7 @@ function parsefloat(::Type{T}, buf::Vector{UInt8}, i::Int, j::Int,
     rc = r == 0 ? RC_UNDERFLOW : isinf(r) ? RC_OVERFLOW : RC_OK   # mant ≠ 0 on this path
     return (r, rc)
 end
-parsefloat64(buf::Vector{UInt8}, i::Int, j::Int, decimal::UInt8=UInt8('.')) =
+parsefloat64(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8=UInt8('.')) =
     parsefloat(Float64, buf, i, j, decimal)
 
 const _POW10F32 = Float32[10.0f0^k for k in 0:10]
@@ -765,7 +765,8 @@ const _POW10F32 = Float32[10.0f0^k for k in 0:10]
 # mantissa accumulates up to 16 hex digits exactly (further digits fold into a
 # sticky bit), the binary exponent tracks fraction digits and the `p` part, and
 # one round-half-even from the wide integer gives the correctly rounded T.
-function _parsehexfloat(::Type{T}, buf::Vector{UInt8}, i::Int, j::Int) where {T <: Union{Float64, Float32}}
+function _parsehexfloat(::Type{T}, buf::AbstractVector{UInt8}, i::Int,
+                        j::Int) where {T <: Union{Float64, Float32}}
     neg = false
     @inbounds if i <= j
         b = buf[i]

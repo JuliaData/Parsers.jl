@@ -42,9 +42,6 @@ function _setup_trim_env()
         println(output)
         error("failed to set up trim test environment")
     end
-    # the trim workload must build against the trim-specialized machinery —
-    # the default (fast-TTFX) forms are intentionally not verifier-resolvable
-    write(joinpath(env_path, "LocalPreferences.toml"), "[StructUtils]\ntrim_specialize = true\n")
     println("[trim] temp environment ready")
     return env_path
 end

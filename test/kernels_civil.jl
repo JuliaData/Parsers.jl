@@ -3,15 +3,6 @@
 # with the oracle on the accept-set; deliberate deltas are pinned explicitly.
 using Test, Random, Dates, Parsers
 
-b(s) = Vector{UInt8}(codeunits(s))
-pint(s) = Parsers.parseint64(b(s), 1, ncodeunits(s))
-pint128(s) = Parsers.parseint128(b(s), 1, ncodeunits(s))
-pflt(s) = Parsers.parsefloat64(b(s), 1, ncodeunits(s))
-pbool(s) = Parsers.parsebool(b(s), 1, ncodeunits(s))
-const todate = Parsers.todate
-const todatetime = Parsers.todatetime
-const totime = Parsers.totime
-
 @testset "civil: daysfromcivil vs Dates oracle" begin
     for y in (-4000, -1900, -400, -100, -4, -1, 0,
               1, 100, 1583, 1600, 1900, 1970, 2000, 2020, 2024, 2100, 2400, 9999)
@@ -170,4 +161,3 @@ end
         end
     end
 end
-

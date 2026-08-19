@@ -9,13 +9,17 @@
 #                      whitespace, bases/prefixes, hex floats, Float32 native,
 #                      Float16, keywords, error messages identical to Base
 using Test, Parsers, Aqua
+include("helpers.jl")
 @testset "Parsers" begin
     @testset "Aqua" begin
-        Aqua.test_all(Parsers; ambiguities=false, piracies=false)
+        Aqua.test_all(Parsers)
     end
     include("kernels_ints.jl")
     include("kernels_floats.jl")
     include("kernels_civil.jl")
     include("kernels_misc.jl")
     include("api.jl")
+    include("regressions.jl")
 end
+
+include("trim_compile_tests.jl")

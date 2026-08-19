@@ -3,15 +3,6 @@
 # with the oracle on the accept-set; deliberate deltas are pinned explicitly.
 using Test, Random, Dates, Parsers
 
-b(s) = Vector{UInt8}(codeunits(s))
-pint(s) = Parsers.parseint64(b(s), 1, ncodeunits(s))
-pint128(s) = Parsers.parseint128(b(s), 1, ncodeunits(s))
-pflt(s) = Parsers.parsefloat64(b(s), 1, ncodeunits(s))
-pbool(s) = Parsers.parsebool(b(s), 1, ncodeunits(s))
-const todate = Parsers.todate
-const todatetime = Parsers.todatetime
-const totime = Parsers.totime
-
 module DecomposeRef
 using Parsers: DecParts, RC_OK, RC_INVALID
 function _decompose_ref(buf::Vector{UInt8}, i::Int, j::Int, decimal::UInt8)
@@ -408,4 +399,3 @@ end
         @test Parsers.parsebigfloat(b(s), 1, ncodeunits(s))[2] == Parsers.RC_INVALID
     end
 end
-
