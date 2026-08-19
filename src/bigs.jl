@@ -1,0 +1,320 @@
+# =============================================================================
+# arbitrary precision & identifiers — BigInt / BigFloat / UUID
+#
+# The self-contained mandate covers the PARSING: span validation, digit
+# decomposition, binary extraction, and rounding are all ours. BigInt/BigFloat
+# are Base types whose arithmetic is GMP/MPFR by definition — we hand them a
+# finished, correctly-rounded value (never a string), so mpz_set_str /
+# mpfr_strtofr are never involved.
+# =============================================================================
+
+const _POW10_INT = Int64[Int64(10)^k for k in 0:17]
+const _POW10_18 = Int64(10)^18
+
+# Powers of five for the BigFloat scaling path, built at precompile time.
+# Covers every exponent reachable from ~150 significant digits around the
+# double range; rarer exponents compute fresh. Entries are READ-ONLY — the
+# scaling code must never hand them to an in-place GMP op's output slot.
+for f in (:set_si!, :mul!, :mul_si!, :add_ui!, :mul_2exp!, :tdiv_qr!,
+          :fdiv_q_2exp!, :tstbit, :scan1, :sizeinbase, :pow_ui, :neg!)
+    isdefined(Base.GMP.MPZ, f) ||
+        error("Parsers requires Base.GMP.MPZ.$f (Julia internals moved?)")
+end
+
+const _POW5BIG = [BigInt(5)^k for k in 0:512]
+@inline _pow5big(k::Int) = k <= 512 ? @inbounds(_POW5BIG[k + 1]) : BigInt(5)^k
+
+"""
+    BigWork()
+
+Reusable workspace for `parsebigfloat`: the two BigInt temporaries (mantissa
+accumulator and division remainder) live here so a column loop allocates them
+once instead of per value — GMP objects are finalizer-registered, and two
+fewer registrations per value is most of the distance to mpfr_strtofr's
+single-allocation profile. Never share one across concurrent tasks.
+"""
+struct BigWork
+    M::BigInt
+    R::BigInt
+end
+BigWork() = BigWork(BigInt(0), BigInt(0))
+
+# One correctly-rounded store into a fresh BigFloat: our prec-bit integer
+# mantissa is exact under mpfr_set_z, the 2^e scale is exact under mul_2si,
+# and the sign flips in place — one MPFR allocation, no ldexp/unary-minus
+# temporaries.
+function _assemble(M::BigInt, e::Int, neg::Bool, prec::Int)
+    v = BigFloat(; precision=prec)
+    ccall((:mpfr_set_z, Base.MPFR.libmpfr), Int32,
+          (Ref{BigFloat}, Ref{BigInt}, Int32), v, M, 0)
+    ccall((:mpfr_mul_2si, Base.MPFR.libmpfr), Int32,
+          (Ref{BigFloat}, Ref{BigFloat}, Clong, Int32), v, v, e, 0)
+    neg && ccall((:mpfr_neg, Base.MPFR.libmpfr), Int32,
+                 (Ref{BigFloat}, Ref{BigFloat}, Int32), v, v, 0)
+    return v
+end
+
+# 18-digit chunks flush through in-place GMP ops — one BigInt allocated per
+# value, zero per chunk (the allocating `big = big*10^18 + acc` form measured
+# ~40% slower than mpz_set_str; this form beats it).
+@inline function _flushchunk!(big::BigInt, started::Bool, acc::Int64, mult::Int64)
+    if started
+        Base.GMP.MPZ.mul_si!(big, mult)
+        Base.GMP.MPZ.add_ui!(big, acc % UInt64)
+    else
+        Base.GMP.MPZ.set_si!(big, acc)
+    end
+    return true
+end
+
+"""
+    parsebigint(buf, i, j) -> (BigInt, rc)
+
+Exact-span BigInt: sign and decimal digits only (the strict integer grammar,
+same as `parseint64` without the width limit). Digits accumulate through
+18-digit Int64 chunks, so the big-number work is O(n/18) multiply-adds on the
+result type rather than per-digit ops or a string round-trip.
+"""
+function parsebigint(buf::Vector{UInt8}, i::Int, j::Int)
+    i > j && return (BigInt(0), RC_INVALID)
+    neg = false
+    @inbounds begin
+        b = buf[i]
+        if b == UInt8('-') || b == UInt8('+')
+            neg = b == UInt8('-')
+            i += 1
+        end
+    end
+    i > j && return (BigInt(0), RC_INVALID)
+    acc = Int64(0)
+    nacc = 0
+    big = BigInt(0)
+    started = false
+    @inbounds for k in i:j
+        d = buf[k] - UInt8('0')
+        d > 0x09 && return (BigInt(0), RC_INVALID)
+        acc = acc * 10 + Int64(d)
+        nacc += 1
+        if nacc == 18
+            started = _flushchunk!(big, started, acc, _POW10_18)
+            acc = 0
+            nacc = 0
+        end
+    end
+    nacc > 0 && (started = _flushchunk!(big, started, acc, @inbounds(_POW10_INT[nacc + 1])))
+    neg && Base.GMP.MPZ.neg!(big)
+    return (big, RC_OK)
+end
+
+"""
+    parsebigfloat(buf, i, j, decimal=UInt8('.'); prec=precision(BigFloat)) -> (BigFloat, rc)
+
+Correctly rounded (round-half-even) BigFloat at `prec` bits, same grammar and
+special spellings as `parsefloat64`. The high-precision decimal machinery from
+tier 3 generalizes: scale the exact decimal into [1, 2), generate `prec`
+binary digits, round once with the sticky bit. MPFR only STORES the result —
+the value is assembled from an exactly-representable prec-bit integer and an
+exact `ldexp`, so this layer performs the single rounding itself.
+
+Prove-out range bound: decimal magnitudes beyond ~10^±65536 return
+RC_OVERFLOW (binary scaling is bit-at-a-time here; the upstream Parsers form
+gets power-of-ten jump tables the way Eisel-Lemire's POW5 works). No
+subnormal handling is needed inside that range — BigFloat's exponent field
+dwarfs it.
+"""
+parsebigfloat(buf::Vector{UInt8}, i::Int, j::Int, decimal::UInt8=UInt8('.');
+              prec::Int=precision(BigFloat)) =
+    parsebigfloat(buf, i, j, decimal, BigWork(); prec)
+
+function parsebigfloat(buf::Vector{UInt8}, i::Int, j::Int,
+                       decimal::UInt8, ws::BigWork; prec::Int=precision(BigFloat))
+    prec >= 2 || throw(ArgumentError("prec must be ≥ 2"))
+    sp, matched = _matchspecial(buf, i, j)
+    matched && return (BigFloat(sp; precision=prec), RC_OK)
+    parts, rc = _decompose(buf, i, j, decimal)
+    rc == RC_OK || return (BigFloat(0; precision=prec), rc)
+    if parts.mant == 0
+        z = BigFloat(0; precision=prec)
+        return (parts.neg ? -z : z, RC_OK)
+    end
+    # every significant digit into a BigInt (the parsebigint accumulator, with
+    # the decimal byte skipped), tracking the true power of ten. The range test
+    # uses the full mantissa exponent, not DecParts.exp10 (which is relative to
+    # its truncated 19-digit mantissa).
+    M = ws.M
+    Base.GMP.MPZ.set_si!(M, 0)
+    q, inrange = _bigmantissa!(M, buf, i, Int(parts.digstart), j, decimal)
+    inrange || return (BigFloat(0; precision=prec), RC_OVERFLOW)
+    # value = M × 10^q = M × 5^q × 2^q — pure integer scaling, one rounding:
+    #   q ≥ 0: N = M·5^q is exact and value = N × 2^q
+    #   q < 0: N = ⌊M·2^s / 5^-q⌋ with s sized so N keeps ≥ prec+2 bits; the
+    #          remainder is the sticky. value = N × 2^(q-s)
+    # in-place GMP throughout: M becomes N; rounding decisions read bits
+    # without materializing masks (tstbit/scan1); ~4 allocations per value
+    MPZ = Base.GMP.MPZ
+    sticky = false
+    if q >= 0
+        q > 0 && MPZ.mul!(M, _pow5big(q))
+        e2 = q
+    else
+        k = -q
+        d5 = _pow5big(k)
+        s = max(0, prec + 3 + Int(MPZ.sizeinbase(d5, 2)) - Int(MPZ.sizeinbase(M, 2)))
+        MPZ.mul_2exp!(M, s % Culong)
+        R = ws.R
+        MPZ.tdiv_qr!(M, R, M, d5)
+        sticky = !iszero(R)
+        e2 = q - s
+    end
+    nb = Int(MPZ.sizeinbase(M, 2))                  # exact for base 2
+    if nb > prec
+        drop = nb - prec
+        rbit = MPZ.tstbit(M, (drop - 1) % Culong)
+        # sticky below the round bit: lowest set bit sits under it
+        sticky = sticky || (drop > 1 && Int(MPZ.scan1(M, 0)) < drop - 1)
+        MPZ.fdiv_q_2exp!(M, drop % Culong)          # M >>= drop (M ≥ 0 here)
+        if rbit && (sticky || MPZ.tstbit(M, Culong(0)))
+            MPZ.add_ui!(M, 1)
+            if Int(MPZ.sizeinbase(M, 2)) > prec     # carry out of the mantissa
+                MPZ.fdiv_q_2exp!(M, Culong(1))
+                drop += 1
+            end
+        end
+        return (_assemble(M, e2 + drop, parts.neg, prec), RC_OK)
+    end
+    # exact case (only reachable when q ≥ 0, where sticky is impossible)
+    return (_assemble(M, e2, parts.neg, prec), RC_OK)
+end
+
+# All significant digits from `digstart` (first significant digit, per
+# _decompose) through the end of the digit run, skipping the decimal byte.
+# Returns `(M, q, inrange)` with value `M × 10^q` when `inrange`; the
+# boolean is false when `abs(q + ndig) > 65536`. Shape is already validated.
+function _bigmantissa!(big::BigInt, buf::Vector{UInt8}, i::Int, digstart::Int, j::Int,
+                       decimal::UInt8)
+    started = false
+    acc = Int64(0)
+    nacc = 0
+    # A decimal point BEFORE the first significant digit ("0.001") puts the
+    # whole mantissa in the fraction, and the skipped zeros between the point
+    # and digstart are fractional positions too.
+    frac = 0
+    infrac = false
+    ndig = 0
+    @inbounds for p in i:(digstart - 1)
+        if buf[p] == decimal
+            infrac = true
+            frac = digstart - p - 1
+            break
+        end
+    end
+    k = digstart
+    @inbounds while k <= j
+        b = buf[k]
+        d = b - UInt8('0')
+        if d <= 0x09
+            acc = acc * 10 + Int64(d)
+            nacc += 1
+            ndig += 1
+            infrac && (frac += 1)
+            if nacc == 18
+                started = _flushchunk!(big, started, acc, _POW10_18)
+                acc = 0
+                nacc = 0
+            end
+        elseif b == decimal
+            infrac = true
+        else
+            break                                    # e/E exponent
+        end
+        k += 1
+    end
+    nacc > 0 && (started = _flushchunk!(big, started, acc, @inbounds(_POW10_INT[nacc + 1])))
+    expv = 0
+    @inbounds if k <= j                              # exponent (validated shape)
+        k += 1                                       # skip e/E
+        eneg = buf[k] == UInt8('-')
+        (eneg || buf[k] == UInt8('+')) && (k += 1)
+        offset = ndig - frac
+        if j - k + 1 <= 18
+            # Every 18-digit exponent fits Int64. This branch covers normal
+            # input with no bound arithmetic in the digit loop.
+            while k <= j
+                expv = expv * 10 + Int(buf[k] - UInt8('0'))
+                k += 1
+            end
+        else
+            # Only exponents within this bound can make |q + ndig| <= 65536.
+            # Saturating against a fixed constant is unsafe: a long mantissa can
+            # cancel that constant and let an enormous reconstructed q reach pow_ui.
+            aoff = abs(offset)
+            limit = aoff > typemax(Int) - 65536 ? typemax(Int) : aoff + 65536
+            limit10, limitdigit = divrem(limit, 10)
+            while k <= j
+                d = Int(buf[k] - UInt8('0'))
+                (expv > limit10 || (expv == limit10 && d > limitdigit)) &&
+                    return (0, false)
+                expv = expv * 10 + d
+                k += 1
+            end
+        end
+        signedexp = eneg ? -expv : expv
+        abs(Int128(signedexp) + Int128(offset)) > 65536 && return (0, false)
+        return (signedexp - frac, true)
+    end
+    abs(ndig - frac) > 65536 && return (0, false)
+    return (-frac, true)
+end
+
+"""
+    parseuuid(buf, i, j) -> (UInt128, rc)
+
+The canonical 8-4-4-4-12 dashed hex form, case-insensitive — exactly the
+spellings `Base.tryparse(UUID, s)` accepts. Returns the raw UInt128; thin
+adapters construct `Base.UUID` (mirroring the CivilParts/Dates split).
+"""
+function parseuuid(buf::Vector{UInt8}, i::Int, j::Int)
+    j - i + 1 == 36 || return (UInt128(0), RC_INVALID)
+    @inbounds begin
+        (buf[i + 8] == UInt8('-')) & (buf[i + 13] == UInt8('-')) &
+        (buf[i + 18] == UInt8('-')) & (buf[i + 23] == UInt8('-')) ||
+            return (UInt128(0), RC_INVALID)
+    end
+    # 8-4-4-4-12 → four 8-hex-char words. The 4-char groups pair up via their
+    # low 32 bits (loads at 9|14 and 19|24); every load stays inside the span.
+    w1 = _load8(buf, i)
+    w2 = (_load8(buf, i + 9) & 0x00000000ffffffff) | (_load8(buf, i + 14) << 32)
+    w3 = (_load8(buf, i + 19) & 0x00000000ffffffff) | (_load8(buf, i + 24) << 32)
+    w4 = _load8(buf, i + 28)
+    v1, ok1 = _hex8(w1)
+    v2, ok2 = _hex8(w2)
+    v3, ok3 = _hex8(w3)
+    v4, ok4 = _hex8(w4)
+    ok1 & ok2 & ok3 & ok4 || return (UInt128(0), RC_INVALID)
+    return ((UInt128(v1) << 96) | (UInt128(v2) << 64) | (UInt128(v3) << 32) | UInt128(v4), RC_OK)
+end
+
+# Eight ASCII hex chars (either case) in one word → (UInt32 value, valid). Byte
+# k of `w` is character k, so the first character is the most significant
+# nibble of the result. Branch-free: lowercase, range-test digits and a-f
+# lanes with the borrow-free trick, pick the nibble as (b & 0x0f) + 9·isalpha
+# ('a'..'f' have low nibbles 1..6), then fold the eight nibbles together.
+@inline function _hex8(w::UInt64)
+    w |= 0x2020202020202020                       # 'A'..'F' → 'a'..'f'; digits unchanged
+    # digit lanes: bytes in 0x30..0x39; alpha lanes: bytes in 0x61..0x66
+    d = w ⊻ 0x3030303030303030                     # digit ⇒ 0x00..0x09
+    a = w ⊻ 0x6060606060606060                     # 'a'..'f' ⇒ 0x01..0x06
+    isdig = ((d + 0x7676767676767676) & 0x8080808080808080) ⊻ 0x8080808080808080  # d <= 9 ⇒ no carry into bit 7
+    isalp = ((a + 0x7979797979797979) & 0x8080808080808080) ⊻ 0x8080808080808080  # a <= 6
+    isalp &= ((a - 0x0101010101010101) & 0x8080808080808080) ⊻ 0x8080808080808080 # a >= 1
+    # each lane must be exactly one of the two, and high bytes (>= 0x80) never
+    # qualify: exclude them via the byte's own high bit
+    hi = w & 0x8080808080808080
+    ok = ((isdig | isalp) & ~hi) == 0x8080808080808080
+    nib = (w & 0x0f0f0f0f0f0f0f0f) + ((isalp >> 7) * 0x09)   # + 9 on alpha lanes
+    # fold 8 nibbles (byte lanes) into 32 bits, first char most significant
+    t = ((nib & 0x000f000f000f000f) << 4) | ((nib & 0x0f000f000f000f00) >> 8)
+    t = ((t & 0x000000ff000000ff) << 8) | ((t & 0x00ff000000ff0000) >> 16)
+    t = ((t & 0x000000000000ffff) << 16) | ((t & 0x0000ffff00000000) >> 32)
+    return (UInt32(t & 0xffffffff), ok)
+end

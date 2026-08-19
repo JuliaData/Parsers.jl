@@ -1,7 +1,7 @@
 name: IntegrationTest
 on:
   push:
-    branches: [main]
+    branches: [main, v3]
     tags: [v*]
   pull_request:
 

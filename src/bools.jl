@@ -1,55 +1,35 @@
-const DEFAULT_TRUE = "true"
-const DEFAULT_FALSE = "false"
+# =============================================================================
+# bool — exactly true/false (or the caller's explicit lists, matched above)
+# =============================================================================
 
-@inline function typeparser(::AbstractConf{Bool}, source, pos, len, b, code, pl, options::Options)
-    x = false
-    trues = options.trues
-    falses = options.falses
-    if trues === nothing
-        check, pos = checktoken(source, pos, len, b, DEFAULT_TRUE)
-        if check
-            x = true
-            code |= OK
-            eof(source, pos, len) && (code |= EOF)
-            @goto done
-        else
-            intpos, intcode, intpl, intx = typeparser(DefaultConf{UInt8}(), source, pos, len, b, code, pl, options)
-            if ok(intcode) && intx < 0x02
-                x = intx == 0x01
-                code = intcode
-                pos = intpos
-                pl = intpl
-                @goto done
-            end
-        end
-    else
-        check, pos = checktokens(source, pos, len, b, trues, true)
-        if check
-            x = true
-            code |= OK
-            eof(source, pos, len) && (code |= EOF)
-            @goto done
-        end
+function parsebool(buf::Vector{UInt8}, i::Int, j::Int)
+    n = j - i + 1
+    @inbounds if n == 4 && buf[i] == UInt8('t') && buf[i+1] == UInt8('r') &&
+                 buf[i+2] == UInt8('u') && buf[i+3] == UInt8('e')
+        return (true, RC_OK)
+    elseif n == 5 && buf[i] == UInt8('f') && buf[i+1] == UInt8('a') &&
+           buf[i+2] == UInt8('l') && buf[i+3] == UInt8('s') && buf[i+4] == UInt8('e')
+        return (false, RC_OK)
     end
-    if falses === nothing
-        check, pos = checktoken(source, pos, len, b, DEFAULT_FALSE)
-        if check
-            x = false
-            code |= OK
-            eof(source, pos, len) && (code |= EOF)
-            @goto done
-        end
-    else
-        check, pos = checktokens(source, pos, len, b, falses, true)
-        if check
-            x = false
-            code |= OK
-            eof(source, pos, len) && (code |= EOF)
-            @goto done
-        end
-    end
-    code |= INVALID | (eof(source, pos, len) ? EOF : SUCCESS)
-
-@label done
-    return pos, code, PosLen(pl.pos, pos - pl.pos), x
+    return (false, RC_INVALID)
 end
+
+"""
+    matchsentinel(buf, i, j, sentinels) -> Bool
+
+Does the span exactly equal any sentinel string? (Empty spans are the caller's
+missing fast path and never reach here.)
+"""
+function matchsentinel(buf::Vector{UInt8}, i::Int, j::Int, sentinels::Vector{Vector{UInt8}})
+    n = j - i + 1
+    @inbounds for s in sentinels
+        length(s) == n || continue
+        k = 1
+        while k <= n && buf[i + k - 1] == s[k]
+            k += 1
+        end
+        k > n && return true
+    end
+    return false
+end
+
