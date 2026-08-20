@@ -264,17 +264,25 @@ end
     return (T === Float16 ? Float16(v) : v, rc)
 end
 
+# Julia's Windows float parser accepts ERANGE results as the rounded infinity
+# or signed zero. Match that behavior only for Base's grammar. The explicit
+# Boolean keeps both policy branches directly testable on non-Windows hosts.
+@inline _acceptbasefloatrange(rc, decimal, groupmark,
+                              iswindows::Bool=Sys.iswindows()) =
+    iswindows && decimal == UInt8('.') && groupmark === nothing &&
+    (rc == RC_OVERFLOW || rc == RC_UNDERFLOW)
+
 @inline function _tryparsefloat(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
                                 decimal::UInt8, groupmark,
                                 ::Val{Throw}) where {T <: _FLOATS, Throw}
     orig_i, orig_j = i, j
     i, j = _stripws(buf, i, j)
     v, rc = _parsefloatspan(T, buf, i, j, decimal, groupmark)
-    if rc == RC_OK
+    if rc == RC_OK || _acceptbasefloatrange(rc, decimal, groupmark)
         return v
     end
-    # RC_OVERFLOW / RC_UNDERFLOW: Base rejects out-of-range results (strtod's
-    # ERANGE) — the kernel still holds the ±Inf / ±0 for callers that want it
+    # The kernel still holds the rounded ±Inf / ±0 for callers that want it.
+    # Base rejects these ERANGE results on non-Windows platforms.
     Throw || return nothing
     throw(ArgumentError("cannot parse $(_q(_spanstring(buf, orig_i, orig_j))) as $T"))
 end

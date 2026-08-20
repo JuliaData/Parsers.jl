@@ -146,7 +146,7 @@ end
     @test np == 6 && rc == Parsers.RC_OVERFLOW && isinf(v)
 end
 
-@testset "range codes on the kernels; Base rejects, the values are still there" begin
+@testset "range codes retain the rounded values" begin
     v, rc = Parsers.parsefloat(Float64, b("1e400"), 1, 5)
     @test rc == Parsers.RC_OVERFLOW && v == Inf
     v, rc = Parsers.parsefloat(Float64, b("-1e-400"), 1, 7)
@@ -157,6 +157,60 @@ end
     @test rc == Parsers.RC_OK && v == 0.0                              # a true zero is not an underflow
     @test Parsers.parseint(Int8, b("200"), 1, 3)[2] == Parsers.RC_OVERFLOW
     @test Parsers.parseint(UInt8, b("-1"), 1, 2)[2] == Parsers.RC_INVALID
+end
+
+@testset "public fixed-float ranges follow host Base" begin
+    cases = (
+        (Float64, "1e400", Inf),
+        (Float64, "-1e-400", -0.0),
+        (Float32, "1e40", Inf32),
+        (Float32, "-1e-46", -0.0f0),
+        (Float16, "1e40", Inf16),
+        (Float16, "-1e-46", -Float16(0)),
+    )
+    for (T, text, rounded) in cases
+        base_value = Base.tryparse(T, text)
+        if Sys.iswindows()
+            @test isequal(base_value, rounded)
+        else
+            @test base_value === nothing
+        end
+
+        bytes = b(text)
+        wrapped = "xx" * text * "yy"
+        substring = SubString(wrapped, 3, 2 + ncodeunits(text))
+        padded = b("xx" * text * "yy")
+        first = 3
+        last = first + ncodeunits(text) - 1
+        for source in (text, bytes, codeunits(text), substring)
+            if Sys.iswindows()
+                @test isequal(Parsers.parse(T, source), rounded)
+                @test isequal(Parsers.tryparse(T, source), rounded)
+            else
+                @test_throws ArgumentError Parsers.parse(T, source)
+                @test Parsers.tryparse(T, source) === nothing
+            end
+        end
+        if Sys.iswindows()
+            @test isequal(Parsers.parse(T, padded, first, last), rounded)
+            @test isequal(Parsers.tryparse(T, padded, first, last), rounded)
+        else
+            @test_throws ArgumentError Parsers.parse(T, padded, first, last)
+            @test Parsers.tryparse(T, padded, first, last) === nothing
+        end
+    end
+
+    @test Parsers._acceptbasefloatrange(Parsers.RC_OVERFLOW, UInt8('.'), nothing, true)
+    @test Parsers._acceptbasefloatrange(Parsers.RC_UNDERFLOW, UInt8('.'), nothing, true)
+    @test !Parsers._acceptbasefloatrange(Parsers.RC_OVERFLOW, UInt8('.'), nothing, false)
+    @test !Parsers._acceptbasefloatrange(Parsers.RC_OVERFLOW, UInt8(','), nothing, true)
+    @test !Parsers._acceptbasefloatrange(Parsers.RC_OVERFLOW, UInt8('.'), UInt8(','), true)
+
+    # Custom grammars do not inherit Base's platform-specific range policy.
+    @test Parsers.tryparse(Float32, "1e40"; decimal=',') === nothing
+    @test Parsers.tryparse(Float32, "1e40"; groupmark=',') === nothing
+    @test_throws ArgumentError Parsers.parse(Float32, "1e40"; decimal=',')
+    @test_throws ArgumentError Parsers.parse(Float32, "1e40"; groupmark=',')
 end
 
 @testset "deliberate deltas from Base (documented in the README)" begin

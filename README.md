@@ -63,8 +63,8 @@ Parsers.parse(Time, "1:05 PM"; dateformat="I:MM p")
 For repeated custom temporal parsing, compile the format once with
 `Parsers.compilepattern` and pass the returned pattern through `dateformat`.
 
-`parse` throws for malformed or out-of-range input. `tryparse` returns
-`nothing`:
+`parse` throws for malformed input and for range errors that the host's
+`Base.parse` rejects. `tryparse` returns `nothing` whenever `parse` would throw:
 
 ```julia
 Parsers.tryparse(Int, "abc")  # nothing
@@ -154,6 +154,11 @@ Base across MPFR's full exponent range.
 
 Parsers aims to match `Base.parse` and `Base.tryparse` for the documented
 whole-value grammar. The test suite compares results and errors against Base.
+Fixed-width float range handling follows Base's platform behavior. Windows
+accepts values that round to signed zero or infinity where other supported
+platforms report a range error. The low-level kernels always expose the range
+through `RC_UNDERFLOW` or `RC_OVERFLOW`.
+
 Known deliberate differences are:
 
 - Whitespace tolerance is limited to ASCII whitespace.

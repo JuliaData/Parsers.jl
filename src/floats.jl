@@ -921,8 +921,8 @@ end
     end
     if bits >= 0
         # mant is nonzero here, so a zero pattern is underflow and the Inf
-        # pattern is overflow (Base.parse rejects both — ERANGE); the value
-        # is still ±0 / ±Inf for callers that want it
+        # pattern is overflow. The value remains available for callers that
+        # accept the rounded ±0 / ±Inf result.
         u = UInt64(bits)
         rc = u == 0 ? RC_UNDERFLOW : u == _infbits(T) ? RC_OVERFLOW : RC_OK
         return (_sign(T, u, parts.neg), rc, true)
@@ -967,8 +967,8 @@ case-insensitive spellings Inf/Infinity/NaN.
 `rc` is `RC_OK`, `RC_INVALID`, or one of the two RANGE codes: `RC_OVERFLOW`
 (the value rounded to ±Inf) and `RC_UNDERFLOW` (a nonzero spelling rounded to
 ±0). The value returned alongside a range code is that ±Inf / ±0, so a caller
-that wants C/strtod semantics simply treats both as success; `Parsers.parse`
-follows `Base.parse` and rejects them.
+that wants C/strtod semantics simply treats both as success. `Parsers.parse`
+follows the host's `Base.parse` range policy.
 
 Structured as an @inline hot core plus a thin wrapper owning the cold tier-3
 tail (kept @noinline so its ~1000-step scaling loops never bloat the hot path).
