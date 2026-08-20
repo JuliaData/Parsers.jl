@@ -8,11 +8,12 @@ CurrentModule = Parsers
 
 [`Parsers.parse`](@ref) and [`Parsers.tryparse`](@ref) accept an
 `AbstractString` or `AbstractVector{UInt8}`. Their byte-span forms accept an
-inclusive `first:last` range and check that range before parsing.
+inclusive `first:last` range and check that range before parsing. Byte-vector
+inputs must use one-based axes; offset-axis vectors are rejected.
 
 Numbers and `Bool` accept surrounding ASCII whitespace. Dates and UUIDs must
 consume the complete input. Custom `trues` and `falses` lists replace the
-default Boolean spellings.
+default Boolean spellings. Each custom spelling must contain at least one byte.
 
 Supported target types are:
 
@@ -31,6 +32,12 @@ Keyword support is target-specific:
 | `BigFloat` | `decimal`, `groupmark`, `rounding` |
 | `Bool` | `trues`, `falses` |
 | temporal types | `dateformat` |
+
+Public `BigFloat` conversion uses MPFR's default string grammar. Its decimal,
+binary, hexadecimal, special-value, and exponent spellings match Base across
+MPFR's full exponent range, including values beyond the bounded range of the
+low-level `parsebigfloat` kernel. Custom `decimal` and `groupmark` syntax is
+validated before it is normalized for MPFR.
 
 `dateformat` accepts a format string, a `Dates.DateFormat`, or a compiled
 `Parsers.DatePattern`. A `Dates.DateFormat` keeps its escaped literals and
@@ -64,8 +71,14 @@ Parsers.tryparse
 value grammar and applicable keywords. Integer parsing supports `base`, radix
 prefixes, and `groupmark`. Floating-point parsing supports `decimal`,
 `groupmark`, special values, and C99 hexadecimal floats. `BigFloat` also
-supports `rounding`. Boolean parsing supports `trues` and `falses`; custom
-lists replace the defaults, and the longest matching spelling wins.
+supports low-level `RoundingMode` values. Boolean parsing supports `trues` and
+`falses`; custom lists replace the defaults, and the longest matching spelling
+wins.
+
+`parsenext(BigFloat, ...)` uses the bounded low-level `parsebigfloat` kernel.
+Values outside that kernel's documented decimal prove-out range return a range
+code. Whole-input public parsing instead uses its MPFR fallback across MPFR's
+full exponent range.
 
 The call returns `(value, nextpos, code)`. `nextpos` is the first byte that was
 not consumed. It equals `pos` when no token starts there. Range errors consume

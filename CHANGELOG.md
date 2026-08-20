@@ -15,6 +15,7 @@ This file records user-visible changes to Parsers.jl. The project follows
   target parsing.
 - Change byte-span arguments from `pos, len` to inclusive `first, last`
   indices.
+- Require one-based axes for public byte-vector inputs.
 - Move delimiter, quote, escape, sentinel, missing-value, comment, and
   whitespace policy to the owning reader.
 
@@ -33,6 +34,8 @@ This file records user-visible changes to Parsers.jl. The project follows
 
 - Parse `Float32` directly instead of parsing through `Float64`.
 - Use explicit, target-specific keywords for value parsing.
+- Match Base's full MPFR exponent range in public `BigFloat` parsing while the
+  low-level self-contained parser keeps its documented decimal prove-out bound.
 - Keep the package export surface empty; supported names are called through
   the `Parsers` namespace.
 - Raise CI coverage to Julia 1.10, the latest stable Julia, nightly Julia,

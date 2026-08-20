@@ -72,7 +72,7 @@ Parsers.tryparse(Int, "abc")  # nothing
 
 Numbers and `Bool` accept surrounding ASCII whitespace. Dates and UUIDs must
 fill the input exactly. Custom `trues` and `falses` lists replace the default
-Boolean spellings; they do not extend them.
+Boolean spellings; they do not extend them. Custom spellings cannot be empty.
 
 ## Byte spans and tokenizing
 
@@ -86,9 +86,10 @@ Parsers.parse(Float64, buf, 4, 8)      # 350.0
 Parsers.tryparse(Bool, buf, 10, 13)    # true
 ```
 
-`String`, `SubString{String}`, their `codeunits` views, and `Vector{UInt8}`
-use their existing byte storage. Other `AbstractString` and
-`AbstractVector{UInt8}` inputs can require a contiguous copy.
+`String`, `SubString{String}`, their `codeunits` views, and one-based
+`AbstractVector{UInt8}` inputs use their existing byte storage. Other
+`AbstractString` inputs can require a copy. Byte vectors with offset axes are
+rejected because the public span indices are one-based.
 
 `parsenext` finds and parses the longest supported token at a byte position. It
 does not skip whitespace:
@@ -101,7 +102,10 @@ value, nextpos, code = Parsers.parsenext(Float64, buf, 4, length(buf))
 For integers, floats, `BigInt`, `BigFloat`, and `Bool`, the tokenizer uses the
 same value grammar and applicable keywords as whole-input parsing. This
 includes integer radix prefixes, digit-group marks, C99 hexadecimal floats,
-and custom Boolean spellings. It does not scan dates or UUIDs. See the
+and custom Boolean spellings. `parsenext(BigFloat, ...)` uses the bounded
+low-level kernel and returns a range code outside that kernel's documented
+decimal prove-out range; whole-input parsing uses MPFR's full range. The
+tokenizer does not scan dates or UUIDs. See the
 [API reference](https://JuliaData.github.io/Parsers.jl/dev/api/) for the exact
 return-code and bounds contract.
 
@@ -141,6 +145,11 @@ numeric kernels report parse failures through a code that the caller must
 check. `Parsers.compilepattern` compiles a temporal format for `parsecivil`; it
 is not a parsing kernel and can throw for an invalid format.
 
+The low-level `parsebigfloat` decimal kernel has a deliberate prove-out bound
+near `10^±65536`. It reports `RC_OVERFLOW` outside that bound. The public
+`Parsers.parse` and `Parsers.tryparse` methods for `BigFloat` use MPFR and match
+Base across MPFR's full exponent range.
+
 ## Compatibility notes
 
 Parsers aims to match `Base.parse` and `Base.tryparse` for the documented
@@ -155,8 +164,6 @@ Known deliberate differences are:
   nanoseconds; `DateTime` truncates to its millisecond resolution. The Dates
   stdlib parser accepts at most three fractional digits.
 - Temporal errors use Parsers-specific message text.
-- BigFloat decimal magnitudes beyond the documented kernel range return a
-  range failure instead of using MPFR's full exponent range.
 - `Parsers.parse(BigInt, "")` reports an invalid BigInt rather than Base's
   unrelated base error.
 
