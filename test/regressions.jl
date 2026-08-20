@@ -130,6 +130,22 @@ end
     end
 end
 
+@testset "public byte inputs require one-based axes" begin
+    source = OffsetBytes(b("123"))
+    @test Base.has_offset_axes(source)
+    @test_throws ArgumentError Parsers.parse(Int, source)
+    @test_throws ArgumentError Parsers.tryparse(Int, source)
+    @test_throws ArgumentError Parsers.parse(Int, source, 0, 2)
+    @test_throws ArgumentError Parsers.tryparse(Int, source, 0, 2)
+    @test_throws ArgumentError Parsers.parsenext(Int, source, 0, 2)
+
+    # The low-level kernels still accept caller-managed axes and explicit spans.
+    @test Parsers.parseint64(source, 0, 2) == (123, Parsers.RC_OK)
+    negative_offset = OffsetBytes(b("1,234,567"), -90)
+    @test Parsers.parsegroupedint64(negative_offset, -90, -82, UInt8(',')) ==
+          (1_234_567, Parsers.RC_OK)
+end
+
 @testset "groupmark for every documented numeric type" begin
     numeric_types = (
         Int8, Int16, Int32, Int64, Int128,
@@ -146,6 +162,65 @@ end
     @test Parsers.tryparse(Int16, "0x_ff"; groupmark='_') === nothing
     @test Parsers.tryparse(Int16, "12_"; groupmark='_') === nothing
     @test Parsers.parse(BigFloat, "1.234,5"; decimal=',', groupmark='.') == BigFloat(1234.5)
+
+    # Leading zeros never consume the target's significant-digit budget.
+    grouped_zeros = join(fill("000", 16), ',')
+    for T in (Int8, Int16, Int32, Int64, Int128,
+              UInt8, UInt16, UInt32, UInt64, UInt128)
+        @test Parsers.parse(T, grouped_zeros; groupmark=',') == zero(T)
+    end
+
+    grouped = "1,234,567,890"
+    parsegroupedint64(grouped)
+    @test (@allocated parsegroupedint64(grouped)) == 0
+end
+
+@testset "custom Boolean String collections are reusable without allocation" begin
+    for (trues, falses) in (
+        (["y", "yes", "enabled"], ["n", "no", "disabled"]),
+        (("y", "yes", "enabled"), ("n", "no", "disabled")),
+    )
+        @test parsecustombool("enabled", trues, falses)
+        @test tryparsecustombool("disabled", trues, falses) === false
+        @test tryparsecustombool("true", trues, falses) === nothing
+
+        token = b("yes;")
+        @test parsenextcustombool(token, trues, falses) ==
+              (true, 4, Parsers.RC_OK)
+
+        # Warm each specialization before measuring the reusable hot path.
+        parsecustombool("enabled", trues, falses)
+        tryparsecustombool("disabled", trues, falses)
+        parsenextcustombool(token, trues, falses)
+        @test (@allocated parsecustombool("enabled", trues, falses)) == 0
+        @test (@allocated tryparsecustombool("disabled", trues, falses)) == 0
+        @test (@allocated parsenextcustombool(token, trues, falses)) == 0
+    end
+
+    utf16trues = [UTF16TestString("yes")]
+    utf16falses = [UTF16TestString("no")]
+    @test Parsers.parse(Bool, "yes"; trues=utf16trues, falses=utf16falses)
+    @test Parsers.parse(Bool, "no"; trues=utf16trues, falses=utf16falses) === false
+    @test Parsers.parsenext(Bool, b("yes;"), 1, 4;
+                            trues=utf16trues, falses=utf16falses) ==
+          (true, 4, Parsers.RC_OK)
+
+    for empty_spellings in ([""], ("",), [UInt8[]])
+        @test_throws ArgumentError Parsers.parse(Bool, ""; trues=empty_spellings)
+        @test_throws ArgumentError Parsers.tryparse(Bool, ""; trues=empty_spellings)
+        @test_throws ArgumentError Parsers.parsenext(Bool, b("x"), 1, 1;
+                                                     trues=empty_spellings)
+    end
+end
+
+@testset "special floats ignore numeric group marks" begin
+    for T in (Float16, Float32, Float64, BigFloat)
+        @test isnan(Parsers.parse(T, "NaN"; groupmark='a'))
+        value, nextpos, code = Parsers.parsenext(T, b("NaN;"), 1, 4; groupmark='a')
+        @test isnan(value)
+        @test nextpos == 4
+        @test code == Parsers.RC_OK
+    end
 end
 
 @testset "BigInt base and prefix parity" begin
@@ -186,7 +261,7 @@ end
     @test Parsers.parseint(UInt64, b(text), 1, ncodeunits(text))[2] == Parsers.RC_INVALID
 end
 
-@testset "BigFloat rounding and deliberate decimal range" begin
+@testset "BigFloat rounding and public Base parity" begin
     texts = (
         "0.1",
         "1.00000000000000011102230246251565404236316680908203125",
@@ -217,11 +292,37 @@ end
         end
     end
 
-    # Decimal magnitudes outside the current prove-out bound are a documented
-    # deliberate delta. Public parsing must reject them without truncation.
-    for text in ("1e70000", "-1e-70000")
-        @test Parsers.tryparse(BigFloat, text) === nothing
-        @test_throws ArgumentError Parsers.parse(BigFloat, text)
+    @test Parsers.parse(BigFloat, "1,5"; decimal=',') == Base.parse(BigFloat, "1.5")
+    @test Parsers.tryparse(BigFloat, "1.5"; decimal=',') === nothing
+    @test isnan(Parsers.parse(BigFloat, "NaN"; decimal='a'))
+
+    # Public parsing uses MPFR and is not limited by the low-level kernel's
+    # decimal prove-out range.
+    for precision_bits in (53, 256)
+        setprecision(BigFloat, precision_bits) do
+            # Values wider than Culong must fall back to the MPFR string path
+            # on 32-bit systems instead of narrowing in the short-value path.
+            for text in ("4294967296", "18,446,744,073")
+                expected = Base.parse(BigFloat, replace(text, ',' => ""))
+                actual = occursin(',', text) ?
+                    Parsers.parse(BigFloat, text; groupmark=',') :
+                    Parsers.parse(BigFloat, text)
+                @test isequal(actual, expected)
+            end
+            @test Parsers.parse(BigFloat, "1,5"; decimal=',') == BigFloat(1.5)
+            @test Parsers.tryparse(BigFloat, "1.5"; decimal=',') === nothing
+            @test_throws ArgumentError Parsers.parse(BigFloat, "1.5"; decimal=',')
+            @test Parsers.parse(BigFloat, "0x1.8p2"; decimal=',') == BigFloat(6)
+            @test Parsers.tryparse(BigFloat, "0x1,8p2"; decimal=',') === nothing
+            @test isinf(Parsers.parse(BigFloat, "Infinity"; decimal='i'))
+            @test isnan(Parsers.parse(BigFloat, "NaN"; decimal='n'))
+            for text in ("1e65536", "1e70000", "-1e-70000",
+                         "1e100000", "-1e-100000")
+                expected = Base.parse(BigFloat, text)
+                @test isequal(Parsers.parse(BigFloat, text), expected)
+                @test isequal(Parsers.tryparse(BigFloat, text), expected)
+            end
+        end
     end
 end
 
@@ -237,19 +338,127 @@ end
         end
     end
 
+    @test Parsers.parse(BigFloat, "0x1.8p2"; decimal=',') == BigFloat(6)
+    @test Parsers.tryparse(BigFloat, "0x1,8p2"; decimal=',') === nothing
+
     huge_exponent = "9"^100
     for (text, expected_code) in (("0x1p" * huge_exponent, Parsers.RC_OVERFLOW),
                                   ("0x1p-" * huge_exponent, Parsers.RC_UNDERFLOW))
         value, code = Parsers.parsebigfloat(b(text), 1, ncodeunits(text))
         @test code == expected_code
         @test expected_code == Parsers.RC_OVERFLOW ? isinf(value) : iszero(value)
-        @test Parsers.tryparse(BigFloat, text) === nothing
+        expected = Base.parse(BigFloat, text)
+        @test isequal(Parsers.parse(BigFloat, text), expected)
+        @test isequal(Parsers.tryparse(BigFloat, text), expected)
     end
     zero_with_huge_exponent = "-0x0p" * huge_exponent
     value, code = Parsers.parsebigfloat(b(zero_with_huge_exponent), 1,
                                         ncodeunits(zero_with_huge_exponent))
     @test code == Parsers.RC_OK
     @test iszero(value) && signbit(value)
+end
+
+@testset "BigFloat default MPFR grammar and source parity" begin
+    function source_forms(text)
+        padded = "!" * text * ";"
+        vector = Vector{UInt8}(codeunits(text))
+        whole = (text, codeunits(text), vector,
+                 SubString(padded, 2, ncodeunits(text) + 1),
+                 view(vector, eachindex(vector)))
+        spans = ((Vector{UInt8}(codeunits(padded)), 2, ncodeunits(text) + 1),
+                 (codeunits(padded), 2, ncodeunits(text) + 1))
+        return whole, spans
+    end
+
+    function check_bigfloat_sources(text, expected; rounding=nothing)
+        whole, spans = source_forms(text)
+        for source in whole
+            actual = rounding === nothing ? Parsers.parse(BigFloat, source) :
+                                             Parsers.parse(BigFloat, source; rounding)
+            attempted = rounding === nothing ? Parsers.tryparse(BigFloat, source) :
+                                                Parsers.tryparse(BigFloat, source; rounding)
+            @test isequal(actual, expected)
+            @test isequal(attempted, expected)
+            @test precision(actual) == precision(expected)
+        end
+        for (source, first, last) in spans
+            actual = rounding === nothing ? Parsers.parse(BigFloat, source, first, last) :
+                                             Parsers.parse(BigFloat, source, first, last; rounding)
+            attempted = rounding === nothing ? Parsers.tryparse(BigFloat, source, first, last) :
+                                                Parsers.tryparse(BigFloat, source, first, last; rounding)
+            @test isequal(actual, expected)
+            @test isequal(attempted, expected)
+            @test precision(actual) == precision(expected)
+        end
+    end
+
+    # These short forms are valid in MPFR and Base but are outside the decimal
+    # grammar used by the short-value optimization.
+    base_forms = (
+        "0.1", "-0.1", "1.5",
+        "@NaN@", "@Inf@", "-@Inf@", "nan(payload)",
+        "1@2", "0b1.1p2", "0b1.1@2",
+        "0x1.8p2", "0x1.8@2",
+        "123456789012345678901234567890",
+        "3.1415926535897932384626433832795028841971e100",
+        "-2.7182818284590452353602874713527e-100",
+        "-0.0000000000000000000000000000000000000000",
+        "-0e100000000000000000000",
+        "1.2345678901234567890123456789e100000",
+        "-1.2345678901234567890123456789e-100000",
+        " \t3.141592653589793238462643e20",
+        "3.141592653589793238462643e20 \n",
+    )
+    for precision_bits in (53, 256)
+        setprecision(BigFloat, precision_bits) do
+            for text in base_forms
+                check_bigfloat_sources(text, Base.parse(BigFloat, text))
+            end
+        end
+    end
+
+    rounding_modes = RoundingMode[RoundNearest, RoundDown, RoundUp, RoundToZero]
+    if isdefined(Base.Rounding, :RoundFromZero)
+        push!(rounding_modes, getfield(Base.Rounding, :RoundFromZero))
+    end
+    midpoint = "1.00000000000000011102230246251565404236316680908203125"
+    rounding_texts = ("0.1", "-0.1", midpoint, "-" * midpoint)
+    setprecision(BigFloat, 53) do
+        for rounding_mode in rounding_modes
+            expected = setrounding(BigFloat, rounding_mode) do
+                Base.parse.(BigFloat, rounding_texts)
+            end
+            setrounding(BigFloat, rounding_mode) do
+                for (text, value) in zip(rounding_texts, expected)
+                    check_bigfloat_sources(text, value)
+                end
+            end
+            ambient_mode = rounding_mode == RoundDown ? RoundUp : RoundDown
+            setrounding(BigFloat, ambient_mode) do
+                for (text, value) in zip(rounding_texts, expected)
+                    check_bigfloat_sources(text, value; rounding=rounding_mode)
+                end
+            end
+        end
+    end
+
+    for text in ("1e", "0x1p", "1\0junk", "1@2x", "0b1.1p2x", "nan(payload)x",
+                 "1.2345678901234567890123456789junk")
+        whole, spans = source_forms(text)
+        for source in whole
+            @test Parsers.tryparse(BigFloat, source) === nothing
+            @test_throws ArgumentError Parsers.parse(BigFloat, source)
+        end
+        for (source, first, last) in spans
+            @test Parsers.tryparse(BigFloat, source, first, last) === nothing
+            @test_throws ArgumentError Parsers.parse(BigFloat, source, first, last)
+        end
+    end
+
+    # Configured separators retain Parsers' narrower grammar instead of
+    # inheriting extra MPFR spellings from the default path.
+    @test Parsers.tryparse(BigFloat, "1@2"; decimal=',') === nothing
+    @test Parsers.tryparse(BigFloat, "1@2"; groupmark=',') === nothing
 end
 
 @testset "parsenext full grammar, range codes, and bounds" begin
@@ -330,6 +539,9 @@ end
     for (pos, last) in ((0, 3), (-1, 3), (1, 4), (4, 4), (1, 0), (1, -1))
         @test_throws BoundsError Parsers.parsenext(Int, bounds_source, pos, last)
     end
+    huge = big(typemax(Int)) + 1
+    @test_throws BoundsError Parsers.parsenext(Int, bounds_source, huge, huge)
+    @test_throws BoundsError Parsers.parsenext(Int, bounds_source, -huge, 3)
     @test Parsers.parsenext(Int, bounds_source, 4, 3) ==
           (0, 4, Parsers.RC_INVALID)
     @test Parsers.parsenext(Int, UInt8[], 1, 0) ==

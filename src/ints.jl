@@ -29,6 +29,10 @@ end
                i::Int) =
     GC.@preserve buf ltoh(unsafe_load(Ptr{UInt64}(pointer(buf.s, i))))
 
+@inline _load8(buf::SubArray{UInt8, 1, P, Tuple{I}, true}, i::Int) where
+              {P <: Vector{UInt8}, I <: AbstractUnitRange{Int}} =
+    GC.@preserve buf ltoh(unsafe_load(Ptr{UInt64}(pointer(buf, i))))
+
 # Low-level kernels also accept arbitrary byte vectors. Those may be strided
 # or lack a stable pointer, so gather their logical elements instead of using
 # the contiguous fast load above.
@@ -100,27 +104,12 @@ function parseint128(buf::AbstractVector{UInt8}, i::Int, j::Int)
     neg = b == UInt8('-')
     (neg | (b == UInt8('+'))) && (i += 1)
     i > j && return (zero(Int128), RC_INVALID)
-    @inbounds while i <= j && buf[i] == UInt8('0')
-        i += 1
-    end
-    i > j && return (zero(Int128), RC_OK)
-    ndig = j - i + 1
-    if ndig > 39
-        return _digitsonly(buf, i, j) ? (zero(Int128), RC_OVERFLOW) :
-                                       (zero(Int128), RC_INVALID)
-    end
+    v, rc = _parseuint128(buf, i, j)
+    rc == RC_OK || return (zero(Int128), rc)
     lim = UInt128(typemax(Int128)) + UInt128(neg)
-    v = zero(UInt128)
-    @inbounds while i <= j
-        d = buf[i] - UInt8('0')
-        d > 0x09 && return (zero(Int128), RC_INVALID)
-        v > (lim - UInt128(d)) ÷ UInt128(10) &&
-            return (zero(Int128), RC_OVERFLOW)
-        v = v * UInt128(10) + UInt128(d)
-        i += 1
-    end
+    v <= lim || return (zero(Int128), RC_OVERFLOW)
     if neg
-        v == UInt128(typemax(Int128)) + 1 && return (typemin(Int128), RC_OK)
+        v == lim && return (typemin(Int128), RC_OK)
         return (-Int128(v), RC_OK)
     end
     return (Int128(v), RC_OK)
@@ -172,7 +161,7 @@ end
 # of a grouped column pays, so it must be nearly free when there are no marks.
 @inline function _hasbyte(buf::AbstractVector{UInt8}, i::Int, j::Int, b::UInt8)
     k = i
-    lim = min(j, length(buf)) - 7
+    lim = min(j, lastindex(buf)) - 7
     @inbounds while k <= lim
         _eqmask8(_load8(buf, k), b) != 0 && return true
         k += 8
@@ -205,7 +194,7 @@ function parsegroupedint64(buf::AbstractVector{UInt8}, i::Int, j::Int, gm::UInt8
     neg = b == UInt8('-')
     (neg | (b == UInt8('+'))) && (i += 1)
     i > j && return (zero(Int64), RC_INVALID)
-    j + 8 > length(buf) && return _parsegroupedint64_slow(buf, i0, j, gm, scratch)
+    j + 8 > lastindex(buf) && return _parsegroupedint64_slow(buf, i0, j, gm, scratch)
     v = zero(UInt64)
     ndig = 0            # significant digits (leading zeros of the whole number excluded)
     k = i
@@ -332,8 +321,8 @@ end
 """
     parseint(T, buf, i, j) -> (T, rc)
 
-Exact-span base-10 integer of any width: optional sign (`+` only for
-unsigned), digits, nothing else. `rc` is `RC_OK`, `RC_INVALID`, or
+Exact-span base-10 integer of any width: an optional sign for signed targets,
+and digits only for unsigned targets. `rc` is `RC_OK`, `RC_INVALID`, or
 `RC_OVERFLOW` (well-formed digits outside `T`'s range — the code a caller's
 type lattice uses to widen). Int64/UInt64 and narrower go through the SWAR
 kernels; Int128/UInt128 through 8-digit checked blocks.
@@ -398,6 +387,225 @@ function degroupint!(scratch::Vector{UInt8}, buf::AbstractVector{UInt8},
     end
     return m
 end
+
+@inline function _parsegroupeddecimal(::Type{Int64}, buf::AbstractVector{UInt8},
+                                      i::Int, j::Int, gm::UInt8, neg::Bool,
+                                      parsesign::Bool)
+    if parsesign && i <= j
+        @inbounds b = buf[i]
+        if b == UInt8('-') || b == UInt8('+')
+            neg = b == UInt8('-')
+            i += 1
+        end
+    end
+    i > j && return (Int64(0), RC_INVALID, i)
+
+    # A group mark must follow a digit, so validate the first byte once. This
+    # invariant lets the hot loop validate only the byte after each mark.
+    @inbounds (buf[i] - UInt8('0')) <= 0x09 ||
+        return (Int64(0), RC_INVALID, i)
+
+    # Leading zeros do not count toward the overflow bound. Consume them and
+    # any marks between them before starting the significant-digit loop.
+    k = i
+    @inbounds while k <= j
+        b = buf[k]
+        if b == UInt8('0')
+            k += 1
+        elseif b == gm
+            k == j && return (Int64(0), RC_INVALID, k)
+            (buf[k + 1] - UInt8('0')) <= 0x09 ||
+                return (Int64(0), RC_INVALID, k)
+            k += 1
+        else
+            (b - UInt8('0')) <= 0x09 || return (Int64(0), RC_INVALID, k)
+            break
+        end
+    end
+    k > j && return (Int64(0), RC_OK, 0)
+
+    value = UInt64(0)
+    ndigits = 0
+    @inbounds while k <= j
+        b = buf[k]
+        bad = k
+        if b == gm
+            k == j && return (Int64(0), RC_INVALID, k)
+            k += 1
+            b = buf[k]
+            bad = k - 1
+        end
+        digit = b - UInt8('0')
+        digit <= 0x09 || return (Int64(0), RC_INVALID, bad)
+        ndigits += 1
+        ndigits <= 19 && (value = 10value + digit)
+        k += 1
+    end
+
+    ndigits > 19 && return (Int64(0), RC_OVERFLOW, 0)
+    limit = neg ? UInt64(9223372036854775808) : UInt64(9223372036854775807)
+    value > limit && return (Int64(0), RC_OVERFLOW, 0)
+    if neg
+        value == limit && return (typemin(Int64), RC_OK, 0)
+        return (-Int64(value), RC_OK, 0)
+    end
+    return (Int64(value), RC_OK, 0)
+end
+
+@generated function _parsegroupeddecimal(::Type{T}, buf::AbstractVector{UInt8},
+                                         i::Int, j::Int, gm::UInt8, neg::Bool,
+                                         parsesign::Bool) where
+                                         {T <: Union{_SIGNED, _UNSIGNED}}
+    A = sizeof(T) <= 8 ? UInt64 : UInt128
+    signed = T <: _SIGNED
+    poslimit = A(typemax(T))
+    neglimit = signed ? poslimit + one(A) : zero(A)
+    maxdigits = ndigits(signed ? neglimit : poslimit)
+    poscutoff, poscutlim = divrem(poslimit, A(10))
+    negcutoff, negcutlim = signed ? divrem(neglimit, A(10)) : (zero(A), zero(A))
+    return :(_parsegroupeddecimal(T, $A, Val($maxdigits), $poscutoff, $poscutlim,
+                                  $negcutoff, $negcutlim, Val($signed), buf, i, j,
+                                  gm, neg, parsesign))
+end
+
+@inline function _parsegroupeddecimal(::Type{T}, ::Type{A}, ::Val{MAXDIGITS},
+                                      poscutoff::A, poscutlim::A,
+                                      negcutoff::A, negcutlim::A, ::Val{SIGNED},
+                                      buf::AbstractVector{UInt8}, i::Int, j::Int,
+                                      gm::UInt8, neg::Bool,
+                                      parsesign::Bool) where
+                                      {T <: Union{_SIGNED, _UNSIGNED},
+                                       A <: Union{UInt64, UInt128}, MAXDIGITS, SIGNED}
+    if parsesign && i <= j
+        @inbounds b = buf[i]
+        if b == UInt8('-') || b == UInt8('+')
+            SIGNED || return (zero(T), RC_INVALID, i)
+            neg = b == UInt8('-')
+            i += 1
+        end
+    end
+    i > j && return (zero(T), RC_INVALID, i)
+
+    @inbounds (buf[i] - UInt8('0')) <= 0x09 ||
+        return (zero(T), RC_INVALID, i)
+
+    k = i
+    @inbounds while k <= j
+        b = buf[k]
+        if b == UInt8('0')
+            k += 1
+        elseif b == gm
+            k == j && return (zero(T), RC_INVALID, k)
+            (buf[k + 1] - UInt8('0')) <= 0x09 ||
+                return (zero(T), RC_INVALID, k)
+            k += 1
+        else
+            (b - UInt8('0')) <= 0x09 || return (zero(T), RC_INVALID, k)
+            break
+        end
+    end
+    k > j && return (zero(T), RC_OK, 0)
+
+    value = zero(A)
+    ndigits = 0
+    overflow = false
+    cutoff = neg ? negcutoff : poscutoff
+    cutlim = neg ? negcutlim : poscutlim
+    @inbounds while k <= j
+        b = buf[k]
+        bad = k
+        if b == gm
+            k == j && return (zero(T), RC_INVALID, k)
+            k += 1
+            b = buf[k]
+            bad = k - 1
+        end
+        digit = b - UInt8('0')
+        digit <= 0x09 || return (zero(T), RC_INVALID, bad)
+        ndigits += 1
+        if ndigits < MAXDIGITS
+            value = A(10) * value + A(digit)
+        elseif ndigits == MAXDIGITS
+            if value > cutoff || (value == cutoff && digit > cutlim)
+                overflow = true
+            else
+                value = A(10) * value + A(digit)
+            end
+        else
+            overflow = true
+        end
+        k += 1
+    end
+
+    overflow && return (zero(T), RC_OVERFLOW, 0)
+    if SIGNED && neg
+        value == A(typemax(T)) + one(A) && return (typemin(T), RC_OK, 0)
+        return (-T(value), RC_OK, 0)
+    end
+    return (T(value), RC_OK, 0)
+end
+
+function _parsegroupedint(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
+                          gm::UInt8, base::Int, neg::Bool,
+                          parsesign::Bool) where {T <: Union{_SIGNED, _UNSIGNED}}
+    base == 10 && return _parsegroupeddecimal(T, buf, i, j, gm, neg, parsesign)
+    if parsesign && i <= j
+        @inbounds b = buf[i]
+        if b == UInt8('-') || b == UInt8('+')
+            T <: _UNSIGNED && return (zero(T), RC_INVALID, i)
+            neg = b == UInt8('-')
+            i += 1
+        end
+    end
+    i > j && return (zero(T), RC_INVALID, i)
+    A = sizeof(T) <= 8 ? UInt64 : UInt128
+    limit = T <: _SIGNED ? A(typemax(T)) + A(neg) : A(typemax(T))
+    abase = A(base)
+    cutoff, cutlim = divrem(limit, abase)
+    value = zero(A)
+    sawdigit = false
+    prevdigit = false
+    overflow = false
+    @inbounds for k in i:j
+        b = buf[k]
+        if b == gm
+            if !prevdigit || k == j
+                return (zero(T), RC_INVALID, k)
+            end
+            nextdigit = _digitvalue(buf[k + 1], base)
+            nextdigit < base || return (zero(T), RC_INVALID, k)
+            prevdigit = false
+            continue
+        end
+        digit = _digitvalue(b, base)
+        digit < base || return (zero(T), RC_INVALID, k)
+        sawdigit = true
+        prevdigit = true
+        if !overflow
+            d = A(digit)
+            if value > cutoff || (value == cutoff && d > cutlim)
+                overflow = true
+            else
+                value = value * abase + d
+            end
+        end
+    end
+    sawdigit || return (zero(T), RC_INVALID, i)
+    overflow && return (zero(T), RC_OVERFLOW, 0)
+    if T <: _SIGNED && neg
+        value == limit && return (typemin(T), RC_OK, 0)
+        return (-T(value), RC_OK, 0)
+    end
+    return (T(value), RC_OK, 0)
+end
+
+parsegroupedint(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
+                gm::UInt8, base::Int) where {T <: Union{_SIGNED, _UNSIGNED}} =
+    _parsegroupedint(T, buf, i, j, gm, base, false, true)
+
+parsegroupedprefixedint(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
+                        gm::UInt8, base::Int, neg::Bool) where {T <: _SIGNED} =
+    _parsegroupedint(T, buf, i, j, gm, base, neg, false)
 
 """
     parseint(T, buf, i, j, base) -> (T, rc, badpos)

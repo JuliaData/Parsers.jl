@@ -26,13 +26,28 @@ end
 Does the span exactly equal any sentinel string? (Empty spans are the caller's
 missing fast path and never reach here.)
 """
-function matchsentinel(buf::AbstractVector{UInt8}, i::Int, j::Int,
-                       sentinels::Vector{Vector{UInt8}})
+@inline function matchsentinel(buf::AbstractVector{UInt8}, i::Int, j::Int,
+                               sentinels::Vector{Vector{UInt8}})
     n = j - i + 1
     @inbounds for s in sentinels
         length(s) == n || continue
         k = 1
         while k <= n && buf[i + k - 1] == s[k]
+            k += 1
+        end
+        k > n && return true
+    end
+    return false
+end
+
+@inline function matchsentinel(buf::AbstractVector{UInt8}, i::Int, j::Int,
+                               sentinels::Union{AbstractVector{<:AbstractString},
+                                                Tuple{Vararg{AbstractString}}})
+    n = j - i + 1
+    @inbounds for s in sentinels
+        ncodeunits(s) == n || continue
+        k = 1
+        while k <= n && buf[i + k - 1] == codeunit(s, k)
             k += 1
         end
         k > n && return true
