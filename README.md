@@ -154,10 +154,11 @@ Base across MPFR's full exponent range.
 
 Parsers aims to match `Base.parse` and `Base.tryparse` for the documented
 whole-value grammar. The test suite compares results and errors against Base.
-Fixed-width float range handling follows Base's platform behavior. Windows
-accepts values that round to signed zero or infinity where other supported
-platforms report a range error. The low-level kernels always expose the range
-through `RC_UNDERFLOW` or `RC_OVERFLOW`.
+Fixed-width float range handling follows Base's platform behavior. On its cold
+range path, Parsers consults Base because Windows accepts some values that round
+to signed zero or infinity where other supported platforms report a range
+error. The low-level kernels always expose the range through `RC_UNDERFLOW` or
+`RC_OVERFLOW`.
 
 Known deliberate differences are:
 

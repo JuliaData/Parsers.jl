@@ -170,7 +170,8 @@ end
     )
     for (T, text, rounded) in cases
         base_value = Base.tryparse(T, text)
-        if Sys.iswindows()
+        accepted = base_value !== nothing
+        if accepted
             @test isequal(base_value, rounded)
         else
             @test base_value === nothing
@@ -183,7 +184,7 @@ end
         first = 3
         last = first + ncodeunits(text) - 1
         for source in (text, bytes, codeunits(text), substring)
-            if Sys.iswindows()
+            if accepted
                 @test isequal(Parsers.parse(T, source), rounded)
                 @test isequal(Parsers.tryparse(T, source), rounded)
             else
@@ -191,7 +192,7 @@ end
                 @test Parsers.tryparse(T, source) === nothing
             end
         end
-        if Sys.iswindows()
+        if accepted
             @test isequal(Parsers.parse(T, padded, first, last), rounded)
             @test isequal(Parsers.tryparse(T, padded, first, last), rounded)
         else
@@ -200,11 +201,23 @@ end
         end
     end
 
-    @test Parsers._acceptbasefloatrange(Parsers.RC_OVERFLOW, UInt8('.'), nothing, true)
-    @test Parsers._acceptbasefloatrange(Parsers.RC_UNDERFLOW, UInt8('.'), nothing, true)
-    @test !Parsers._acceptbasefloatrange(Parsers.RC_OVERFLOW, UInt8('.'), nothing, false)
-    @test !Parsers._acceptbasefloatrange(Parsers.RC_OVERFLOW, UInt8(','), nothing, true)
-    @test !Parsers._acceptbasefloatrange(Parsers.RC_OVERFLOW, UInt8('.'), UInt8(','), true)
+    if Sys.iswindows()
+        @test Base.tryparse(Float64, "1e400") === nothing
+        @test Base.tryparse(Float64, "-1e-400") === nothing
+        @test isequal(Base.tryparse(Float32, "1e40"), Inf32)
+        @test isequal(Base.tryparse(Float32, "-1e-46"), -0.0f0)
+    else
+        @test Base.tryparse(Float64, "1e400") === nothing
+        @test Base.tryparse(Float64, "-1e-400") === nothing
+        @test Base.tryparse(Float32, "1e40") === nothing
+        @test Base.tryparse(Float32, "-1e-46") === nothing
+    end
+
+    @test Parsers._checkbasefloatrange(Parsers.RC_OVERFLOW, UInt8('.'), nothing, true)
+    @test Parsers._checkbasefloatrange(Parsers.RC_UNDERFLOW, UInt8('.'), nothing, true)
+    @test !Parsers._checkbasefloatrange(Parsers.RC_OVERFLOW, UInt8('.'), nothing, false)
+    @test !Parsers._checkbasefloatrange(Parsers.RC_OVERFLOW, UInt8(','), nothing, true)
+    @test !Parsers._checkbasefloatrange(Parsers.RC_OVERFLOW, UInt8('.'), UInt8(','), true)
 
     # Custom grammars do not inherit Base's platform-specific range policy.
     @test Parsers.tryparse(Float32, "1e40"; decimal=',') === nothing
