@@ -8,9 +8,9 @@
 # mpfr_strtofr are never involved.
 # =============================================================================
 
-# GMP's `*_si` entry points take a C `long`, which is only 32 bits on Julia's
-# x86 builds. Keep every chunk and multiplier within that native width.
-const _BIG_CHUNK_DIGITS = Sys.WORD_SIZE == 32 ? 9 : 18
+# GMP's `*_si` entry points take a C `long`, which is 32 bits on x86 builds
+# and on 64-bit Windows. Keep every chunk and multiplier within that ABI width.
+const _BIG_CHUNK_DIGITS = sizeof(Clong) == 4 ? 9 : 18
 const _POW10_INT = Int[Int(10)^k for k in 0:(_BIG_CHUNK_DIGITS - 1)]
 const _POW10_CHUNK = Int(10)^_BIG_CHUNK_DIGITS
 
@@ -96,8 +96,8 @@ function _roundbig!(M::BigInt, e2::Int, neg::Bool, prec::Int,
 end
 
 # Native-long chunks flush through in-place GMP ops — one BigInt allocated per
-# value, zero per chunk. They hold 18 digits on 64-bit hosts and 9 on 32-bit
-# hosts, so `set_si!` and `mul_si!` never narrow a large Int64 to `Clong`.
+# value, zero per chunk. They hold 18 digits with a 64-bit C `long` and 9 with
+# a 32-bit C `long`, so `set_si!` and `mul_si!` never narrow a chunk to `Clong`.
 @inline function _flushchunk!(big::BigInt, started::Bool, acc::Int, mult::Int)
     if started
         Base.GMP.MPZ.mul_si!(big, mult)
@@ -113,9 +113,9 @@ end
 
 Exact-span BigInt: sign and decimal digits only (the strict integer grammar,
 same as `parseint64` without the width limit). Digits accumulate through
-native-long chunks (18 digits on 64-bit hosts, 9 on 32-bit), so the
-big-number work uses chunked multiply-adds rather than per-digit ops or a
-string round-trip.
+native-long chunks (18 digits with a 64-bit C `long`, 9 with a 32-bit C
+`long`), so the big-number work uses chunked multiply-adds rather than
+per-digit ops or a string round-trip.
 """
 function parsebigint(buf::AbstractVector{UInt8}, i::Int, j::Int)
     i > j && return (BigInt(0), RC_INVALID)

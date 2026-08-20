@@ -261,6 +261,28 @@ end
     @test Parsers.parseint(UInt64, b(text), 1, ncodeunits(text))[2] == Parsers.RC_INVALID
 end
 
+@testset "GMP chunks follow the C long ABI" begin
+    for text in ("123456789012345678", "-57607098681222696")
+        bytes = b(text)
+        expected_int = Base.parse(BigInt, text)
+        value, code = Parsers.parsebigint(bytes, 1, length(bytes))
+        @test code == Parsers.RC_OK
+        @test value == expected_int
+        @test Parsers.parse(BigInt, text) == expected_int
+
+        padded = b("xx" * text * "yy")
+        first = 3
+        last = first + ncodeunits(text) - 1
+        @test Parsers.parse(BigInt, padded, first, last) == expected_int
+
+        expected_float = Base.parse(BigFloat, text)
+        float_value, float_code = Parsers.parsebigfloat(bytes, 1, length(bytes))
+        @test float_code == Parsers.RC_OK
+        @test isequal(float_value, expected_float)
+        @test isequal(Parsers.parse(BigFloat, text), expected_float)
+    end
+end
+
 @testset "BigFloat rounding and public Base parity" begin
     texts = (
         "0.1",
