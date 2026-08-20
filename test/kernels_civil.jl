@@ -96,6 +96,54 @@ end
     end
 end
 
+@testset "civil: fixed numeric DatePattern valid and invalid inputs" begin
+    pattern = Parsers.compilepattern("yyyymmddHHMMSS")
+    @test pattern.fixed.nbytes == 14
+
+    source = b("xx20240229235958yy")
+    civil, code = Parsers.parsecivil(source, 3, 16, pattern)
+    expected = DateTime(2024, 2, 29, 23, 59, 58)
+    @test code == Parsers.RC_OK
+    @test todatetime(civil) == expected
+    @test Parsers.parse(DateTime, "20240229235958"; dateformat=pattern) == expected
+
+    # Dates treats fractional fields as variable-width, so compilepattern does
+    # not normally select this internal fixed-subsecond path. Construct the
+    # fixed program directly to keep that optimized branch covered.
+    fractional_ops = copy(Parsers.compilepattern(DateFormat("yyyymmddHHMMSSsss")).ops)
+    fractional_ops[end] = Parsers.PatternOp(0x07, 0x03, true)
+    fractional_pattern = Parsers.DatePattern(fractional_ops, true, true)
+    @test fractional_pattern.fixed.nbytes == 17
+    fractional, code = Parsers.parsecivil(b("20240229235958123"), 1, 17,
+                                           fractional_pattern)
+    @test code == Parsers.RC_OK
+    @test fractional.nanosecond == 123_000_000
+    @test Parsers.parse(DateTime, "20240229235958123";
+                        dateformat=fractional_pattern) == expected + Millisecond(123)
+    @test Parsers.parsecivil(b("2024022923595812x"), 1, 17,
+                              fractional_pattern)[2] == Parsers.RC_INVALID
+    @test Parsers.parsecivil(b("2024022923595812"), 1, 16,
+                              fractional_pattern)[2] == Parsers.RC_INVALID
+    @test Parsers.parsecivil(b("202402292359581234"), 1, 18,
+                              fractional_pattern)[2] == Parsers.RC_INVALID
+
+    for text in (
+        "20230229235958", # invalid leap day
+        "20241301235958", # month
+        "20240230235958", # day
+        "20240229245958", # hour
+        "20240229236058", # minute
+        "20240229235960", # second
+        "2024022x235958", # non-digit in a numeric field
+        "2024022923595",  # short span
+        "202402292359580", # long span
+    )
+        @test Parsers.parsecivil(b(text), 1, ncodeunits(text), pattern)[2] ==
+              Parsers.RC_INVALID
+        @test Parsers.tryparse(DateTime, text; dateformat=pattern) === nothing
+    end
+end
+
 @testset "civil: custom patterns (the kernel's test formats)" begin
     p = Parsers.compilepattern("yyyymmdd")
     c, rc = Parsers.parsecivil(b("20240102"), 1, 8, p)
@@ -103,11 +151,26 @@ end
     p = Parsers.compilepattern("dd/mm/yyyy")
     c, rc = Parsers.parsecivil(b("15/01/2023"), 1, 10, p)
     @test rc == Parsers.RC_OK && todate(c) == Date(2023, 1, 15)
+    expected = Date(2023, 1, 15)
+    text = "15/01/2023"
+    padded = b("<$text>")
+    for source in (text, codeunits(text), b(text), SubString("<$text>", 2, 11),
+                   @view(padded[2:11]))
+        @test Parsers.parse(Date, source; dateformat=p) == expected
+        @test Parsers.tryparse(Date, source; dateformat=p) == expected
+    end
+    @test Parsers.parse(Date, padded, 2, 11; dateformat=p) == expected
+    @test Parsers.tryparse(Date, padded, 2, 11; dateformat=p) == expected
     p = Parsers.compilepattern("u dd yyyy")
     c, rc = Parsers.parsecivil(b("Jan 02 2024"), 1, 11, p)
     @test rc == Parsers.RC_OK && todate(c) == Date(2024, 1, 2)
     c, rc = Parsers.parsecivil(b("jul 04 1776"), 1, 11, p)
     @test rc == Parsers.RC_OK && todate(c) == Date(1776, 7, 4)
+    for (month, name) in enumerate(Parsers.ENGLISH_MONTHS_ABBR)
+        text = string(uppercase(name), " 02 2024")
+        c, rc = Parsers.parsecivil(b(text), 1, ncodeunits(text), p)
+        @test rc == Parsers.RC_OK && todate(c) == Date(2024, month, 2)
+    end
     @test Parsers.parsecivil(b("Foo 02 2024"), 1, 11, p)[2] == Parsers.RC_INVALID
     @test_throws ArgumentError Parsers.compilepattern("yyyy-Qq")
     # 12-hour clock, AM/PM, and day names — Dates parity (adjusthour + the

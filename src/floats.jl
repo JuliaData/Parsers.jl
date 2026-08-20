@@ -151,6 +151,104 @@ function _decompose(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8)
     return (DecParts(mant, Int32(exp10), Int32(ndig), truncated, neg, Int32(digstart)), RC_OK)
 end
 
+# Grouped numbers are uncommon enough that a scalar scanner is smaller and
+# faster than copying into a temporary byte vector. A mark is accepted only in
+# the integer part and only when its immediate neighbours are decimal digits,
+# exactly matching `degroup!`.
+function _decomposegrouped(buf::AbstractVector{UInt8}, i::Int, j::Int,
+                           decimal::UInt8, groupmark::UInt8)
+    neg = false
+    @inbounds if i <= j
+        b = buf[i]
+        neg = b == UInt8('-')
+        (neg | (b == UInt8('+'))) && (i += 1)
+    end
+    i > j && return (DecParts(0, 0, 0, false, neg, 0), RC_INVALID)
+    digitstart = i
+
+    mant = zero(UInt64)
+    ndig = 0
+    exp10 = 0
+    truncated = false
+    sawdigit = false
+    significant = false
+
+    # Integer part.
+    @inbounds while i <= j
+        b = buf[i]
+        d = b - UInt8('0')
+        if d <= 0x09
+            sawdigit = true
+            if significant || d != 0
+                significant = true
+                if ndig < 19
+                    mant = 10mant + d
+                else
+                    truncated |= d != 0
+                    exp10 += 1
+                end
+                ndig += 1
+            end
+            i += 1
+        elseif b == groupmark
+            (i > digitstart && i < j && (buf[i - 1] - UInt8('0')) <= 0x09 &&
+             (buf[i + 1] - UInt8('0')) <= 0x09) ||
+                return (DecParts(0, 0, 0, false, neg, 0), RC_INVALID)
+            i += 1
+        else
+            break
+        end
+    end
+
+    # Fractional part. Group marks are not valid after the decimal byte.
+    @inbounds if i <= j && buf[i] == decimal
+        i += 1
+        while i <= j
+            d = buf[i] - UInt8('0')
+            d <= 0x09 || break
+            sawdigit = true
+            if !significant && d == 0
+                exp10 -= 1
+            else
+                significant = true
+                if ndig < 19
+                    mant = 10mant + d
+                    exp10 -= 1
+                else
+                    truncated |= d != 0
+                end
+                ndig += 1
+            end
+            i += 1
+        end
+    end
+    sawdigit || return (DecParts(0, 0, 0, false, neg, 0), RC_INVALID)
+
+    # Exponent.
+    @inbounds if i <= j
+        b = buf[i]
+        (b == UInt8('e')) | (b == UInt8('E')) ||
+            return (DecParts(0, 0, 0, false, neg, 0), RC_INVALID)
+        i += 1
+        eneg = false
+        if i <= j
+            b = buf[i]
+            eneg = b == UInt8('-')
+            (eneg | (b == UInt8('+'))) && (i += 1)
+        end
+        i > j && return (DecParts(0, 0, 0, false, neg, 0), RC_INVALID)
+        e = 0
+        while i <= j
+            d = buf[i] - UInt8('0')
+            d <= 0x09 || return (DecParts(0, 0, 0, false, neg, 0), RC_INVALID)
+            e < 100_000 && (e = 10e + Int(d))
+            i += 1
+        end
+        exp10 += eneg ? -e : e
+    end
+    return (DecParts(mant, Int32(exp10), Int32(ndig), truncated, neg, 0), RC_OK)
+end
+
 # --- tier 2: Eisel–Lemire ------------------------------------------------------
 
 # Powers of five, 128-bit truncated significands, q ∈ POW5MIN:POW5MAX.
@@ -629,62 +727,173 @@ end
 const _P10U = (UInt64(1), UInt64(10), UInt64(100), UInt64(1000), UInt64(10_000),
                UInt64(100_000), UInt64(1_000_000), UInt64(10_000_000), UInt64(100_000_000))
 
-# The dominant float shape — [sign] up-to-8 digits [decimal up-to-8 digits],
-# no exponent — resolves from two word loads: the decimal locates via an eq
-# mask, both digit runs extract from the loaded registers (never re-reading
-# the buffer, so nothing reads past the guard), and the mantissa packs with
-# the same SWAR gather integers use. Any other spelling — exponents, >8-digit
-# runs, specials, spans within 16 bytes of the buffer's end — returns
-# handled=false and the general state machine decides, so the accepted set is
-# unchanged by construction. Undecided Eisel-Lemire edges also fall back.
-@inline function _float_fast(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8)
+# A short scalar loop beats the word-mask setup for common whole values such as
+# "1", "1.5", "-0.25", and short exponents. Clinger-range values convert
+# directly; other accepted values use the shared exact conversion path.
+@inline function _floatsmall(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
+                             decimal::UInt8) where {T <: Union{Float64, Float32}}
+    i <= j || return (zero(T), false)
     neg = false
-    @inbounds if i <= j
+    @inbounds begin
         b = buf[i]
         neg = b == UInt8('-')
         (neg | (b == UInt8('+'))) && (i += 1)
     end
     n = j - i + 1
-    (1 <= n <= 15 && i + 15 <= length(buf)) || return (0.0, false)
-    w1 = _load8(buf, i)
-    w2 = _load8(buf, i + 8)
-    mk1 = _eqmask8(w1, decimal)
-    mk2 = _eqmask8(w2, decimal)
-    n < 8 && (mk1 &= (UInt64(1) << (n << 3)) - UInt64(1))
-    mk2 &= n <= 8 ? zero(UInt64) : (UInt64(1) << ((n - 8) << 3)) - UInt64(1)
-    count_ones(mk1) + count_ones(mk2) <= 1 || return (0.0, false)
-    p = mk1 != 0 ? (trailing_zeros(mk1) >> 3) :
-        mk2 != 0 ? 8 + (trailing_zeros(mk2) >> 3) : n   # 0-based decimal position
-    intlen = p
-    fraclen = p == n ? 0 : n - p - 1
-    (intlen <= 8 && fraclen <= 8 && intlen + fraclen >= 1) || return (0.0, false)
-    iv, iok = _rundigits(w1, intlen)             # int run = low bytes of w1
-    fv, fok = fraclen == 0 ? (zero(UInt64), true) : begin
-        off = p + 1                              # 1 ≤ off ≤ 8 by the bounds above
-        wf = (w1 >>> (off << 3)) | (w2 << ((8 - off) << 3))
-        _rundigits(wf, fraclen)
+    1 <= n <= 15 || return (zero(T), false)
+    mant = zero(UInt64)
+    ndig = 0
+    frac = 0
+    sawdigit = false
+    sawpoint = false
+    exponent = 0
+    k = i
+    @inbounds while k <= j
+        b = buf[k]
+        d = b - UInt8('0')
+        if d <= 0x09
+            sawdigit = true
+            mant = 10mant + d
+            ndig += 1
+            sawpoint && (frac += 1)
+        elseif b == decimal && !sawpoint
+            sawpoint = true
+        elseif (b == UInt8('e') || b == UInt8('E')) && sawdigit
+            k += 1
+            eneg = false
+            if k <= j
+                b = buf[k]
+                eneg = b == UInt8('-')
+                (eneg | (b == UInt8('+'))) && (k += 1)
+            end
+            k <= j || return (zero(T), false)
+            e = 0
+            while k <= j
+                d = buf[k] - UInt8('0')
+                d <= 0x09 || return (zero(T), false)
+                e < 100_000 && (e = 10e + Int(d))
+                k += 1
+            end
+            exponent = eneg ? -e : e
+            break
+        else
+            return (zero(T), false)
+        end
+        k += 1
     end
-    (iok & fok) || return (0.0, false)
-    mant = iv * (@inbounds _P10U[fraclen + 1]) + fv
-    q = -fraclen
-    mant == zero(UInt64) && return (neg ? -0.0 : 0.0, true)
-    # n ≤ 15 leaves at most 14 digits when a point is present; without one,
-    # intlen ≤ 8. The mantissa is therefore always below 2^53, and q is -8:0.
-    f = Float64(mant)
-    f = q == 0 ? f : f / _POW10[-q + 1]
+    sawdigit || return (zero(T), false)
+    q = exponent - frac
+    clinger = T === Float64 ? (-22 <= q <= 22 && mant <= UInt64(1) << 53) :
+                             (-10 <= q <= 10 && mant <= UInt64(1) << 24)
+    if !clinger
+        parts = DecParts(mant, Int32(q), Int32(ndig), false, neg, 0)
+        value, rc, done = _convertparts(T, parts)
+        rc == RC_OK && done && return (value, true)
+        return (zero(T), false)
+    end
+    f = T(mant)
+    if q != 0
+        f = T === Float64 ? (q > 0 ? f * _POW10[q + 1] : f / _POW10[-q + 1]) :
+                            (q > 0 ? f * _POW10F32[q + 1] : f / _POW10F32[-q + 1])
+    end
     return (neg ? -f : f, true)
 end
 
-@inline function _parsefloat_core(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
-                                  decimal::UInt8) where {T <: Union{Float64, Float32}}
-    if T === Float64
-        v, handled = _float_fast(buf, i, j, decimal)   # the dominant [sign]digits[.digits] shape
-        handled && return (v, RC_OK, true)
+@inline function _floatgroupedsmall(::Type{T}, buf::AbstractVector{UInt8}, i::Int,
+                                    j::Int, decimal::UInt8,
+                                    groupmark::UInt8) where {T <: Union{Float64, Float32}}
+    i <= j || return (zero(T), false)
+    neg = false
+    @inbounds begin
+        b = buf[i]
+        neg = b == UInt8('-')
+        (neg | (b == UInt8('+'))) && (i += 1)
     end
-    sp, matched = _matchspecial(buf, i, j)
-    matched && return (T(sp), RC_OK, true)
-    parts, rc = _decompose(buf, i, j, decimal)
-    rc == RC_OK || return (zero(T), rc, true)
+    start = i
+    1 <= j - i + 1 <= 15 || return (zero(T), false)
+    mant = zero(UInt64)
+    frac = 0
+    exponent = 0
+    sawdigit = false
+    sawpoint = false
+    k = i
+    @inbounds while k <= j
+        b = buf[k]
+        d = b - UInt8('0')
+        if d <= 0x09
+            sawdigit = true
+            mant = 10mant + d
+            sawpoint && (frac += 1)
+        elseif b == groupmark && !sawpoint
+            (k > start && k < j && (buf[k - 1] - UInt8('0')) <= 0x09 &&
+             (buf[k + 1] - UInt8('0')) <= 0x09) || return (zero(T), false)
+        elseif b == decimal && !sawpoint
+            sawpoint = true
+        elseif (b == UInt8('e') || b == UInt8('E')) && sawdigit
+            k += 1
+            eneg = false
+            if k <= j
+                b = buf[k]
+                eneg = b == UInt8('-')
+                (eneg | (b == UInt8('+'))) && (k += 1)
+            end
+            k <= j || return (zero(T), false)
+            e = 0
+            while k <= j
+                d = buf[k] - UInt8('0')
+                d <= 0x09 || return (zero(T), false)
+                e < 100_000 && (e = 10e + Int(d))
+                k += 1
+            end
+            exponent = eneg ? -e : e
+            break
+        else
+            return (zero(T), false)
+        end
+        k += 1
+    end
+    sawdigit || return (zero(T), false)
+    q = exponent - frac
+    if T === Float64
+        (-22 <= q <= 22 && mant <= UInt64(1) << 53) || return (zero(T), false)
+    else
+        (-10 <= q <= 10 && mant <= UInt64(1) << 24) || return (zero(T), false)
+    end
+    value = T(mant)
+    if q != 0
+        value = T === Float64 ?
+            (q > 0 ? value * _POW10[q + 1] : value / _POW10[-q + 1]) :
+            (q > 0 ? value * _POW10F32[q + 1] : value / _POW10F32[-q + 1])
+    end
+    return (neg ? -value : value, true)
+end
+
+# The dominant whole-value shapes fit in 15 bytes. A bounded scalar scan is
+# faster than word-mask setup on every supported Julia release, and it can
+# hand scientific and wide-mantissa cases directly to the shared conversion
+# core. Specials are recognized before numeric syntax so they do not scan
+# twice. Longer or unresolved spellings fall through to the general parser.
+@inline _float_fast(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8) =
+    _float_fast(Float64, buf, i, j, decimal)
+
+@inline function _float_fast(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
+                             decimal::UInt8) where {T <: Union{Float64, Float32}}
+    orig_i = i
+    @inbounds if i <= j
+        b = buf[i]
+        (b == UInt8('-') || b == UInt8('+')) && (i += 1)
+    end
+    @inbounds if i <= j
+        first = _lower(buf[i])
+        if first == UInt8('n') || first == UInt8('i')
+            special, matched = _matchspecial(buf, orig_i, j)
+            matched && return (T(special), true)
+        end
+    end
+    return _floatsmall(T, buf, orig_i, j, decimal)
+end
+
+@inline function _convertparts(::Type{T}, parts::DecParts) where {T <: Union{Float64, Float32}}
     mant = parts.mant
     q = Int(parts.exp10)
     mant == 0 && return (parts.neg ? -zero(T) : zero(T), RC_OK, true)
@@ -727,6 +936,23 @@ end
     return (parts.neg ? -one(T) : one(T), RC_OK, false)   # tier 3 required; sign in value
 end
 
+@inline function _parsefloat_core(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
+                                  decimal::UInt8) where {T <: Union{Float64, Float32}}
+    v, handled = _float_fast(T, buf, i, j, decimal)   # dominant [sign]digits[.digits] shape
+    handled && return (v, RC_OK, true)
+    parts, rc = _decompose(buf, i, j, decimal)
+    rc == RC_OK || return (zero(T), rc, true)
+    return _convertparts(T, parts)
+end
+
+@inline function _parsegroupedfloat_core(::Type{T}, buf::AbstractVector{UInt8}, i::Int,
+                                         j::Int, decimal::UInt8,
+                                         groupmark::UInt8) where {T <: Union{Float64, Float32}}
+    parts, rc = _decomposegrouped(buf, i, j, decimal, groupmark)
+    rc == RC_OK || return (zero(T), rc, true)
+    return _convertparts(T, parts)
+end
+
 """
     parsefloat(T, buf, i, j, decimal=UInt8('.')) -> (T, rc)      T ∈ Float64, Float32
     parsefloat64(buf, i, j, decimal=UInt8('.')) -> (Float64, rc)
@@ -747,8 +973,8 @@ follows `Base.parse` and rejects them.
 Structured as an @inline hot core plus a thin wrapper owning the cold tier-3
 tail (kept @noinline so its ~1000-step scaling loops never bloat the hot path).
 """
-function parsefloat(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
-                    decimal::UInt8=UInt8('.')) where {T <: Union{Float64, Float32}}
+@inline function parsefloat(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
+                            decimal::UInt8=UInt8('.')) where {T <: Union{Float64, Float32}}
     v, rc, done = _parsefloat_core(T, buf, i, j, decimal)
     done && return (v, rc)
     r = _sdc(T, buf, i, j, v < 0, decimal)
@@ -757,6 +983,66 @@ function parsefloat(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
 end
 parsefloat64(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8=UInt8('.')) =
     parsefloat(Float64, buf, i, j, decimal)
+
+# Public whole-value parsing can delegate only the rare unresolved rounding
+# boundary to Julia's bounded C parser. The supported low-level `parsefloat`
+# kernel above stays self-contained and uses SDC, so its contract is unchanged.
+@inline _trycfloat(::Type{Float64}, ptr::Ptr{UInt8}, n::Int) =
+    ccall(:jl_try_substrtod, Tuple{Bool, Float64},
+          (Ptr{UInt8}, Csize_t, Csize_t), ptr, 0, n)
+@inline _trycfloat(::Type{Float32}, ptr::Ptr{UInt8}, n::Int) =
+    ccall(:jl_try_substrtof, Tuple{Bool, Float32},
+          (Ptr{UInt8}, Csize_t, Csize_t), ptr, 0, n)
+
+@noinline function _pointerfloatfallback(::Type{T}, buf, i::Int, j::Int,
+                                         neg::Bool, decimal::UInt8) where {T <: Union{Float64, Float32}}
+    decimal == UInt8('.') || return _sdc(T, buf, i, j, neg, decimal)
+    GC.@preserve buf begin
+        ok, value = _trycfloat(T, pointer(buf, i), j - i + 1)
+        ok && return value
+    end
+    return _sdc(T, buf, i, j, neg, decimal)
+end
+
+_publicfloatfallback(::Type{T}, buf::Vector{UInt8}, i::Int, j::Int, neg::Bool,
+                     decimal::UInt8) where {T <: Union{Float64, Float32}} =
+    _pointerfloatfallback(T, buf, i, j, neg, decimal)
+_publicfloatfallback(::Type{T}, buf::Base.CodeUnits{UInt8, S}, i::Int, j::Int, neg::Bool,
+                     decimal::UInt8) where {T <: Union{Float64, Float32}, S <: Union{String, SubString{String}}} =
+    _pointerfloatfallback(T, buf, i, j, neg, decimal)
+_publicfloatfallback(::Type{T},
+                     buf::SubArray{UInt8, 1, P, Tuple{I}, true},
+                     i::Int, j::Int, neg::Bool,
+                     decimal::UInt8) where {T <: Union{Float64, Float32},
+                                             P <: Vector{UInt8},
+                                             I <: AbstractUnitRange{Int}} =
+    _pointerfloatfallback(T, buf, i, j, neg, decimal)
+_publicfloatfallback(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int, neg::Bool,
+                     decimal::UInt8) where {T <: Union{Float64, Float32}} =
+    _sdc(T, buf, i, j, neg, decimal)
+
+@inline function parsefloatpublic(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
+                                  decimal::UInt8) where {T <: Union{Float64, Float32}}
+    value, rc, done = _parsefloat_core(T, buf, i, j, decimal)
+    done && return (value, rc)
+    value = _publicfloatfallback(T, buf, i, j, value < 0, decimal)
+    return (value, RC_OK)
+end
+
+@inline function parsegroupedfloatpublic(::Type{T}, buf::AbstractVector{UInt8}, i::Int,
+                                         j::Int, decimal::UInt8,
+                                         groupmark::UInt8) where {T <: Union{Float64, Float32}}
+    value, handled = _floatgroupedsmall(T, buf, i, j, decimal, groupmark)
+    handled && return (value, RC_OK)
+    value, rc, done = _parsegroupedfloat_core(T, buf, i, j, decimal, groupmark)
+    done && return (value, rc)
+    # Exact grouped rounding-boundary values are rare. Keep this cold path
+    # simple while the normal grouped route remains allocation-free.
+    scratch = Vector{UInt8}(undef, max(j - i + 1, 8))
+    n = degroup!(scratch, buf, i, j, groupmark, decimal)
+    n >= 0 || return (zero(T), RC_INVALID)
+    return parsefloatpublic(T, scratch, 1, n, decimal)
+end
 
 const _POW10F32 = Float32[10.0f0^k for k in 0:10]
 

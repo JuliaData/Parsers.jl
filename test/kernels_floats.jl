@@ -242,7 +242,7 @@ end
     end
 end
 
-@testset "parsefloat64: SWAR fast-path equivalence" begin
+@testset "parsefloat64: bounded fast-path equivalence" begin
     rng = MersenneTwister(0x16f10a7)
     function checkvalid(s::String, decimal::UInt8)
         raw = Vector{UInt8}(codeunits(s))
@@ -282,11 +282,12 @@ end
             end
         end
     end
-    # The post-sign start must have 16 readable bytes for the two word loads.
+    # The bounded short-span path needs no readable suffix beyond its
+    # inclusive end.
     raw = Vector{UInt8}(codeunits("1.25"))
     for suffixlen in 0:16
         buf = [UInt8[0xaa, 0xbb]; raw; fill(UInt8('x'), suffixlen)]
-        @test Parsers._float_fast(buf, 3, 6, UInt8('.'))[2] == (length(raw) + suffixlen >= 16)
+        @test Parsers._float_fast(buf, 3, 6, UInt8('.')) == (1.25, true)
     end
     for s in ("1", "12345678", "1234.5678", "12345678.123456")
         raw = Vector{UInt8}(codeunits(s))
@@ -296,7 +297,7 @@ end
         raw = Vector{UInt8}(codeunits(s))
         @test !Parsers._float_fast([raw; fill(UInt8('x'), 16)], 1, length(raw), UInt8('.'))[2]
     end
-    # A decimal in the loaded padding is outside the span and must be masked.
+    # A decimal in the readable suffix is outside the requested span.
     padded = Vector{UInt8}(codeunits("12.3456789012345"))
     @test Parsers._float_fast(padded, 1, 2, UInt8('.')) == (12.0, true)
     w = Parsers._load8(Vector{UInt8}(codeunits("12345678")), 1)

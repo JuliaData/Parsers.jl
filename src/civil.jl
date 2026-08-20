@@ -40,7 +40,7 @@ extremes) in the test suite; the earlier Hinnant era/year-of-era form was
 identical over ±9999 but ~35% slower.
 """
 const _SHIFTEDMONTHDAYS = (306, 337, 0, 31, 61, 92, 122, 153, 184, 214, 245, 275)
-function daysfromcivil(y::Integer, m::Integer, d::Integer)
+@inline function daysfromcivil(y::Integer, m::Integer, d::Integer)
     z = Int64(y) - (m < 3)
     return Int64(d) + @inbounds(_SHIFTEDMONTHDAYS[m]) + 365z + fld(z, 4) - fld(z, 100) +
            fld(z, 400) - 306
@@ -62,6 +62,20 @@ struct PatternOp
     fixed::Bool
 end
 
+# Compact description for all-fixed numeric formats. Literal positions are
+# validated eight bytes at a time. Numeric offsets then feed direct field
+# readers. A zero byte count means that the general pattern interpreter is
+# required (variable widths, names, AM/PM, long patterns, or duplicate fields).
+struct FixedDatePattern
+    nbytes::UInt8
+    offsets::NTuple{7, UInt8}
+    widths::NTuple{7, UInt8}
+    masks::NTuple{4, UInt64}
+    values::NTuple{4, UInt64}
+end
+FixedDatePattern() = FixedDatePattern(0, ntuple(_ -> 0x00, 7), ntuple(_ -> 0x00, 7),
+                                      ntuple(_ -> UInt64(0), 4), ntuple(_ -> UInt64(0), 4))
+
 """
     DatePattern
 
@@ -78,6 +92,7 @@ struct DatePattern
     months_full::NTuple{12, String}
     days_abbr::NTuple{7, String}
     days_full::NTuple{7, String}
+    fixed::FixedDatePattern
 end
 
 const ENGLISH_MONTHS_ABBR = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -88,6 +103,42 @@ const ENGLISH_DAYS_FULL = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday
 const ENGLISH_MONTHS_FULL = ("January", "February", "March", "April", "May", "June",
                              "July", "August", "September", "October", "November",
                              "December")
+
+function _fixeddatepattern(ops::Vector{PatternOp})
+    offsets = fill(UInt8(0), 7)
+    widths = fill(UInt8(0), 7)
+    masks = fill(UInt64(0), 4)
+    values = fill(UInt64(0), 4)
+    pos = 1
+    for op in ops
+        if op.kind == 8
+            pos <= 32 || return FixedDatePattern()
+            block = (pos - 1) ÷ 8 + 1
+            shift = 8 * ((pos - 1) % 8)
+            masks[block] |= UInt64(0xff) << shift
+            values[block] |= UInt64(op.width) << shift
+            pos += 1
+        elseif 1 <= op.kind <= 7 && op.fixed && op.width > 0
+            field = Int(op.kind)
+            offsets[field] == 0 || return FixedDatePattern()
+            pos + Int(op.width) - 1 <= 32 || return FixedDatePattern()
+            offsets[field] = UInt8(pos)
+            widths[field] = op.width
+            pos += Int(op.width)
+        else
+            return FixedDatePattern()
+        end
+    end
+    1 < pos <= 33 || return FixedDatePattern()
+    return FixedDatePattern(UInt8(pos - 1), Tuple(offsets), Tuple(widths),
+                            Tuple(masks), Tuple(values))
+end
+
+DatePattern(ops::Vector{PatternOp}, hasdate::Bool, hastime::Bool,
+            months_abbr::NTuple{12, String}, months_full::NTuple{12, String},
+            days_abbr::NTuple{7, String}, days_full::NTuple{7, String}) =
+    DatePattern(ops, hasdate, hastime, months_abbr, months_full, days_abbr, days_full,
+                _fixeddatepattern(ops))
 
 DatePattern(ops::Vector{PatternOp}, hasdate::Bool, hastime::Bool) =
     DatePattern(ops, hasdate, hastime, ENGLISH_MONTHS_ABBR, ENGLISH_MONTHS_FULL,
@@ -211,9 +262,125 @@ end
     return (sign * v, k, ok)
 end
 
+@inline function _fixednum(buf, i::Int, offset::UInt8, width::UInt8)
+    offset == 0 && return (0, true)
+    k = i + Int(offset) - 1
+    if width == 2
+        @inbounds begin
+            d0 = buf[k] - UInt8('0')
+            d1 = buf[k + 1] - UInt8('0')
+        end
+        (d0 | d1) <= 0x09 || return (0, false)
+        return (10Int(d0) + Int(d1), true)
+    elseif width == 4
+        @inbounds begin
+            d0 = buf[k] - UInt8('0')
+            d1 = buf[k + 1] - UInt8('0')
+            d2 = buf[k + 2] - UInt8('0')
+            d3 = buf[k + 3] - UInt8('0')
+        end
+        (d0 | d1 | d2 | d3) <= 0x09 || return (0, false)
+        return (1000Int(d0) + 100Int(d1) + 10Int(d2) + Int(d3), true)
+    end
+    value = 0
+    @inbounds for p in 0:Int(width)-1
+        d = buf[k + p] - UInt8('0')
+        d <= 0x09 || return (0, false)
+        value > (typemax(Int) - Int(d)) ÷ 10 && return (0, false)
+        value = 10value + Int(d)
+    end
+    return (value, true)
+end
+
+@inline function _fixedliterals(buf, i::Int, fixed::FixedDatePattern)
+    n = Int(fixed.nbytes)
+    if n >= 8
+        ((_load8(buf, i) ⊻ fixed.values[1]) & fixed.masks[1]) == 0 || return false
+    end
+    if n >= 16
+        ((_load8(buf, i + 8) ⊻ fixed.values[2]) & fixed.masks[2]) == 0 || return false
+    end
+    if n >= 24
+        ((_load8(buf, i + 16) ⊻ fixed.values[3]) & fixed.masks[3]) == 0 || return false
+    end
+    if n >= 32
+        ((_load8(buf, i + 24) ⊻ fixed.values[4]) & fixed.masks[4]) == 0 || return false
+    end
+    firsttail = (n ÷ 8) * 8 + 1
+    @inbounds for p in firsttail:n
+        block = (p - 1) ÷ 8 + 1
+        shift = 8 * ((p - 1) % 8)
+        mask = UInt8((fixed.masks[block] >> shift) & 0xff)
+        expected = UInt8((fixed.values[block] >> shift) & 0xff)
+        mask == 0x00 || buf[i + p - 1] == expected || return false
+    end
+    return true
+end
+
+@inline function _parsefixeddate(buf, i::Int, j::Int, pat::DatePattern)
+    fixed = pat.fixed
+    j - i + 1 == Int(fixed.nbytes) || return (CivilParts(), RC_INVALID)
+    _fixedliterals(buf, i, fixed) || return (CivilParts(), RC_INVALID)
+    y, ok = _fixednum(buf, i, fixed.offsets[1], fixed.widths[1]); ok || return (CivilParts(), RC_INVALID)
+    mo, ok = _fixednum(buf, i, fixed.offsets[2], fixed.widths[2]); ok || return (CivilParts(), RC_INVALID)
+    d, ok = _fixednum(buf, i, fixed.offsets[3], fixed.widths[3]); ok || return (CivilParts(), RC_INVALID)
+    h, ok = _fixednum(buf, i, fixed.offsets[4], fixed.widths[4]); ok || return (CivilParts(), RC_INVALID)
+    mi, ok = _fixednum(buf, i, fixed.offsets[5], fixed.widths[5]); ok || return (CivilParts(), RC_INVALID)
+    s, ok = _fixednum(buf, i, fixed.offsets[6], fixed.widths[6]); ok || return (CivilParts(), RC_INVALID)
+    frac, ok = _fixednum(buf, i, fixed.offsets[7], fixed.widths[7]); ok || return (CivilParts(), RC_INVALID)
+    y = fixed.offsets[1] == 0 ? 1 : y
+    mo = fixed.offsets[2] == 0 ? 1 : mo
+    d = fixed.offsets[3] == 0 ? 1 : d
+    ns = fixed.offsets[7] == 0 ? 0 : frac * Int(10)^(9 - Int(fixed.widths[7]))
+    pat.hasdate && !_validymd(y, mo, d) && return (CivilParts(), RC_INVALID)
+    pat.hastime && !_validhms(h, mi, s) && return (CivilParts(), RC_INVALID)
+    typemin(Int32) <= y <= typemax(Int32) || return (CivilParts(), RC_INVALID)
+    return (CivilParts(Int32(y), Int8(mo), Int8(d), Int8(h), Int8(mi), Int8(s), Int32(ns)), RC_OK)
+end
+
 @inline _lowernamebyte(b::UInt8) = UInt8('A') <= b <= UInt8('Z') ? b + 0x20 : b
 
+@inline function _matchenglishmonthabbr(buf, i::Int, j::Int)
+    i + 2 <= j || return (0, i, false)
+    @inbounds begin
+        a = _lowernamebyte(buf[i])
+        b = _lowernamebyte(buf[i + 1])
+        c = _lowernamebyte(buf[i + 2])
+    end
+    idx = if a == UInt8('j')
+        b == UInt8('a') && c == UInt8('n') ? 1 :
+        b == UInt8('u') && c == UInt8('n') ? 6 :
+        b == UInt8('u') && c == UInt8('l') ? 7 : 0
+    elseif a == UInt8('f')
+        b == UInt8('e') && c == UInt8('b') ? 2 : 0
+    elseif a == UInt8('m')
+        b == UInt8('a') && c == UInt8('r') ? 3 :
+        b == UInt8('a') && c == UInt8('y') ? 5 : 0
+    elseif a == UInt8('a')
+        b == UInt8('p') && c == UInt8('r') ? 4 :
+        b == UInt8('u') && c == UInt8('g') ? 8 : 0
+    elseif a == UInt8('s')
+        b == UInt8('e') && c == UInt8('p') ? 9 : 0
+    elseif a == UInt8('o')
+        b == UInt8('c') && c == UInt8('t') ? 10 : 0
+    elseif a == UInt8('n')
+        b == UInt8('o') && c == UInt8('v') ? 11 : 0
+    elseif a == UInt8('d')
+        b == UInt8('e') && c == UInt8('c') ? 12 : 0
+    else
+        0
+    end
+    return idx == 0 ? (0, i, false) : (idx, i + 3, true)
+end
+
 function _matchname(buf, i, j, table)
+    # Reusable String patterns use this exact tuple for the common English
+    # abbreviation grammar. Avoid scanning all twelve names on that hot path.
+    if table === ENGLISH_MONTHS_ABBR
+        idx, k, ok = _matchenglishmonthabbr(buf, i, j)
+        ok && return (idx, k, true)
+    end
+
     # Fast ASCII case-insensitive prefix match against table entries.
     bestidx = 0
     bestn = 0
@@ -335,9 +502,9 @@ whole span must be consumed. Calendar validity (month/day ranges, leap years)
 is checked here — structurally valid but impossible dates are INVALID.
 """
 function parsecivil(buf::AbstractVector{UInt8}, i::Int, j::Int, pat::DatePattern)
-    # The default patterns have exact fixed-width prefixes. Keep custom
-    # DatePattern programs on the interpreter path, because their token widths
-    # and locale may differ even when they print like an ISO format.
+    # The three default pattern identities use dedicated ISO kernels. Other
+    # all-fixed numeric programs use the compiled fixed-pattern path below;
+    # variable-width and locale-aware programs use the interpreter.
     n = j - i + 1
     if n == 10 && pat === ISO_DATE
         c, rc = parseiso10(buf, i)
@@ -347,6 +514,10 @@ function parsecivil(buf::AbstractVector{UInt8}, i::Int, j::Int, pat::DatePattern
         rc == RC_OK && return (c, rc)
     elseif n == 8 && pat === ISO_TIME
         c, rc = parseiso8(buf, i)
+        rc == RC_OK && return (c, rc)
+    end
+    if pat.fixed.nbytes != 0
+        c, rc = _parsefixeddate(buf, i, j, pat)
         rc == RC_OK && return (c, rc)
     end
 

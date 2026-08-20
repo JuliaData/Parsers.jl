@@ -5,16 +5,16 @@
 # When the kernels move to Base, this file moves to Dates.
 # =============================================================================
 
-todate(c::CivilParts) = Dates.Date(Dates.UTD(daysfromcivil(c.year, c.month, c.day)))
+@inline todate(c::CivilParts) = Dates.Date(Dates.UTD(daysfromcivil(c.year, c.month, c.day)))
 
-function todatetime(c::CivilParts)
+@inline function todatetime(c::CivilParts)
     days = daysfromcivil(c.year, c.month, c.day)
     ms = Int64(c.nanosecond) ÷ 1_000_000
     return Dates.DateTime(Dates.UTM(((days * 24 + c.hour) * 60 + c.minute) * 60_000 +
                                     Int64(c.second) * 1000 + ms))
 end
 
-totime(c::CivilParts) =
+@inline totime(c::CivilParts) =
     Dates.Time(Dates.Nanosecond(((Int64(c.hour) * 60 + c.minute) * 60 + c.second) *
                                 1_000_000_000 + c.nanosecond))
 

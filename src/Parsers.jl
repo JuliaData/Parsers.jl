@@ -1,8 +1,8 @@
 """
     Parsers
 
-Fast, exact, self-contained parsers for Julia's scalar types, and a thin layer
-that reproduces `Base.parse`/`Base.tryparse` semantics on top of them.
+Fast, exact parsers for Julia's scalar types, with a checked public layer that
+reproduces `Base.parse`/`Base.tryparse` semantics.
 
 Two API levels:
 
@@ -11,9 +11,9 @@ Two API levels:
     numbers and Bools tolerate surrounding whitespace, `parse` throws the same
     errors `Base.parse` throws (`ArgumentError`, `OverflowError`), `tryparse`
     returns `nothing`. Also `Parsers.parse(T, bytes, first, last; kw...)` on
-    an explicit byte span. `String`, `SubString`, `CodeUnits`, and
-    `Vector{UInt8}` inputs use allocation-free byte views; other containers
-    can be normalized to contiguous storage.
+    an explicit byte span. `String`, `SubString`, `CodeUnits`, and one-based
+    `AbstractVector{UInt8}` inputs use their byte storage directly. Byte vectors
+    with offset axes are rejected.
   * **`Parsers.parsenext(T, bytes, pos, last; kw...)`** — the prefix primitive
     for tokenizers (JSON, SQL wire formats): parse the longest well-formed
     value of `T` starting at `pos`, return `(value, nextpos, code)`.
@@ -25,8 +25,10 @@ Everything below those is a family of *span-exact* kernels — `parseint`,
 integer overloads also return the invalid byte position.
 Malformed data is reported by return code. Configuration errors, such as an
 invalid base, can throw. Common fixed-width paths are allocation-free.
-`BigInt` and `BigFloat` use GMP/MPFR arithmetic, but they do not call the
-libraries' string parsers or round-trip through `Base.parse`.
+`BigInt` and the low-level `BigFloat` kernel build results with GMP/MPFR
+arithmetic without calling the libraries' string parsers. Public `BigFloat`
+parsing uses a short-decimal fast path and MPFR's default string grammar, so it
+matches Base across MPFR's accepted syntax and full exponent range.
 
 Supported `T`: every `Int8…Int128`/`UInt8…UInt128`, `Bool`, `Float16/32/64`,
 `BigInt`, `BigFloat`, `Base.UUID`, and — through the `Dates` adapters —
