@@ -45,7 +45,10 @@ Custom Boolean lists replace the default spellings. Include `"true"`,
 `"false"`, `"1"`, or `"0"` in the lists if the application must keep them.
 
 Fixed-width numeric kernels use round-to-nearest, ties-to-even. `BigFloat`
-keeps an explicit `rounding` keyword. A `Dates.DateFormat` preserves escaped
+keeps an explicit `rounding` keyword. Public `BigFloat` parsing uses MPFR and
+matches Base across MPFR's full exponent range. The low-level self-contained
+`parsebigfloat` kernel keeps a decimal prove-out bound near `10^±65536` and
+reports a range code outside it. A `Dates.DateFormat` preserves escaped
 literals and its month/day locale tables; a plain format string uses the
 default English tables.
 
@@ -82,7 +85,10 @@ For a numeric or Boolean token whose end is not known, use
 `Parsers.parsenext`. It supports the whole-input value grammar and applicable
 keywords for fixed-width integers, floating-point types, `BigInt`, `BigFloat`,
 and `Bool`. It returns the first unconsumed byte and one of the four return
-codes. It checks its byte range and does not skip whitespace. It does not
+codes. `parsenext(BigFloat, ...)` uses the bounded low-level kernel and returns
+a range code outside that kernel's decimal prove-out range; whole-input public
+parsing uses MPFR's full range. `parsenext` checks its byte range and does not
+skip whitespace. It does not
 replace a general quoted-field or delimiter scanner, and it does not scan dates
 or UUIDs.
 

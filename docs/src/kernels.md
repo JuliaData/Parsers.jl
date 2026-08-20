@@ -28,6 +28,12 @@ Parsers.parsebigfloat
 Parsers.BigWork
 ```
 
+The self-contained `parsebigfloat` decimal parser has a deliberate prove-out bound
+near `10^±65536`. It returns `RC_OVERFLOW` outside that bound. Its hexadecimal
+path returns `RC_OVERFLOW` or `RC_UNDERFLOW` for extreme binary exponents. The
+public `Parsers.parse` and `Parsers.tryparse` methods for `BigFloat` use MPFR
+and match Base across MPFR's full exponent range.
+
 ## Boolean and UUID
 
 ```@docs
