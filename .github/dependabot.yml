@@ -4,7 +4,6 @@ updates:
   - package-ecosystem: julia
     directories:
       - "/"
-      - "/docs"
     schedule:
       interval: monthly
     open-pull-requests-limit: 5

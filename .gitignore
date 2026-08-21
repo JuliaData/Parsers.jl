@@ -1,5 +1,4 @@
 Manifest.toml
-docs/build/
 *.cov
 *.mem
 lcov.info

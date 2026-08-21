@@ -24,4 +24,5 @@ jobs:
       - uses: JuliaRegistries/TagBot@cded32665b34ca0496d3ac10a67d08ddfc726963 # v1.25.11
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          # Use SSH so the pushed tag triggers the existing tag CI workflows.
           ssh: ${{ secrets.DOCUMENTER_KEY }}
