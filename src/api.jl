@@ -431,6 +431,37 @@ end
     return (value, RC_OK)
 end
 
+# The kernel's rounding modes; MPFR's faithful mode has no kernel equivalent.
+@inline _kernelsupports(rounding::Base.MPFR.MPFRRoundingMode) =
+    rounding == Base.MPFR.MPFRRoundNearest || rounding == Base.MPFR.MPFRRoundToZero ||
+    rounding == Base.MPFR.MPFRRoundUp || rounding == Base.MPFR.MPFRRoundDown ||
+    rounding == Base.MPFR.MPFRRoundFromZero
+
+# A decimal spelling converts in Julia: the short exact path, then the limb
+# kernel with a per-thread workspace. OVERFLOW means the magnitude is beyond
+# the kernel's scaling range; INVALID means the decimal grammar rejected it.
+function _bigfloatdecimal(buf, i::Int, j::Int, decimal::UInt8,
+                          rounding::Base.MPFR.MPFRRoundingMode)
+    parts, rc = _decompose(buf, i, j, decimal)
+    rc == RC_OK || return (BigFloat(0), rc)
+    if j - i + 1 <= 20
+        fast = _smallbigfloat(parts, rounding)
+        fast === nothing || return fast
+    end
+    ws = _takebigwork()
+    result = _bigfloatfromparts(buf, i, j, decimal, parts, ws, precision(BigFloat), rounding)
+    _givebigwork(ws)
+    return result
+end
+
+function _bigfloatgrouped(buf, i::Int, j::Int, decimal::UInt8, gm::UInt8,
+                          rounding::Base.MPFR.MPFRRoundingMode)
+    scratch = Vector{UInt8}(undef, j - i + 1)
+    m = degroup!(scratch, buf, i, j, gm, decimal)
+    m >= 0 || return (BigFloat(0), RC_INVALID)
+    return _bigfloatdecimal(scratch, 1, m, decimal, rounding)
+end
+
 function _parsebigfloatpublic(buf, i::Int, j::Int, decimal::UInt8, groupmark,
                               rounding)
     i <= j || return (BigFloat(0), RC_INVALID)
@@ -449,22 +480,16 @@ function _parsebigfloatpublic(buf, i::Int, j::Int, decimal::UInt8, groupmark,
     normalizedecimal = !ishex && decimal != UInt8('.')
     defaultgrammar = gm === nothing && decimal == UInt8('.')
 
-    # MPFR is the authority for Base's default BigFloat grammar. Preserve the
-    # one-allocation short-decimal path, but send longer default values directly
-    # to MPFR instead of scanning them twice. A rejected short default scan also
-    # falls through because MPFR accepts Base spellings such as `1@2`, binary
-    # floats, and NaN payloads that `_decompose` intentionally does not model.
-    # Custom decimal/group syntax still needs exact validation before it is
-    # normalized for MPFR.
-    if !ishex && (!defaultgrammar || n <= 20)
-        parts, rc = normalizegroup ? _decomposegrouped(buf, i, j, decimal, gm) :
-                                     _decompose(buf, i, j, decimal)
-        if rc == RC_OK
-            fast = _smallbigfloat(parts, mpfrrounding)
-            fast === nothing || return fast
-        elseif !defaultgrammar
-            return (BigFloat(0), rc)
-        end
+    # Every decimal spelling the grammar accepts converts here, in Julia:
+    # digits to limbs, one exact scaling, one rounding. MPFR finishes only
+    # what that grammar does not model — hexadecimal floats, `1@2`, NaN
+    # payloads — and magnitudes beyond the kernel's ±10^65536 range.
+    if !ishex && _kernelsupports(mpfrrounding)
+        value, rc = normalizegroup ?
+            _bigfloatgrouped(buf, i, j, decimal, gm, mpfrrounding) :
+            _bigfloatdecimal(buf, i, j, decimal, mpfrrounding)
+        rc == RC_OK && return (value, RC_OK)
+        rc == RC_INVALID && !defaultgrammar && return (value, rc)
     end
 
     # Julia Strings carry a trailing NUL. The whole-string/default-decimal path

@@ -8,18 +8,13 @@
 # mpfr_strtofr are never involved.
 # =============================================================================
 
-# GMP's `*_si` entry points take a C `long`, which is 32 bits on x86 builds
-# and on 64-bit Windows. Keep every chunk and multiplier within that ABI width.
-const _BIG_CHUNK_DIGITS = sizeof(Clong) == 4 ? 9 : 18
-const _POW10_INT = Int[Int(10)^k for k in 0:(_BIG_CHUNK_DIGITS - 1)]
-const _POW10_CHUNK = Int(10)^_BIG_CHUNK_DIGITS
-
 # Powers of five for the BigFloat scaling path, built at precompile time.
 # Covers every exponent reachable from ~150 significant digits around the
 # double range; rarer exponents compute fresh. Entries are READ-ONLY — the
 # scaling code must never hand them to an in-place GMP op's output slot.
-for f in (:set_si!, :mul!, :mul_si!, :mul_ui!, :add_ui!, :mul_2exp!, :tdiv_qr!,
-          :fdiv_q_2exp!, :tstbit, :scan1, :sizeinbase, :pow_ui, :neg!)
+for f in (:set_si!, :mul!, :mul_ui!, :add_ui!, :mul_2exp!, :tdiv_qr!,
+          :fdiv_q_2exp!, :tstbit, :scan1, :sizeinbase, :pow_ui, :neg!, :limbs_finish!,
+          :realloc2!)
     isdefined(Base.GMP.MPZ, f) ||
         error("Parsers requires Base.GMP.MPZ.$f (Julia internals moved?)")
 end
@@ -36,11 +31,41 @@ once instead of per value — GMP objects are finalizer-registered, and two
 fewer registrations per value is most of the distance to mpfr_strtofr's
 single-allocation profile. Never share one across concurrent tasks.
 """
-struct BigWork
-    M::BigInt
-    R::BigInt
+mutable struct BigWork
+    const M::BigInt
+    const R::BigInt
 end
 BigWork() = BigWork(BigInt(0), BigInt(0))
+
+# One workspace per thread, handed out by atomic swap: a task takes the slot's
+# workspace and leaves `nothing`, so a task that migrates threads mid-parse or
+# an interleaved task on the same thread can never share it — they allocate a
+# fresh one instead, and the slot keeps whichever workspace comes back last.
+mutable struct BigWorkSlot
+    @atomic ws::Union{Nothing, BigWork}
+end
+const _BIGWORKSLOTS = BigWorkSlot[]
+
+@inline function _takebigwork()
+    tid = Threads.threadid()
+    tid <= length(_BIGWORKSLOTS) || return BigWork()
+    slot = @inbounds _BIGWORKSLOTS[tid]
+    ws = @atomicswap :acquire_release slot.ws = nothing
+    return ws === nothing ? BigWork() : ws
+end
+
+@inline function _givebigwork(ws::BigWork)
+    tid = Threads.threadid()
+    tid <= length(_BIGWORKSLOTS) || return nothing
+    slot = @inbounds _BIGWORKSLOTS[tid]
+    @atomic :release slot.ws = ws
+    return nothing
+end
+
+function __init__()
+    append!(_BIGWORKSLOTS, BigWorkSlot(nothing) for _ in 1:Threads.maxthreadid())
+    return nothing
+end
 
 # One correctly-rounded store into a fresh BigFloat: our prec-bit integer
 # mantissa is exact under mpfr_set_z, the 2^e scale is exact under mul_2si,
@@ -67,11 +92,21 @@ end
     neg && (rbit || sticky)
 _roundup(mode::RoundingMode, neg, rbit, sticky, odd) =
     throw(ArgumentError("BigFloat does not support rounding mode $mode"))
+# MPFR's enum keeps the public path free of a RoundingMode type union.
+@inline function _roundup(mode::Base.MPFR.MPFRRoundingMode, neg, rbit, sticky, odd)
+    mode == Base.MPFR.MPFRRoundNearest && return rbit && (sticky || odd)
+    mode == Base.MPFR.MPFRRoundToZero && return false
+    mode == Base.MPFR.MPFRRoundFromZero && return rbit || sticky
+    mode == Base.MPFR.MPFRRoundUp && return !neg && (rbit || sticky)
+    mode == Base.MPFR.MPFRRoundDown && return neg && (rbit || sticky)
+    throw(ArgumentError("BigFloat does not support rounding mode $mode"))
+end
+const _ROUNDING = Union{RoundingMode, Base.MPFR.MPFRRoundingMode}
 
 # Round the nonnegative integer magnitude `M * 2^e2` once at `prec` bits, then
 # apply the sign. `sticky` states that nonzero bits exist below M's low bit.
 function _roundbig!(M::BigInt, e2::Int, neg::Bool, prec::Int,
-                    mode::RoundingMode, sticky::Bool=false)
+                    mode::_ROUNDING, sticky::Bool=false)
     MPZ = Base.GMP.MPZ
     nb = Int(MPZ.sizeinbase(M, 2))
     if nb > prec
@@ -95,27 +130,63 @@ function _roundbig!(M::BigInt, e2::Int, neg::Bool, prec::Int,
     return _assemble(M, e2, neg, prec)
 end
 
-# Native-long chunks flush through in-place GMP ops — one BigInt allocated per
-# value, zero per chunk. They hold 18 digits with a 64-bit C `long` and 9 with
-# a 32-bit C `long`, so `set_si!` and `mul_si!` never narrow a chunk to `Clong`.
-@inline function _flushchunk!(big::BigInt, started::Bool, acc::Int, mult::Int)
-    if started
-        Base.GMP.MPZ.mul_si!(big, mult)
-        Base.GMP.MPZ.add_ui!(big, acc % UInt)
-    else
-        Base.GMP.MPZ.set_si!(big, acc)
+# --- decimal digits to limbs, in Julia --------------------------------------------
+# Digits gather eight at a time into base-10^19 chunks, and each chunk
+# multiply-accumulates into the result's own limb storage. GMP only ever sees
+# finished limbs (mpz_limbs_finish), never a digit string.
+const _CHUNK19 = UInt64(10)^19
+
+# limbs ← limbs × mult + add over `size` little-endian limbs; the new size
+@inline function _mulacc!(limbs::Ptr{UInt64}, size::Int, mult::UInt64, add::UInt64)
+    carry = add
+    for l in 1:size
+        p = UInt128(unsafe_load(limbs, l)) * mult + carry
+        unsafe_store!(limbs, p % UInt64, l)
+        carry = (p >> 64) % UInt64
     end
-    return true
+    if carry != 0
+        size += 1
+        unsafe_store!(limbs, carry, size)
+    end
+    return size
+end
+
+# Limbs that hold `ndig` decimal digits: ⌈ndig·log2(10)⌉ bits, rounded up.
+@inline _limbsfordigits(ndig::Int) = (((ndig * 3402) >> 10) + 64) >> 6
+
+# Feed buf[k : stop-1] into 19-digit chunks; `acc`/`nacc` carry a partial
+# chunk between calls so a decimal point can split a digit run. Completed
+# chunks flush into the limbs. Returns (size, acc, nacc, ok).
+@inline function _feeddigits!(limbs::Ptr{UInt64}, size::Int, acc::UInt64, nacc::Int,
+                              buf::AbstractVector{UInt8}, k::Int, stop::Int)
+    while k < stop
+        t = min(19 - nacc, stop - k)
+        v, ok = _digits19(buf, k, t)
+        ok || return (size, acc, nacc, false)
+        acc = acc * @inbounds(_POW10U64[t + 1]) + v
+        nacc += t
+        k += t
+        if nacc == 19
+            size = _mulacc!(limbs, size, _CHUNK19, acc)
+            acc = zero(UInt64)
+            nacc = 0
+        end
+    end
+    return (size, acc, nacc, true)
+end
+
+@inline function _flushdigits!(limbs::Ptr{UInt64}, size::Int, acc::UInt64, nacc::Int)
+    nacc == 0 && return size
+    return _mulacc!(limbs, size, @inbounds(_POW10U64[nacc + 1]), acc)
 end
 
 """
     parsebigint(buf, i, j) -> (BigInt, rc)
 
 Exact-span BigInt: sign and decimal digits only (the strict integer grammar,
-same as `parseint64` without the width limit). Digits accumulate through
-native-long chunks (18 digits with a 64-bit C `long`, 9 with a 32-bit C
-`long`), so the big-number work uses chunked multiply-adds rather than
-per-digit ops or a string round-trip.
+same as `parseint64` without the width limit). The digits become base-10^19
+chunks that multiply-accumulate straight into the BigInt's limbs, so the only
+GMP involvement is the allocation and the final size update.
 """
 function parsebigint(buf::AbstractVector{UInt8}, i::Int, j::Int)
     i > j && return (BigInt(0), RC_INVALID)
@@ -128,23 +199,18 @@ function parsebigint(buf::AbstractVector{UInt8}, i::Int, j::Int)
         end
     end
     i > j && return (BigInt(0), RC_INVALID)
-    acc = 0
-    nacc = 0
-    big = BigInt(0)
-    started = false
-    @inbounds for k in i:j
-        d = buf[k] - UInt8('0')
-        d > 0x09 && return (BigInt(0), RC_INVALID)
-        acc = acc * 10 + Int(d)
-        nacc += 1
-        if nacc == _BIG_CHUNK_DIGITS
-            started = _flushchunk!(big, started, acc, _POW10_CHUNK)
-            acc = 0
-            nacc = 0
-        end
+    @inbounds while i < j && buf[i] == UInt8('0')
+        i += 1
     end
-    nacc > 0 && (started = _flushchunk!(big, started, acc, @inbounds(_POW10_INT[nacc + 1])))
-    neg && Base.GMP.MPZ.neg!(big)
+    nlimbs = _limbsfordigits(j - i + 1)
+    big = BigInt(; nbits=64 * nlimbs)
+    GC.@preserve big begin
+        limbs = big.d
+        size, acc, nacc, ok = _feeddigits!(limbs, 0, zero(UInt64), 0, buf, i, j + 1)
+        ok || return (BigInt(0), RC_INVALID)
+        size = _flushdigits!(limbs, size, acc, nacc)
+    end
+    Base.GMP.MPZ.limbs_finish!(big, neg ? -size : size)
     return (big, RC_OK)
 end
 
@@ -197,10 +263,14 @@ gets power-of-ten jump tables the way Eisel-Lemire's POW5 works). No
 subnormal handling is needed inside that range — BigFloat's exponent field
 dwarfs it.
 """
-parsebigfloat(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8=UInt8('.');
-              prec::Int=precision(BigFloat),
-              rounding::RoundingMode=Base.Rounding.rounding(BigFloat)) =
-    parsebigfloat(buf, i, j, decimal, BigWork(); prec, rounding)
+function parsebigfloat(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8=UInt8('.');
+                       prec::Int=precision(BigFloat),
+                       rounding::RoundingMode=Base.Rounding.rounding(BigFloat))
+    ws = _takebigwork()
+    result = parsebigfloat(buf, i, j, decimal, ws; prec, rounding)
+    _givebigwork(ws)
+    return result
+end
 
 function parsebigfloat(buf::AbstractVector{UInt8}, i::Int, j::Int,
                        decimal::UInt8, ws::BigWork; prec::Int=precision(BigFloat),
@@ -218,6 +288,13 @@ function parsebigfloat(buf::AbstractVector{UInt8}, i::Int, j::Int,
     matched && return (BigFloat(sp; precision=prec), RC_OK)
     parts, rc = _decompose(buf, i, j, decimal)
     rc == RC_OK || return (BigFloat(0; precision=prec), rc)
+    return _bigfloatfromparts(buf, i, j, decimal, parts, ws, prec, rounding)
+end
+
+# Convert decomposed decimal parts: every significant digit into the workspace
+# BigInt as limbs, one exact power-of-ten scaling, one rounding at `prec`.
+function _bigfloatfromparts(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8,
+                            parts::DecParts, ws::BigWork, prec::Int, rounding::_ROUNDING)
     if parts.mant == 0
         z = BigFloat(0; precision=prec)
         return (parts.neg ? -z : z, RC_OK)
@@ -227,7 +304,6 @@ function parsebigfloat(buf::AbstractVector{UInt8}, i::Int, j::Int,
     # uses the full mantissa exponent, not DecParts.exp10 (which is relative to
     # its truncated 19-digit mantissa).
     M = ws.M
-    Base.GMP.MPZ.set_si!(M, 0)
     q, inrange = _bigmantissa!(M, buf, i, Int(parts.digstart), j, decimal)
     inrange || return (BigFloat(0; precision=prec), RC_OVERFLOW)
     # value = M × 10^q = M × 5^q × 2^q — pure integer scaling, one rounding:
@@ -368,15 +444,11 @@ end
 # boolean is false when `abs(q + ndig) > 65536`. Shape is already validated.
 function _bigmantissa!(big::BigInt, buf::AbstractVector{UInt8}, i::Int, digstart::Int, j::Int,
                        decimal::UInt8)
-    started = false
-    acc = 0
-    nacc = 0
     # A decimal point BEFORE the first significant digit ("0.001") puts the
     # whole mantissa in the fraction, and the skipped zeros between the point
     # and digstart are fractional positions too.
     frac = 0
     infrac = false
-    ndig = 0
     @inbounds for p in i:(digstart - 1)
         if buf[p] == decimal
             infrac = true
@@ -384,28 +456,28 @@ function _bigmantissa!(big::BigInt, buf::AbstractVector{UInt8}, i::Int, digstart
             break
         end
     end
-    k = digstart
-    @inbounds while k <= j
-        b = buf[k]
-        d = b - UInt8('0')
-        if d <= 0x09
-            acc = acc * 10 + Int(d)
-            nacc += 1
-            ndig += 1
-            infrac && (frac += 1)
-            if nacc == _BIG_CHUNK_DIGITS
-                started = _flushchunk!(big, started, acc, _POW10_CHUNK)
-                acc = 0
-                nacc = 0
-            end
-        elseif b == decimal
-            infrac = true
-        else
-            break                                    # e/E exponent
-        end
-        k += 1
+    # digit runs (shape validated by _decompose): [digstart, stop1), then
+    # after a decimal point [start2, stop2); an exponent marker may follow
+    stop1 = _digitrunend(buf, digstart, j)
+    infrac && (frac += stop1 - digstart)
+    start2 = stop1
+    stop2 = stop1
+    @inbounds if stop1 <= j && buf[stop1] == decimal
+        start2 = stop1 + 1
+        stop2 = _digitrunend(buf, start2, j)
+        frac += stop2 - start2
     end
-    nacc > 0 && (started = _flushchunk!(big, started, acc, @inbounds(_POW10_INT[nacc + 1])))
+    ndig = (stop1 - digstart) + (stop2 - start2)
+    nlimbs = _limbsfordigits(ndig)
+    big.alloc < nlimbs && Base.GMP.MPZ.realloc2!(big, 64 * nlimbs)
+    GC.@preserve big begin
+        limbs = big.d
+        size, acc, nacc, _ = _feeddigits!(limbs, 0, zero(UInt64), 0, buf, digstart, stop1)
+        size, acc, nacc, _ = _feeddigits!(limbs, size, acc, nacc, buf, start2, stop2)
+        size = _flushdigits!(limbs, size, acc, nacc)
+    end
+    Base.GMP.MPZ.limbs_finish!(big, size)
+    k = stop2
     expv = 0
     @inbounds if k <= j                              # exponent (validated shape)
         k += 1                                       # skip e/E

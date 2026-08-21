@@ -125,3 +125,33 @@ end
         @test Parsers.parsebigint(b(s), 1, ncodeunits(s))[2] == Parsers.RC_INVALID
     end
 end
+
+using Random
+@testset "bigint: limb construction differential vs Base" begin
+    rng = MersenneTwister(19)
+    okall = true
+    for n in vcat(1:40, [57, 76, 95, 114, 133, 152, 171, 190, 209, 228, 300, 500, 1000])
+        for _ in 1:(n <= 40 ? 50 : 5)
+            s = rand(rng, ("", "-", "+")) * String(rand(rng, '0':'9', n))
+            v, rc = Parsers.parsebigint(b(s), 1, ncodeunits(s))
+            okall &= rc == Parsers.RC_OK && v == parse(BigInt, s)
+            okall &= Parsers.parse(BigInt, s) == parse(BigInt, s)
+        end
+        for s in ("1" * "0"^(n - 1), "0"^n, "0"^n * "1", "9"^n, "-" * "9"^n)
+            v, rc = Parsers.parsebigint(b(s), 1, ncodeunits(s))
+            okall &= rc == Parsers.RC_OK && v == parse(BigInt, s)
+        end
+    end
+    @test okall
+    # a non-digit anywhere in a long span is invalid
+    for k in (1, 8, 9, 19, 20, 38, 39, 60)
+        s = "1"^60
+        s = s[1:k - 1] * "x" * s[k + 1:end]
+        @test Parsers.parsebigint(b(s), 1, 60)[2] == Parsers.RC_INVALID
+        @test Parsers.tryparse(BigInt, s) === nothing
+    end
+    # the span end is respected: bytes beyond j never leak into the value
+    padded = b("12345678901234567890123xyz")
+    @test Parsers.parsebigint(padded, 1, 23)[1] == parse(BigInt, "12345678901234567890123")
+    @test Parsers.parsebigint(padded, 3, 10)[1] == parse(BigInt, "34567890")
+end

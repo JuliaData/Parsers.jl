@@ -47,6 +47,64 @@ end
                      (UInt64(buf[i + 7]) << 56)
 end
 
+# Eight bytes from buf[k] with every index clamped to `j`: a word for spans
+# shorter than eight bytes without reading past the span.
+@inline function _gather8(buf::AbstractVector{UInt8}, k::Int, j::Int)
+    @inbounds return UInt64(buf[k]) |
+                     (UInt64(buf[min(k + 1, j)]) << 8) |
+                     (UInt64(buf[min(k + 2, j)]) << 16) |
+                     (UInt64(buf[min(k + 3, j)]) << 24) |
+                     (UInt64(buf[min(k + 4, j)]) << 32) |
+                     (UInt64(buf[min(k + 5, j)]) << 40) |
+                     (UInt64(buf[min(k + 6, j)]) << 48) |
+                     (UInt64(buf[min(k + 7, j)]) << 56)
+end
+
+const _POW10U64 = ntuple(k -> UInt64(10)^(k - 1), 20)
+
+# Index (0-7) of the lowest-address non-digit byte in `w`, 8 when every byte
+# is a digit. Digit bytes never carry into their neighbour, so the first flag
+# is exact even though flags above it may be spurious.
+@inline function _firstnondigit8(w::UInt64)
+    t = w ⊻ 0x3030303030303030
+    flags = ((t + 0x7676767676767676) | t) & 0x8080808080808080
+    return trailing_zeros(flags) >> 3
+end
+
+# Position of the first non-digit in buf[k:j], or j + 1.
+@inline function _digitrunend(buf::AbstractVector{UInt8}, k::Int, j::Int)
+    @inbounds while k + 7 <= j
+        nd = _firstnondigit8(_load8(buf, k))
+        nd < 8 && return k + nd
+        k += 8
+    end
+    @inbounds while k <= j && (buf[k] - UInt8('0')) <= 0x09
+        k += 1
+    end
+    return k
+end
+
+# Value of the n (1 ≤ n ≤ 19) bytes at buf[k : k+n-1] as decimal digits, and
+# whether every byte was a digit: whole words eight digits at a time, then a
+# clamped-gather tail that never reads past k+n-1.
+@inline function _digits19(buf::AbstractVector{UInt8}, k::Int, n::Int)
+    v = zero(UInt64)
+    ok = true
+    while n >= 8
+        w = _load8(buf, k)
+        ok &= _alldigits8(w)
+        v = v * 100_000_000 + _digits8(w)
+        k += 8
+        n -= 8
+    end
+    if n > 0
+        d, okt = _rundigits(_gather8(buf, k, k + n - 1), n)
+        ok &= okt
+        v = v * @inbounds(_POW10U64[n + 1]) + d
+    end
+    return (v, ok)
+end
+
 """
     parseint64(buf, i, j) -> (Int64, rc)
 

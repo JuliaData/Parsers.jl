@@ -400,3 +400,40 @@ end
         @test Parsers.parsebigfloat(b(s), 1, ncodeunits(s))[2] == Parsers.RC_INVALID
     end
 end
+
+@testset "BigFloat public path converts in Julia; MPFR only for its own spellings" begin
+    rng = MersenneTwister(21)
+    okall = true
+    for _ in 1:3_000
+        s = string(rand(rng, 0:999)) * "." * String(rand(rng, '0':'9', rand(rng, 1:70))) *
+            (rand(rng, Bool) ? "e" * string(rand(rng, -300:300)) : "")
+        rand(rng, Bool) && (s = "-" * s)
+        okall &= Parsers.parse(BigFloat, s) == parse(BigFloat, s)
+        okall &= Parsers.parse(BigFloat, replace(s, "." => ",") ; decimal=',') == parse(BigFloat, s)
+    end
+    @test okall
+    for s in ("1@2", "nan(abc)", "0b101", "0x1.8p1", "1e99999999", "1e-99999999", "-1e99999999",
+              "0.0", "-0.0", "1e-70000", "1e70000")
+        @test isequal(Parsers.parse(BigFloat, s), parse(BigFloat, s))
+    end
+    long = "123456789.123456789123456789123456789e-57"
+    Parsers.parse(BigFloat, long)
+    @test @allocated(Parsers.parse(BigFloat, long)) <= 128
+    # concurrent parses never share a workspace
+    inputs = [string(rand(rng, 1:999)) * "." * String(rand(rng, '0':'9', 40)) * "e" *
+              string(rand(rng, -100:100)) for _ in 1:4_000]
+    expected = [parse(BigFloat, s) for s in inputs]
+    results = Vector{BigFloat}(undef, length(inputs))
+    Threads.@threads for k in eachindex(inputs)
+        results[k] = Parsers.parse(BigFloat, inputs[k])
+    end
+    @test results == expected
+    # directed rounding follows MPFR on the long path too
+    for mode in (Base.MPFR.MPFRRoundUp, Base.MPFR.MPFRRoundDown, Base.MPFR.MPFRRoundToZero,
+                 Base.MPFR.MPFRRoundFromZero)
+        for s in ("1.1", "-1.1", "123456789.123456789123456789123456789e-57", "-" * "9"^40 * "e-100")
+            @test Parsers.parse(BigFloat, s; rounding=mode) ==
+                  setrounding(() -> parse(BigFloat, s), BigFloat, convert(RoundingMode, mode))
+        end
+    end
+end
