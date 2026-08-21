@@ -201,7 +201,11 @@ Known deliberate differences are:
   Base also accepts some `Float16` conversions that round to signed zero or
   infinity, and Windows accepts some such `Float32` values. Parsers reports
   range errors consistently on every platform.
-- Temporal patterns are field-exact, with an optional sign on year fields.
+- Temporal patterns require every field of the pattern to be present and the
+  whole input to be consumed (Dates allows trailing fields to be omitted).
+  Numeric field widths follow `Dates.DateFormat`: a field is fixed-width only
+  when another field follows it directly, otherwise it is greedy. Year fields
+  take an optional sign.
   String formats use the default English names; a `Dates.DateFormat` keeps its
   locale tables.
 - Fractional-second fields accept up to nine digits. `Time` preserves

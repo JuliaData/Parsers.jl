@@ -174,13 +174,16 @@ end
     compilepattern(fmt::AbstractString) -> DatePattern
 
 Compile a Dates-style format string (tokens `y m d H M S s u U`, plus literal
-separators; repeated letters set the width, `yyyy`-style runs are fixed-width).
+separators) with `Dates.DateFormat`'s width rules: a numeric field is
+fixed-width only when another field follows it directly (`yyyymmdd`);
+otherwise it is greedy, so `mm/dd/yyyy` accepts `3/14/2021`.
 A backslash escapes a token letter, as in `yyyy\\mdd`, and literals are stored
 as their UTF-8 bytes. Unsupported tokens throw at compile time — configuration
 errors surface when the format is pinned, never per cell.
 """
 function compilepattern(fmt::AbstractString)
     ops = PatternOp[]
+    natural = PatternOp[]
     hasdate = false
     hastime = false
     i = firstindex(fmt)
@@ -194,9 +197,11 @@ function compilepattern(fmt::AbstractString)
             ni = nextind(fmt, i)
             if ni <= lastindex(fmt)
                 _pushliteralchar!(ops, fmt[ni])
+                _pushliteralchar!(natural, fmt[ni])
                 i = nextind(fmt, ni)
             else
                 _pushliteralchar!(ops, c)
+                _pushliteralchar!(natural, c)
                 i = ni
             end
             continue
@@ -204,6 +209,7 @@ function compilepattern(fmt::AbstractString)
             c in ('Q', 'q') &&
                 throw(ArgumentError("unsupported date format token '$c' in \"$fmt\""))
             _pushliteralchar!(ops, c)
+            _pushliteralchar!(natural, c)
             i = nextind(fmt, i)
             continue
         end
@@ -215,23 +221,30 @@ function compilepattern(fmt::AbstractString)
             ni = nextind(fmt, ni)
         end
         kind = _patternkind(c)
-        width, fixed = if kind == 1
+        # Dates' width rule: a numeric field is fixed-width only when another
+        # field follows it directly; otherwise it is greedy (one digit or
+        # more). The natural width still drives the fixed fast path.
+        fixed = ni <= lastindex(fmt) && _isdateformattoken(fmt[ni])
+        width = if kind == 1 || kind in (0x02, 0x03, 0x04, 0x05, 0x06, 0x0b)
             n <= typemax(UInt8) ||
-                throw(ArgumentError("year token run exceeds 255 bytes in \"$fmt\""))
-            (UInt8(max(n, 4)), n >= 4)
-        elseif kind in (0x02, 0x03, 0x04, 0x05, 0x06, 0x0b)
-            (UInt8(2), n >= 2)
+                throw(ArgumentError("token run exceeds 255 bytes in \"$fmt\""))
+            fixed ? UInt8(n) : typemax(UInt8)
         elseif kind == 7
-            (UInt8(9), false)
+            (!fixed || n <= 9) ||
+                throw(ArgumentError("subsecond token run exceeds 9 digits in \"$fmt\""))
+            fixed ? UInt8(n) : UInt8(9)
         else
-            (UInt8(0), false)
+            UInt8(0)
         end
-        push!(ops, PatternOp(kind, width, fixed))
+        op = PatternOp(kind, width, fixed)
+        push!(ops, op)
+        push!(natural, 1 <= kind <= 7 ? PatternOp(kind, UInt8(n), true) : op)
         hasdate |= _kindhasdate(kind)
         hastime |= _kindhastime(kind)
         i = ni
     end
-    return DatePattern(ops, hasdate, hastime)
+    return DatePattern(ops, hasdate, hastime, ENGLISH_MONTHS_ABBR, ENGLISH_MONTHS_FULL,
+                       ENGLISH_DAYS_ABBR, ENGLISH_DAYS_FULL, _fixeddatepattern(natural))
 end
 
 # The default ISO patterns, precompiled.

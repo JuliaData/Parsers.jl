@@ -91,10 +91,10 @@ end
               Date(expected_year, 1, 1)
     end
     @test Parsers.parse(Date, "-0001-01-01") == Date(-1, 1, 1)
-    @test Parsers.tryparse(Date, "-1-01-01") === nothing
+    @test Parsers.tryparse(Date, "-1-01-01") == Date(-1, 1, 1)
 
     @test Parsers.parse(Date, "2024-02-29") == expected
-    @test Parsers.tryparse(Date, "2024-2-29") === nothing
+    @test Parsers.tryparse(Date, "2024-2-29") == Date(2024, 2, 29)
     @test Parsers.tryparse(Date, "2024-02-29x") === nothing
 
     datetime = DateTime(2024, 2, 29, 23, 59, 59, 123)

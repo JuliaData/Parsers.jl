@@ -551,8 +551,9 @@ end
     # whitespace tolerance is ASCII whitespace (Base's isspace also strips
     # Unicode spaces around integers)
     @test Parsers.tryparse(Int, " 12") === nothing
-    # dates: field widths as written are exact and the whole input must be
-    # consumed (Dates is lenient on both); a bare date is not a DateTime
-    @test Parsers.tryparse(Date, "24-01-01") === nothing
-    @test Dates.Date("24-01-01", dateformat"yyyy-mm-dd") == Date(24, 1, 1)
+    # dates: widths follow Dates (a field is fixed-width only when another field
+    # follows it directly), but every field must be present and the whole input
+    # consumed; a bare date is not a DateTime
+    @test Parsers.tryparse(Date, "24-01-01") == Dates.Date("24-01-01", dateformat"yyyy-mm-dd") == Date(24, 1, 1)
+    @test Parsers.tryparse(DateTime, "2024-01-02") === nothing
 end

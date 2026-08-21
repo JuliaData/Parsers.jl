@@ -116,7 +116,9 @@ end
 mutable struct PatternCache
     @atomic table::Dict{Any, DatePattern}
 end
-const _PATTERNCACHE = PatternCache(Dict{Any, DatePattern}())
+const _PATTERNCACHE = PatternCache(Dict{Any, DatePattern}(
+    "yyyy-mm-dd" => ISO_DATE, "yyyy-mm-ddTHH:MM:SS.s" => ISO_DATETIME,
+    "yyyy-mm-dd\\THH:MM:SS.s" => ISO_DATETIME, "HH:MM:SS.s" => ISO_TIME))
 const _PATTERNLOCK = ReentrantLock()
 const _PATTERNCACHEMAX = 256
 
@@ -147,6 +149,8 @@ end
 @generated function _englishpattern(df::Dates.DateFormat{S, T}) where {S, T}
     reconstructed = Dates.DateFormat(String(S))
     typeof(reconstructed) === Dates.DateFormat{S, T} || return :(_cachedpattern(df))
-    pattern = compilepattern(reconstructed)
+    # the ISO spellings reuse the constants so the identity fast paths apply
+    pattern = get(_PATTERNCACHE.table, String(S), nothing)
+    pattern === nothing && (pattern = compilepattern(reconstructed))
     return :($pattern)
 end

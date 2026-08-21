@@ -28,7 +28,8 @@ end
     @test Parsers.parsecivil(b("2023-02-29"), 1, 10, Parsers.ISO_DATE)[2] == Parsers.RC_INVALID  # not a leap year
     @test Parsers.parsecivil(b("2024-13-01"), 1, 10, Parsers.ISO_DATE)[2] == Parsers.RC_INVALID
     @test Parsers.parsecivil(b("2024-00-01"), 1, 10, Parsers.ISO_DATE)[2] == Parsers.RC_INVALID
-    @test Parsers.parsecivil(b("24-01-01"), 1, 8, Parsers.ISO_DATE)[2] == Parsers.RC_INVALID    # fixed-width year
+    c, rc = Parsers.parsecivil(b("24-01-01"), 1, 8, Parsers.ISO_DATE)          # greedy year, as Dates
+    @test rc == Parsers.RC_OK && todate(c) == Date(24, 1, 1)
     s = "2024-01-02T03:04:05"
     c, rc = Parsers.parsecivil(b(s), 1, ncodeunits(s), Parsers.ISO_DATETIME)
     @test rc == Parsers.RC_OK && todatetime(c) == DateTime(2024, 1, 2, 3, 4, 5)
@@ -50,11 +51,21 @@ end
 end
 
 @testset "civil: fixed-width ISO fast-path differential" begin
+    # The fixed ISO kernels accept exactly the exact-width shape; the interpreter
+    # may also accept a signed or variable-width field. When the two differ, the
+    # generic fixed path must reject the input as well.
     function checkfast(fast, pat, bytes)
         for pad in (0, 1, 7)
             buf = vcat(fill(UInt8(0xa5), pad), bytes, fill(UInt8(0x5a), 8))
             i = pad + 1
-            @test fast(buf, i) == Parsers.parsecivil(buf, i, i + length(bytes) - 1, pat)
+            j = i + length(bytes) - 1
+            f = fast(buf, i)
+            p = Parsers.parsecivil(buf, i, j, pat)
+            if f[2] == Parsers.RC_OK || p[2] != Parsers.RC_OK
+                @test f == p
+            else
+                @test Parsers._parsefixeddate(buf, i, j, pat)[2] == Parsers.RC_INVALID
+            end
         end
     end
 
@@ -135,13 +146,15 @@ end
         "20240229236058", # minute
         "20240229235960", # second
         "2024022x235958", # non-digit in a numeric field
-        "2024022923595",  # short span
-        "202402292359580", # long span
+        "202402292359580", # long span: the trailing greedy field reads 580 seconds
     )
         @test Parsers.parsecivil(b(text), 1, ncodeunits(text), pattern)[2] ==
               Parsers.RC_INVALID
         @test Parsers.tryparse(DateTime, text; dateformat=pattern) === nothing
     end
+    # the last field is greedy, as in Dates: a short span reads five seconds
+    @test Parsers.parse(DateTime, "2024022923595"; dateformat=pattern) ==
+          DateTime("2024022923595", DateFormat("yyyymmddHHMMSS")) == DateTime(2024, 2, 29, 23, 59, 5)
 end
 
 @testset "civil: custom patterns (the kernel's test formats)" begin
@@ -231,7 +244,13 @@ end
             buf = vcat(fill(UInt8(0xa5), pad), bytes, fill(UInt8(0x5a), 8))
             i = pad + 1
             j = i + length(bytes) - 1
-            @test fast(buf, i, j) == Parsers.parsecivil(buf, i, j, pat)
+            f = fast(buf, i, j)
+            p = Parsers.parsecivil(buf, i, j, pat)
+            if f[2] == Parsers.RC_OK || p[2] != Parsers.RC_OK
+                @test f == p
+            else
+                @test Parsers._parsefixeddate(buf, i, j, pat)[2] == Parsers.RC_INVALID
+            end
         end
     end
     for s in ("2024-02-29T23:59:59.1", "2024-02-29T23:59:59.12", "2024-02-29T23:59:59.123",
@@ -328,4 +347,37 @@ end
     @test Parsers._fixednum(b("2029"), 1, 0x01, 0x04) == (2029, true)
     @test Parsers._fixednum(b("2x"), 1, 0x01, 0x02) == (0, false)
     @test Parsers._fixednum(b("/9"), 1, 0x01, 0x02) == (0, false)
+end
+
+@testset "civil: format strings compile to the same program as Dates.DateFormat" begin
+    for f in ("mm/dd/yyyy", "yyyymmdd", "yyyy-mm-dd HH:MM:SS", "HH:MM:SS.s", "yyyy\\mdd", "u dd yyyy",
+              "I:MM p", "dd.mm.yy", "y/m/d", "yyyy-mm-ddTHH:MM:SS.sss", "yyyyyymmdd", "e, dd u yyyy", "yyyy--mm--dd")
+        a = Parsers.compilepattern(f)
+        d = Parsers.compilepattern(DateFormat(f))
+        @test a.ops == d.ops
+        @test a.fixed == d.fixed
+    end
+    # variable widths and greedy trailing fields, as Dates
+    for (s, f, T) in (("3/14/2021", "mm/dd/yyyy", Date), ("03/14/02021", "mm/dd/yyyy", Date),
+                      ("2024-2-29", "yyyy-mm-dd", Date), ("24-01-01", "yyyy-mm-dd", Date),
+                      ("20240229", "yyyymmdd", Date), ("2024022923595", "yyyymmddHHMMSS", DateTime),
+                      ("1/2/3", "y/m/d", Date), ("2024-1-2 3:4:5", "yyyy-mm-dd HH:MM:SS", DateTime),
+                      ("12:5:7.5", "HH:MM:SS.s", Time))
+        base = T(s, DateFormat(f))
+        @test Parsers.parse(T, s; dateformat=f) == base
+        @test Parsers.parse(T, s; dateformat=DateFormat(f)) == base
+    end
+    # adjacent fields stay exact-width, as Dates
+    @test Parsers.tryparse(Date, "2024229"; dateformat="yyyymmdd") === nothing
+    @test tryparse(Date, "2024229", DateFormat("yyyymmdd")) === nothing
+    # the default ISO patterns follow the same rule
+    @test Parsers.parse(Date, "2024-2-29") == Date(2024, 2, 29)
+    @test Parsers.parse(DateTime, "2024-2-29T3:4:5") == DateTime(2024, 2, 29, 3, 4, 5)
+    @test Parsers.parse(Time, "3:4:5") == Time(3, 4, 5)
+    # ISO spellings, in either form, reuse the ISO constants
+    @test Parsers._datepattern("yyyy-mm-dd", Date) === Parsers.ISO_DATE
+    @test Parsers._datepattern(Dates.ISODateFormat, Date) === Parsers.ISO_DATE
+    @test Parsers._datepattern(Dates.ISODateTimeFormat, DateTime) === Parsers.ISO_DATETIME
+    @test Parsers._datepattern("yyyy-mm-ddTHH:MM:SS.s", DateTime) === Parsers.ISO_DATETIME
+    @test Parsers._datepattern(Dates.ISOTimeFormat, Time) === Parsers.ISO_TIME
 end
