@@ -24,7 +24,8 @@ end
 function _decompose(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8)
     # Phase-structured: sign → integer run → decimal point → fraction run →
     # (>19-digit tail) → exponent. Each digit run gathers eight digits per word
-    # while the 19-digit significand has room (and a whole word is in bounds);
+    # while the 19-digit significand has room (and a whole word is in bounds),
+    # and the word that ends a run contributes its digit prefix in one step;
     # the tail past 19 significant digits is scanned eight bytes at a time for
     # validity and any-nonzero (all it needs to know), so 400-digit mantissas
     # cost ~50 word steps instead of 400 byte steps.
@@ -51,7 +52,16 @@ function _decompose(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8)
         digstart = i
         while i <= lastw && ndig <= 11                   # ndig + 8 <= 19
             w = _load8(buf, i)
-            _alldigits8(w) || break
+            if !_alldigits8(w)
+                # the run ends inside this word: take its digit prefix at once
+                # instead of one byte per loop trip
+                take = _firstnondigit8(w)
+                d, _ = _rundigits(w, take)
+                mant = mant * @inbounds(_POW10U64[take + 1]) + d
+                ndig += take
+                i += take
+                break
+            end
             mant = mant * 100_000_000 + _digits8(w)
             ndig += 8
             i += 8
@@ -95,7 +105,16 @@ function _decompose(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8)
         end
         while i <= lastw && ndig <= 11
             w = _load8(buf, i)
-            _alldigits8(w) || break
+            if !_alldigits8(w)
+                take = _firstnondigit8(w)
+                d, _ = _rundigits(w, take)
+                mant = mant * @inbounds(_POW10U64[take + 1]) + d
+                ndig += take
+                exp10 -= take
+                sawdigit |= take > 0
+                i += take
+                break
+            end
             mant = mant * 100_000_000 + _digits8(w)
             ndig += 8
             exp10 -= 8
