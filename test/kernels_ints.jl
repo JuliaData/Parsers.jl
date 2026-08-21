@@ -155,3 +155,25 @@ using Random
     @test Parsers.parsebigint(padded, 1, 23)[1] == parse(BigInt, "12345678901234567890123")
     @test Parsers.parsebigint(padded, 3, 10)[1] == parse(BigInt, "34567890")
 end
+
+@testset "bigint: limb construction is limb-width generic (32-bit limbs simulated)" begin
+    rng = MersenneTwister(23)
+    for L in (UInt32, UInt64), n in (1, 8, 9, 10, 18, 19, 20, 37, 38, 57, 100, 333)
+        for _ in 1:20
+            s = String(rand(rng, '0':'9', n))
+            nlimbs = Parsers._limbsfordigits(L, n)
+            limbs = zeros(L, nlimbs + 1)
+            bytes = b(s)
+            size = GC.@preserve limbs begin
+                p = pointer(limbs)
+                sz, acc, nacc, ok = Parsers._feeddigits!(p, 0, zero(UInt64), 0, bytes, 1, n + 1)
+                @test ok
+                Parsers._flushdigits!(p, sz, acc, nacc)
+            end
+            @test size <= nlimbs
+            @test size == 0 || limbs[size] != 0
+            value = sum((BigInt(limbs[l]) << (8 * sizeof(L) * (l - 1)) for l in 1:size); init=BigInt(0))
+            @test value == parse(BigInt, s)
+        end
+    end
+end

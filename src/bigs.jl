@@ -13,8 +13,7 @@
 # double range; rarer exponents compute fresh. Entries are READ-ONLY — the
 # scaling code must never hand them to an in-place GMP op's output slot.
 for f in (:set_si!, :mul!, :mul_ui!, :add_ui!, :mul_2exp!, :tdiv_qr!,
-          :fdiv_q_2exp!, :tstbit, :scan1, :sizeinbase, :pow_ui, :neg!, :limbs_finish!,
-          :realloc2!)
+          :fdiv_q_2exp!, :tstbit, :scan1, :sizeinbase, :pow_ui, :neg!, :realloc2!)
     isdefined(Base.GMP.MPZ, f) ||
         error("Parsers requires Base.GMP.MPZ.$f (Julia internals moved?)")
 end
@@ -131,43 +130,54 @@ function _roundbig!(M::BigInt, e2::Int, neg::Bool, prec::Int,
 end
 
 # --- decimal digits to limbs, in Julia --------------------------------------------
-# Digits gather eight at a time into base-10^19 chunks, and each chunk
-# multiply-accumulates into the result's own limb storage. GMP only ever sees
-# finished limbs (mpz_limbs_finish), never a digit string.
-const _CHUNK19 = UInt64(10)^19
+# Digits gather eight at a time into chunks of _chunkdigits(L) decimal digits
+# (19 for 64-bit limbs, 9 for 32-bit), and each chunk multiply-accumulates into
+# the BigInt's own limb storage. GMP never sees a digit string: it allocates,
+# and the finished limb count is written to the size field.
+const _Limb = Base.GMP.Limb
+@inline _chunkdigits(::Type{UInt64}) = 19
+@inline _chunkdigits(::Type{UInt32}) = 9
+@inline _chunkmult(::Type{UInt64}) = UInt64(10)^19
+@inline _chunkmult(::Type{UInt32}) = UInt32(10)^9
+@inline _widelimb(::Type{UInt64}) = UInt128
+@inline _widelimb(::Type{UInt32}) = UInt64
 
 # limbs ← limbs × mult + add over `size` little-endian limbs; the new size
-@inline function _mulacc!(limbs::Ptr{UInt64}, size::Int, mult::UInt64, add::UInt64)
-    carry = add
+@inline function _mulacc!(limbs::Ptr{L}, size::Int, mult::L, add::L) where {L <: Unsigned}
+    W = _widelimb(L)
+    carry = W(add)
     for l in 1:size
-        p = UInt128(unsafe_load(limbs, l)) * mult + carry
-        unsafe_store!(limbs, p % UInt64, l)
-        carry = (p >> 64) % UInt64
+        p = W(unsafe_load(limbs, l)) * W(mult) + carry
+        unsafe_store!(limbs, p % L, l)
+        carry = p >> (8 * sizeof(L))
     end
     if carry != 0
         size += 1
-        unsafe_store!(limbs, carry, size)
+        unsafe_store!(limbs, carry % L, size)
     end
     return size
 end
 
 # Limbs that hold `ndig` decimal digits: ⌈ndig·log2(10)⌉ bits, rounded up.
-@inline _limbsfordigits(ndig::Int) = (((ndig * 3402) >> 10) + 64) >> 6
+@inline function _limbsfordigits(::Type{L}, ndig::Int) where {L <: Unsigned}
+    bits = Int((widemul(ndig, 3402) >> 10) + 1)
+    return (bits + 8 * sizeof(L) - 1) ÷ (8 * sizeof(L))
+end
 
-# Feed buf[k : stop-1] into 19-digit chunks; `acc`/`nacc` carry a partial
-# chunk between calls so a decimal point can split a digit run. Completed
-# chunks flush into the limbs. Returns (size, acc, nacc, ok).
-@inline function _feeddigits!(limbs::Ptr{UInt64}, size::Int, acc::UInt64, nacc::Int,
-                              buf::AbstractVector{UInt8}, k::Int, stop::Int)
+# Feed buf[k : stop-1] into chunks; `acc`/`nacc` carry a partial chunk between
+# calls so a decimal point can split a digit run. Completed chunks flush into
+# the limbs. Returns (size, acc, nacc, ok).
+@inline function _feeddigits!(limbs::Ptr{L}, size::Int, acc::UInt64, nacc::Int,
+                              buf::AbstractVector{UInt8}, k::Int, stop::Int) where {L <: Unsigned}
     while k < stop
-        t = min(19 - nacc, stop - k)
+        t = min(_chunkdigits(L) - nacc, stop - k)
         v, ok = _digits19(buf, k, t)
         ok || return (size, acc, nacc, false)
         acc = acc * @inbounds(_POW10U64[t + 1]) + v
         nacc += t
         k += t
-        if nacc == 19
-            size = _mulacc!(limbs, size, _CHUNK19, acc)
+        if nacc == _chunkdigits(L)
+            size = _mulacc!(limbs, size, _chunkmult(L), acc % L)
             acc = zero(UInt64)
             nacc = 0
         end
@@ -175,18 +185,18 @@ end
     return (size, acc, nacc, true)
 end
 
-@inline function _flushdigits!(limbs::Ptr{UInt64}, size::Int, acc::UInt64, nacc::Int)
+@inline function _flushdigits!(limbs::Ptr{L}, size::Int, acc::UInt64, nacc::Int) where {L <: Unsigned}
     nacc == 0 && return size
-    return _mulacc!(limbs, size, @inbounds(_POW10U64[nacc + 1]), acc)
+    return _mulacc!(limbs, size, @inbounds(_POW10U64[nacc + 1]) % L, acc % L)
 end
 
 """
     parsebigint(buf, i, j) -> (BigInt, rc)
 
 Exact-span BigInt: sign and decimal digits only (the strict integer grammar,
-same as `parseint64` without the width limit). The digits become base-10^19
-chunks that multiply-accumulate straight into the BigInt's limbs, so the only
-GMP involvement is the allocation and the final size update.
+same as `parseint64` without the width limit). The digits become limb-sized
+decimal chunks that multiply-accumulate straight into the BigInt's limbs, so
+the only GMP involvement is the allocation.
 """
 function parsebigint(buf::AbstractVector{UInt8}, i::Int, j::Int)
     i > j && return (BigInt(0), RC_INVALID)
@@ -202,15 +212,15 @@ function parsebigint(buf::AbstractVector{UInt8}, i::Int, j::Int)
     @inbounds while i < j && buf[i] == UInt8('0')
         i += 1
     end
-    nlimbs = _limbsfordigits(j - i + 1)
-    big = BigInt(; nbits=64 * nlimbs)
+    nlimbs = _limbsfordigits(_Limb, j - i + 1)
+    big = BigInt(; nbits=8 * sizeof(_Limb) * nlimbs)
     GC.@preserve big begin
         limbs = big.d
         size, acc, nacc, ok = _feeddigits!(limbs, 0, zero(UInt64), 0, buf, i, j + 1)
         ok || return (BigInt(0), RC_INVALID)
         size = _flushdigits!(limbs, size, acc, nacc)
     end
-    Base.GMP.MPZ.limbs_finish!(big, neg ? -size : size)
+    big.size = Cint(neg ? -size : size)              # the top limb is nonzero, as GMP requires
     return (big, RC_OK)
 end
 
@@ -468,15 +478,15 @@ function _bigmantissa!(big::BigInt, buf::AbstractVector{UInt8}, i::Int, digstart
         frac += stop2 - start2
     end
     ndig = (stop1 - digstart) + (stop2 - start2)
-    nlimbs = _limbsfordigits(ndig)
-    big.alloc < nlimbs && Base.GMP.MPZ.realloc2!(big, 64 * nlimbs)
+    nlimbs = _limbsfordigits(_Limb, ndig)
+    big.alloc < nlimbs && Base.GMP.MPZ.realloc2!(big, 8 * sizeof(_Limb) * nlimbs)
     GC.@preserve big begin
         limbs = big.d
         size, acc, nacc, _ = _feeddigits!(limbs, 0, zero(UInt64), 0, buf, digstart, stop1)
         size, acc, nacc, _ = _feeddigits!(limbs, size, acc, nacc, buf, start2, stop2)
         size = _flushdigits!(limbs, size, acc, nacc)
     end
-    Base.GMP.MPZ.limbs_finish!(big, size)
+    big.size = Cint(size)
     k = stop2
     expv = 0
     @inbounds if k <= j                              # exponent (validated shape)

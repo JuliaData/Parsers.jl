@@ -252,6 +252,9 @@ const ISO_DATE     = compilepattern("yyyy-mm-dd")
 const ISO_TIME     = compilepattern("HH:MM:SS.s")
 const ISO_DATETIME = compilepattern("yyyy-mm-ddTHH:MM:SS.s")
 
+# digits an Int accumulates without any overflow check (18 for Int64, 9 for Int32)
+const _SAFEDIGITS = sizeof(Int) == 8 ? 18 : 9
+
 @inline function _readnum(buf, i, j, maxw, fixed)
     v = 0
     k = i
@@ -273,7 +276,7 @@ const ISO_DATETIME = compilepattern("yyyy-mm-ddTHH:MM:SS.s")
     @inbounds while k <= lim
         d = buf[k] - UInt8('0')
         d > 0x09 && break
-        k - i >= 18 && v > (typemax(Int) - Int(d)) ÷ 10 && return (0, k, false)
+        k - i >= _SAFEDIGITS && v > (typemax(Int) - Int(d)) ÷ 10 && return (0, k, false)
         v = v * 10 + Int(d)
         k += 1
     end
