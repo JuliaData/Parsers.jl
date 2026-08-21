@@ -273,7 +273,7 @@ end
             d0 = buf[k] - UInt8('0')
             d1 = buf[k + 1] - UInt8('0')
         end
-        (d0 | d1) <= 0x09 || return (0, false)
+        ((d0 <= 0x09) & (d1 <= 0x09)) || return (0, false)
         return (10Int(d0) + Int(d1), true)
     elseif width == 4
         @inbounds begin
@@ -282,7 +282,7 @@ end
             d2 = buf[k + 2] - UInt8('0')
             d3 = buf[k + 3] - UInt8('0')
         end
-        (d0 | d1 | d2 | d3) <= 0x09 || return (0, false)
+        ((d0 <= 0x09) & (d1 <= 0x09) & (d2 <= 0x09) & (d3 <= 0x09)) || return (0, false)
         return (1000Int(d0) + 100Int(d1) + 10Int(d2) + Int(d3), true)
     end
     value = 0

@@ -306,3 +306,26 @@ end
     @test Parsers._datepattern(localized, Date) === Parsers._datepattern(localized, Date)
     @test Parsers.parse(Date, "Month02 29 2024"; dateformat=localized) == Date(2024, 2, 29)
 end
+
+@testset "civil: the fixed fast path accepts every valid field value" begin
+    # a bitwise OR of digits can exceed 9 (2 | 9 == 11), so each digit is range-checked alone
+    for (f, T) in (("mm/dd/yyyy", Date), ("yyyy-mm-dd HH:MM:SS", DateTime), ("HH:MM:SS", Time))
+        pat = Parsers.compilepattern(DateFormat(f))
+        okall = true
+        dt = DateTime(2023, 1, 1)
+        while dt < DateTime(2025, 1, 1)
+            x = T === Date ? Date(dt) : T === Time ? Time(dt) : dt
+            s = Dates.format(x, f)
+            c, rc = Parsers._parsefixeddate(b(s), 1, ncodeunits(s), pat)
+            okall &= rc == Parsers.RC_OK && (T === Date ? todate(c) == x : T === Time ? totime(c) == x : todatetime(c) == x)
+            dt += T === Time ? Second(7919) : Hour(13) + Minute(29) + Second(49)
+        end
+        @test okall
+    end
+    for s in ("29", "49", "58", "69", "99", "19")
+        @test Parsers._fixednum(b(s), 1, 0x01, 0x02) == (parse(Int, s), true)
+    end
+    @test Parsers._fixednum(b("2029"), 1, 0x01, 0x04) == (2029, true)
+    @test Parsers._fixednum(b("2x"), 1, 0x01, 0x02) == (0, false)
+    @test Parsers._fixednum(b("/9"), 1, 0x01, 0x02) == (0, false)
+end
