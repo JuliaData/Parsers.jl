@@ -256,10 +256,24 @@ const ISO_DATETIME = compilepattern("yyyy-mm-ddTHH:MM:SS.s")
     v = 0
     k = i
     lim = min(j, i + Int(maxw) - 1)
+    # a whole word in bounds: take the digit run at once when it ends inside
+    # the word or at the field's width limit (longer runs use the byte loop)
+    @inbounds if k + 7 <= j
+        w = _load8(buf, k)
+        room = lim - k + 1
+        cnt = min(_firstnondigit8(w), room)
+        if cnt < 8 || room <= 8
+            d, _ = _rundigits(w, cnt)
+            k += cnt
+            cnt == 0 && return (0, i, false)
+            fixed && cnt != Int(maxw) && return (Int(d), k, false)
+            return (Int(d), k, true)
+        end
+    end
     @inbounds while k <= lim
         d = buf[k] - UInt8('0')
         d > 0x09 && break
-        v > (typemax(Int) - Int(d)) ÷ 10 && return (0, k, false)
+        k - i >= 18 && v > (typemax(Int) - Int(d)) ÷ 10 && return (0, k, false)
         v = v * 10 + Int(d)
         k += 1
     end
@@ -590,6 +604,11 @@ function parsecivil(buf::AbstractVector{UInt8}, i::Int, j::Int, pat::DatePattern
         rc == RC_OK && return (c, rc)
     end
 
+    return _interpretcivil(buf, i, j, pat)
+end
+
+# The pattern interpreter: every op in order, no fast paths.
+@noinline function _interpretcivil(buf::AbstractVector{UInt8}, i::Int, j::Int, pat::DatePattern)
     y = 1; mo = 1; dy = 1; h = 0; mi = 0; s = 0; ns = 0
     ampm = 0x00                                          # 0 none, 1 AM, 2 PM
     k = i
@@ -597,7 +616,26 @@ function parsecivil(buf::AbstractVector{UInt8}, i::Int, j::Int, pat::DatePattern
     oi = 1
     @inbounds while oi <= length(ops)
         op = ops[oi]
-        if op.kind == 8
+        kind = op.kind
+        if kind <= 0x06 || kind == 0x0b                  # numeric fields: the common case
+            v, k2, ok = kind == 0x01 ? _readyear(buf, k, j, op.width, op.fixed) :
+                                       _readnum(buf, k, j, op.width, op.fixed)
+            ok || return (CivilParts(), RC_INVALID)
+            if kind == 0x01
+                y = v
+            elseif kind == 0x02
+                mo = v
+            elseif kind == 0x03
+                dy = v
+            elseif kind == 0x04 || kind == 0x0b
+                h = v
+            elseif kind == 0x05
+                mi = v
+            else
+                s = v
+            end
+            k = k2
+        elseif op.kind == 8
             (k <= j && buf[k] == op.width) || begin
                 # a trailing optional subsecond group (".s" at pattern end) may be absent
                 if oi + 1 <= length(ops) && ops[oi + 1].kind == 7 && oi + 1 == length(ops) && k > j
@@ -630,24 +668,6 @@ function parsecivil(buf::AbstractVector{UInt8}, i::Int, j::Int, pat::DatePattern
             ok || return (CivilParts(), RC_INVALID)
             nd = k2 - k
             ns = v * Int(10)^(9 - nd)
-            k = k2
-        else
-            v, k2, ok = op.kind == 1 ? _readyear(buf, k, j, op.width, op.fixed) :
-                                       _readnum(buf, k, j, op.width, op.fixed)
-            ok || return (CivilParts(), RC_INVALID)
-            if op.kind == 1
-                y = v
-            elseif op.kind == 2
-                mo = v
-            elseif op.kind == 3
-                dy = v
-            elseif op.kind == 4 || op.kind == 11
-                h = v
-            elseif op.kind == 5
-                mi = v
-            else
-                s = v
-            end
             k = k2
         end
         oi += 1

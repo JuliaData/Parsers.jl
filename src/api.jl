@@ -593,7 +593,7 @@ end
     # Fixed parsing deliberately falls through on failure. The interpreter
     # accepts cases such as a signed fixed-width year and remains the single
     # source of truth for every non-fixed or locale-aware pattern.
-    return parsecivil(buf, i, j, pat)
+    return _interpretcivil(buf, i, j, pat)
 end
 @inline _dateparts(::Type{T}, buf, i, j, dateformat) where {T <: Dates.TimeType} =
     _dateparts(T, buf, i, j, _datepattern(dateformat, T))
