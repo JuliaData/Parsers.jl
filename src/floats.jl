@@ -1,11 +1,11 @@
 # =============================================================================
-# floats — three self-contained tiers:
+# floats — three package-owned tiers:
 #   1. exact small case (mantissa ≤ 15 digits, small exponent): one fma-free
 #      multiply/divide by an exactly-representable power of ten
 #   2. Eisel–Lemire: 128-bit product against the precomputed powers-of-five
 #      table; bails (rarely) on rounding-boundary ambiguity
-#   3. Tao's simple decimal conversion over a fixed 800-digit buffer — total,
-#      exact, covers subnormals and every ambiguous case
+#   3. exact midpoint comparison in four UInt64 limbs, then Tao's simple
+#      decimal conversion over a fixed 800-digit buffer for larger cases
 # =============================================================================
 
 # --- decimal decomposition ---------------------------------------------------
@@ -389,10 +389,13 @@ const POW5HI, POW5LO = _buildpow5()
 # Float32 is parsed NATIVELY (never Float64-then-round, which double-rounds).
 @inline _mantbits(::Type{Float64}) = 52
 @inline _mantbits(::Type{Float32}) = 23
+@inline _mantbits(::Type{Float16}) = 10
 @inline _bias(::Type{Float64}) = 1023
 @inline _bias(::Type{Float32}) = 127
+@inline _bias(::Type{Float16}) = 15
 @inline _maxexp(::Type{Float64}) = 2047      # biased exponent of ±Inf
 @inline _maxexp(::Type{Float32}) = 255
+@inline _maxexp(::Type{Float16}) = 31
 @inline _elshift(::Type{Float64}) = 9         # 64 - mantbits - 3: keeps mantbits+2 product bits
 @inline _elshift(::Type{Float32}) = 38
 @inline _tiemin(::Type{Float64}) = -4         # q range where the 128-bit product is exact
@@ -403,6 +406,7 @@ const POW5HI, POW5LO = _buildpow5()
 @inline _bitstype(::Type{Float32}) = UInt32
 @inline _infbits(::Type{Float64}) = 0x7ff0000000000000
 @inline _infbits(::Type{Float32}) = UInt64(0x7f800000)
+@inline _infbits(::Type{Float16}) = UInt64(0x7c00)
 
 _eisel_lemire(mant::UInt64, q::Int) = _eisel_lemire(Float64, mant, q)
 
@@ -462,7 +466,257 @@ function _eisel_lemire(::Type{T}, mant::UInt64, q::Int) where {T <: Union{Float6
     return Int64((UInt64(e2) << MB) | (m & ((UInt64(1) << MB) - 1)))
 end
 
-# --- tier 3: simple decimal conversion ----------------------------------------
+# --- tier 3: exact decimal conversion -----------------------------------------
+
+# Most tier-3 calls come from a long significand whose first 19 digits put the
+# value on opposite sides of one IEEE rounding boundary. Resolve that boundary
+# with four package-owned UInt64 limbs. This covers the common exact-halfway
+# adversaries whenever the complete scaled comparison fits in 256 bits, without
+# allocation. Inputs that need more precision continue to total SDC.
+const _U256 = NTuple{4, UInt64}
+const _POW5U64 = ntuple(k -> UInt64(5)^(k - 1), 28) # 5^0 through 5^27
+const _POW5U128 = ntuple(k -> UInt128(5)^(k - 1), 56) # 5^0 through 5^55
+
+@inline _u256(x::UInt64) = (x, zero(UInt64), zero(UInt64), zero(UInt64))
+
+@inline function _u256mul(x::_U256, y::UInt64)
+    mask = UInt128(typemax(UInt64))
+    p = UInt128(x[1]) * y
+    x1 = UInt64(p & mask)
+    p = UInt128(x[2]) * y + (p >> 64)
+    x2 = UInt64(p & mask)
+    p = UInt128(x[3]) * y + (p >> 64)
+    x3 = UInt64(p & mask)
+    p = UInt128(x[4]) * y + (p >> 64)
+    x4 = UInt64(p & mask)
+    return ((x1, x2, x3, x4), (p >> 64) == 0)
+end
+
+@inline function _u256muladd10(x::_U256, digit::UInt8)
+    mask = UInt128(typemax(UInt64))
+    p = UInt128(x[1]) * 10 + digit
+    x1 = UInt64(p & mask)
+    p = UInt128(x[2]) * 10 + (p >> 64)
+    x2 = UInt64(p & mask)
+    p = UInt128(x[3]) * 10 + (p >> 64)
+    x3 = UInt64(p & mask)
+    p = UInt128(x[4]) * 10 + (p >> 64)
+    x4 = UInt64(p & mask)
+    return ((x1, x2, x3, x4), (p >> 64) == 0)
+end
+
+@inline function _u256pow5(x::_U256, exponent::Int)
+    exponent >= 0 || return (x, false)
+    exponent <= 110 || return (x, false) # 5^111 is wider than 256 bits
+    while exponent >= 27
+        x, ok = _u256mul(x, _POW5U64[28])
+        ok || return (x, false)
+        exponent -= 27
+    end
+    x, ok = _u256mul(x, _POW5U64[exponent + 1])
+    return (x, ok)
+end
+
+@inline function _u256shl(x::_U256, shift::Int)
+    shift >= 0 || return (x, false)
+    shift == 0 && return (x, true)
+    shift < 256 || return (x, false)
+    words = shift >> 6
+    bits = shift & 63
+    x1, x2, x3, x4 = x
+    z = zero(UInt64)
+    if bits == 0
+        words == 1 && return ((z, x1, x2, x3), x4 == 0)
+        words == 2 && return ((z, z, x1, x2), (x3 | x4) == 0)
+        return ((z, z, z, x1), (x2 | x3 | x4) == 0)
+    end
+    rshift = 64 - bits
+    if words == 0
+        return ((x1 << bits,
+                 (x2 << bits) | (x1 >> rshift),
+                 (x3 << bits) | (x2 >> rshift),
+                 (x4 << bits) | (x3 >> rshift)),
+                (x4 >> rshift) == 0)
+    elseif words == 1
+        return ((z, x1 << bits,
+                 (x2 << bits) | (x1 >> rshift),
+                 (x3 << bits) | (x2 >> rshift)),
+                x4 == 0 && (x3 >> rshift) == 0)
+    elseif words == 2
+        return ((z, z, x1 << bits, (x2 << bits) | (x1 >> rshift)),
+                (x3 | x4) == 0 && (x2 >> rshift) == 0)
+    else
+        return ((z, z, z, x1 << bits),
+                (x2 | x3 | x4) == 0 && (x1 >> rshift) == 0)
+    end
+end
+
+@inline function _u256cmp(x::_U256, y::_U256)
+    x[4] != y[4] && return x[4] < y[4] ? -1 : 1
+    x[3] != y[3] && return x[3] < y[3] ? -1 : 1
+    x[2] != y[2] && return x[2] < y[2] ? -1 : 1
+    return x[1] == y[1] ? 0 : x[1] < y[1] ? -1 : 1
+end
+
+# Parse the exact decimal as `significand * 10^exponent`. Pending zero digits
+# are committed only when followed by a nonzero digit, so trailing zeros do not
+# consume limb capacity.
+function _u256decimal(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8)
+    @inbounds if i <= j && (buf[i] == UInt8('-') || buf[i] == UInt8('+'))
+        i += 1
+    end
+    x = _u256(zero(UInt64))
+    started = false
+    point = false
+    fraction = 0
+    pendingzeros = 0
+    exponent = 0
+    @inbounds while i <= j
+        byte = buf[i]
+        digit = byte - UInt8('0')
+        if digit <= 0x09
+            point && (fraction += 1)
+            if !started
+                if digit != 0
+                    x, ok = _u256muladd10(x, digit)
+                    ok || return (x, 0, false)
+                    started = true
+                end
+            elseif digit == 0
+                pendingzeros += 1
+            else
+                pendingzeros <= 76 || return (x, 0, false)
+                for _ in 1:pendingzeros
+                    x, ok = _u256muladd10(x, 0x00)
+                    ok || return (x, 0, false)
+                end
+                x, ok = _u256muladd10(x, digit)
+                ok || return (x, 0, false)
+                pendingzeros = 0
+            end
+        elseif byte == decimal
+            point = true
+        else
+            i += 1
+            eneg = false
+            @inbounds if i <= j && (buf[i] == UInt8('-') || buf[i] == UInt8('+'))
+                eneg = buf[i] == UInt8('-')
+                i += 1
+            end
+            e = 0
+            @inbounds while i <= j
+                e < 100_000 && (e = 10e + Int(buf[i] - UInt8('0')))
+                i += 1
+            end
+            exponent = eneg ? -e : e
+            break
+        end
+        i += 1
+    end
+    started || return (x, 0, false)
+    decimalplaces = fraction - pendingzeros
+    # The fixed-limb comparison necessarily overflows outside this range.
+    # Check before subtracting so even a lazy, enormous byte vector cannot wrap.
+    exponent - 110 <= decimalplaces <= exponent + 110 || return (x, 0, false)
+    return (x, exponent - decimalplaces, true)
+end
+
+@inline function _floatmidpoint(::Type{T}, bits::UInt64) where {T <: Union{Float64, Float32, Float16}}
+    MB = _mantbits(T)
+    mask = (UInt64(1) << MB) - 1
+    biased = Int(bits >> MB)
+    mant = bits & mask
+    if biased == 0
+        exponent = 1 - _bias(T) - MB
+    else
+        mant |= UInt64(1) << MB
+        exponent = biased - _bias(T) - MB
+    end
+    return (2mant + 1, exponent - 1)
+end
+
+function _u256midpointcmp(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
+                          decimal::UInt8,
+                          lowerbits::UInt64) where {T <: Union{Float64, Float32, Float16}}
+    real, exponent10, ok = _u256decimal(buf, i, j, decimal)
+    ok || return (0, false)
+    midpoint, exponent2 = _floatmidpoint(T, lowerbits)
+    theoretical = _u256(midpoint)
+    if exponent10 >= 0
+        real, ok = _u256pow5(real, exponent10)
+    else
+        theoretical, ok = _u256pow5(theoretical, -exponent10)
+    end
+    ok || return (0, false)
+    shift = exponent10 - exponent2
+    if shift >= 0
+        real, ok = _u256shl(real, shift)
+    else
+        theoretical, ok = _u256shl(theoretical, -shift)
+    end
+    ok || return (0, false)
+    return (_u256cmp(real, theoretical), true)
+end
+
+# Short Float16 boundaries fit in one UInt128. Reusing the exact decimal parts
+# avoids a second digit-by-digit fixed-limb parse on this latency-sensitive
+# midpoint path.
+@inline function _u128midpointcmp(parts::DecParts, lowerbits::UInt64)
+    parts.truncated && return (0, false)
+    real = UInt128(parts.mant)
+    midpoint, exponent2 = _floatmidpoint(Float16, lowerbits)
+    theoretical = UInt128(midpoint)
+    exponent10 = Int(parts.exp10)
+    power = abs(exponent10)
+    power <= 55 || return (0, false)
+    factor = @inbounds _POW5U128[power + 1]
+    if exponent10 >= 0
+        real <= typemax(UInt128) ÷ factor || return (0, false)
+        real *= factor
+    else
+        theoretical <= typemax(UInt128) ÷ factor || return (0, false)
+        theoretical *= factor
+    end
+    shift = exponent10 - exponent2
+    if shift >= 0
+        shift < 128 && real <= typemax(UInt128) >> shift || return (0, false)
+        real <<= shift
+    else
+        shift = -shift
+        shift < 128 && theoretical <= typemax(UInt128) >> shift || return (0, false)
+        theoretical <<= shift
+    end
+    return (real == theoretical ? 0 : real < theoretical ? -1 : 1, true)
+end
+
+@inline function _decimalisexactfloat64(parts::DecParts)
+    exponent = Int(parts.exp10)
+    power = abs(exponent)
+    power <= 27 || return false
+    factor = @inbounds _POW5U64[power + 1]
+    if exponent < 0
+        return parts.mant % factor == 0
+    end
+    return parts.mant <= (UInt64(1) << 53) ÷ factor
+end
+
+@noinline function _exactfloatfallback(::Type{T}, buf::AbstractVector{UInt8}, i::Int,
+                                       j::Int, neg::Bool,
+                                       decimal::UInt8) where {T <: Union{Float64, Float32}}
+    parts, rc = _decompose(buf, i, j, decimal)
+    if rc == RC_OK && (parts.truncated || parts.ndig > 19)
+        lower = _eisel_lemire(T, parts.mant, Int(parts.exp10))
+        upper = _eisel_lemire(T, parts.mant + 1, Int(parts.exp10))
+        if 0 <= lower < _infbits(T) && upper == lower + 1 <= _infbits(T)
+            cmp, resolved = _u256midpointcmp(T, buf, i, j, decimal, UInt64(lower))
+            if resolved
+                bits = cmp < 0 || (cmp == 0 && iseven(lower)) ? UInt64(lower) : UInt64(upper)
+                return _sign(T, bits, neg)
+            end
+        end
+    end
+    return _sdc(T, buf, i, j, neg, decimal)
+end
 
 const SDC_MAXDIG = 800   # 768-digit worst case + slack
 
@@ -610,7 +864,7 @@ _sdc(buf::AbstractVector{UInt8}, i::Int, j::Int, neg::Bool, decimal::UInt8) =
     _sdc(Float64, buf, i, j, neg, decimal)
 
 @noinline function _sdc(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int, neg::Bool,
-                        decimal::UInt8) where {T <: Union{Float64, Float32}}
+                        decimal::UInt8) where {T <: Union{Float64, Float32, Float16}}
     MB = _mantbits(T)
     h = _hpd(buf, i, j, decimal)
     h.n == 0 && return _sign(T, zero(UInt64), neg)
@@ -681,6 +935,8 @@ end
     reinterpret(Float64, bits | (UInt64(neg) << 63))
 @inline _sign(::Type{Float32}, bits::UInt64, neg::Bool) =
     reinterpret(Float32, UInt32(bits) | (UInt32(neg) << 31))
+@inline _sign(::Type{Float16}, bits::UInt64, neg::Bool) =
+    reinterpret(Float16, UInt16(bits) | (UInt16(neg) << 15))
 
 # --- special spellings ---------------------------------------------------------
 
@@ -954,79 +1210,209 @@ end
 end
 
 """
-    parsefloat(T, buf, i, j, decimal=UInt8('.')) -> (T, rc)      T ∈ Float64, Float32
+    parsefloat(T, buf, i, j, decimal=UInt8('.')) -> (T, rc)
+        T ∈ Float16, Float32, Float64
     parsefloat64(buf, i, j, decimal=UInt8('.')) -> (Float64, rc)
 
 Parse `buf[i:j]` as `T` with correct (round-half-even) rounding for every
 input — no C, no BigFloat: Clinger's exact small case, then Eisel–Lemire,
-then simple-decimal-conversion for the rare ambiguous/subnormal cases.
+then an exact fixed-limb midpoint comparison or simple decimal conversion for
+the rare ambiguous and subnormal cases.
 `Float32` is parsed natively (never via Float64, which double-rounds).
+`Float16` uses bounded wider fast stages, then compares the original decimal
+exactly whenever a wider result is a Float16 rounding midpoint.
 Accepts sign, digits, one `decimal` byte, optional e/E exponent, and the
 case-insensitive spellings Inf/Infinity/NaN.
 
-`rc` is `RC_OK`, `RC_INVALID`, or one of the two RANGE codes: `RC_OVERFLOW`
+`rc` is `RC_OK`, `RC_INVALID`, or one of the two range codes: `RC_OVERFLOW`
 (the value rounded to ±Inf) and `RC_UNDERFLOW` (a nonzero spelling rounded to
 ±0). The value returned alongside a range code is that ±Inf / ±0, so a caller
-that wants C/strtod semantics simply treats both as success. `Parsers.parse`
-follows the host's `Base.parse` range policy.
+that wants strtod-style rounded values can treat both as success. Checked
+whole-value parsing rejects both range codes on every platform.
 
 Structured as an @inline hot core plus a thin wrapper owning the cold tier-3
-tail (kept @noinline so its ~1000-step scaling loops never bloat the hot path).
+tail. The tail stays @noinline so exact fallback code never bloats the hot path.
 """
 @inline function parsefloat(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
                             decimal::UInt8=UInt8('.')) where {T <: Union{Float64, Float32}}
     v, rc, done = _parsefloat_core(T, buf, i, j, decimal)
     done && return (v, rc)
-    r = _sdc(T, buf, i, j, v < 0, decimal)
+    r = _exactfloatfallback(T, buf, i, j, v < 0, decimal)
     rc = r == 0 ? RC_UNDERFLOW : isinf(r) ? RC_OVERFLOW : RC_OK   # mant ≠ 0 on this path
     return (r, rc)
 end
+
+@noinline function _exactfloat16fallback(buf::AbstractVector{UInt8}, i::Int, j::Int,
+                                         neg::Bool, decimal::UInt8,
+                                         lowerbits::UInt64)
+    parts, rc = _decompose(buf, i, j, decimal)
+    cmp, resolved = rc == RC_OK ? _u128midpointcmp(parts, lowerbits) : (0, false)
+    if !resolved
+        cmp, resolved = _u256midpointcmp(Float16, buf, i, j, decimal, lowerbits)
+    end
+    if resolved
+        bits = cmp < 0 || (cmp == 0 && iseven(lowerbits)) ? lowerbits : lowerbits + 1
+        return _sign(Float16, bits, neg)
+    end
+    return _sdc(Float16, buf, i, j, neg, decimal)
+end
+
+# Float64 and Float32 have enough precision to identify the only possible
+# Float16 double-rounding hazard: an exact midpoint between adjacent Float16
+# values. Re-read the original decimal only at that boundary.
+@inline function _float16stage(value::T, rc) where {T <: Union{Float64, Float32}}
+    if rc != RC_OK || !isfinite(value) || iszero(value)
+        return (Float16(value), rc, false, zero(UInt64))
+    end
+    value16 = Float16(value)
+    magnitude = abs(value)
+    magnitude16 = abs(value16)
+    widened16 = T(magnitude16)
+    if widened16 == magnitude
+        return (value16, RC_OK, false, zero(UInt64))
+    end
+    roundedbits = UInt64(reinterpret(UInt16, magnitude16))
+    lowerbits = widened16 < magnitude ? roundedbits : roundedbits - 1
+    midpoint, exponent = _floatmidpoint(Float16, lowerbits)
+    exact = magnitude == ldexp(T(midpoint), exponent)
+    rc16 = iszero(value16) ? RC_UNDERFLOW : isinf(value16) ? RC_OVERFLOW : RC_OK
+    return (value16, rc16, exact, lowerbits)
+end
+
+# Parse the common Float16 decimal shape once. The exact coefficient then feeds
+# a wider stage and the midpoint comparison without rescanning the source.
+@inline function _float16small(buf::AbstractVector{UInt8}, i::Int, j::Int,
+                               decimal::UInt8)
+    1 <= j - i + 1 <= 24 || return (zero(Float16), RC_INVALID, false)
+    neg = false
+    @inbounds begin
+        byte = buf[i]
+        neg = byte == UInt8('-')
+        (neg || byte == UInt8('+')) && (i += 1)
+    end
+    i <= j || return (zero(Float16), RC_INVALID, true)
+    @inbounds begin
+        first = _lower(buf[i])
+        (first == UInt8('n') || first == UInt8('i')) &&
+            return (zero(Float16), RC_INVALID, false)
+    end
+    mant = zero(UInt64)
+    ndig = 0
+    fraction = 0
+    exponent = 0
+    sawdigit = false
+    sawpoint = false
+    k = i
+    @inbounds while k <= j
+        byte = buf[k]
+        digit = byte - UInt8('0')
+        if digit <= 0x09
+            ndig += 1
+            ndig <= 19 || return (zero(Float16), RC_INVALID, false)
+            mant = 10mant + digit
+            sawdigit = true
+            sawpoint && (fraction += 1)
+        elseif byte == decimal && !sawpoint
+            sawpoint = true
+        elseif (byte == UInt8('e') || byte == UInt8('E')) && sawdigit
+            k += 1
+            eneg = false
+            if k <= j
+                byte = buf[k]
+                eneg = byte == UInt8('-')
+                (eneg || byte == UInt8('+')) && (k += 1)
+            end
+            k <= j || return (zero(Float16), RC_INVALID, true)
+            e = 0
+            while k <= j
+                digit = buf[k] - UInt8('0')
+                digit <= 0x09 || return (zero(Float16), RC_INVALID, true)
+                e < 100_000 && (e = 10e + Int(digit))
+                k += 1
+            end
+            exponent = eneg ? -e : e
+            break
+        else
+            return (zero(Float16), RC_INVALID, true)
+        end
+        k += 1
+    end
+    sawdigit || return (zero(Float16), RC_INVALID, true)
+    q = exponent - fraction
+    typemin(Int32) <= q <= typemax(Int32) || return (zero(Float16), RC_INVALID, false)
+    parts = DecParts(mant, Int32(q), Int32(ndig), false, neg, 0)
+    if mant <= UInt64(1) << 53 && -22 <= q <= 22
+        value64 = Float64(mant)
+        if q != 0
+            value64 = q > 0 ? value64 * _POW10[q + 1] : value64 / _POW10[-q + 1]
+        end
+        neg && (value64 = -value64)
+        value16, rc, exact, lowerbits = _float16stage(value64, RC_OK)
+        if exact
+            if _decimalisexactfloat64(parts)
+                bits = iseven(lowerbits) ? lowerbits : lowerbits + 1
+            else
+                cmp, resolved = _u128midpointcmp(parts, lowerbits)
+                resolved || return (zero(Float16), RC_INVALID, false)
+                bits = cmp < 0 || (cmp == 0 && iseven(lowerbits)) ? lowerbits : lowerbits + 1
+            end
+            value16 = _sign(Float16, bits, neg)
+            rc = iszero(value16) ? RC_UNDERFLOW : isinf(value16) ? RC_OVERFLOW : RC_OK
+        end
+        return (value16, rc, true)
+    end
+    value32, rc, done = _convertparts(Float32, parts)
+    done || return (zero(Float16), RC_INVALID, false)
+    value16, rc, exact, lowerbits = _float16stage(value32, rc)
+    exact || return (value16, rc, true)
+    cmp, resolved = _u128midpointcmp(parts, lowerbits)
+    resolved || return (zero(Float16), RC_INVALID, false)
+    bits = cmp < 0 || (cmp == 0 && iseven(lowerbits)) ? lowerbits : lowerbits + 1
+    value16 = _sign(Float16, bits, neg)
+    rc = iszero(value16) ? RC_UNDERFLOW : isinf(value16) ? RC_OVERFLOW : RC_OK
+    return (value16, rc, true)
+end
+
+@inline function parsefloat(::Type{Float16}, buf::AbstractVector{UInt8}, i::Int, j::Int,
+                            decimal::UInt8=UInt8('.'))
+    value16, rc, handled = _float16small(buf, i, j, decimal)
+    handled && return (value16, rc)
+    value32, rc = parsefloat(Float32, buf, i, j, decimal)
+    value16, rc, exact, lowerbits = _float16stage(value32, rc)
+    exact || return (value16, rc)
+    value16 = _exactfloat16fallback(buf, i, j, signbit(value32), decimal, lowerbits)
+    rc = iszero(value16) ? RC_UNDERFLOW : isinf(value16) ? RC_OVERFLOW : RC_OK
+    return (value16, rc)
+end
+
 parsefloat64(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8=UInt8('.')) =
     parsefloat(Float64, buf, i, j, decimal)
 
-# Public whole-value parsing can delegate only the rare unresolved rounding
-# boundary to Julia's bounded C parser. The supported low-level `parsefloat`
-# kernel above stays self-contained and uses SDC, so its contract is unchanged.
-@inline _trycfloat(::Type{Float64}, ptr::Ptr{UInt8}, n::Int) =
-    ccall(:jl_try_substrtod, Tuple{Bool, Float64},
-          (Ptr{UInt8}, Csize_t, Csize_t), ptr, 0, n)
-@inline _trycfloat(::Type{Float32}, ptr::Ptr{UInt8}, n::Int) =
-    ccall(:jl_try_substrtof, Tuple{Bool, Float32},
-          (Ptr{UInt8}, Csize_t, Csize_t), ptr, 0, n)
-
-@noinline function _pointerfloatfallback(::Type{T}, buf, i::Int, j::Int,
-                                         neg::Bool, decimal::UInt8) where {T <: Union{Float64, Float32}}
-    decimal == UInt8('.') || return _sdc(T, buf, i, j, neg, decimal)
-    GC.@preserve buf begin
-        ok, value = _trycfloat(T, pointer(buf, i), j - i + 1)
-        ok && return value
-    end
-    return _sdc(T, buf, i, j, neg, decimal)
+@inline function parsefloatpublic(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
+                                  decimal::UInt8) where {T <: Union{Float64, Float32, Float16}}
+    return parsefloat(T, buf, i, j, decimal)
 end
 
-_publicfloatfallback(::Type{T}, buf::Vector{UInt8}, i::Int, j::Int, neg::Bool,
-                     decimal::UInt8) where {T <: Union{Float64, Float32}} =
-    _pointerfloatfallback(T, buf, i, j, neg, decimal)
-_publicfloatfallback(::Type{T}, buf::Base.CodeUnits{UInt8, S}, i::Int, j::Int, neg::Bool,
-                     decimal::UInt8) where {T <: Union{Float64, Float32}, S <: Union{String, SubString{String}}} =
-    _pointerfloatfallback(T, buf, i, j, neg, decimal)
-_publicfloatfallback(::Type{T},
-                     buf::SubArray{UInt8, 1, P, Tuple{I}, true},
-                     i::Int, j::Int, neg::Bool,
-                     decimal::UInt8) where {T <: Union{Float64, Float32},
-                                             P <: Vector{UInt8},
-                                             I <: AbstractUnitRange{Int}} =
-    _pointerfloatfallback(T, buf, i, j, neg, decimal)
-_publicfloatfallback(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int, neg::Bool,
-                     decimal::UInt8) where {T <: Union{Float64, Float32}} =
-    _sdc(T, buf, i, j, neg, decimal)
+@noinline function _exactgroupedfloat16fallback(buf::AbstractVector{UInt8}, i::Int,
+                                                j::Int, decimal::UInt8,
+                                                groupmark::UInt8, neg::Bool,
+                                                lowerbits::UInt64)
+    scratch = Vector{UInt8}(undef, max(j - i + 1, 8))
+    n = degroup!(scratch, buf, i, j, groupmark, decimal)
+    n >= 0 || return (zero(Float16), RC_INVALID)
+    value = _exactfloat16fallback(scratch, 1, n, neg, decimal, lowerbits)
+    rc = iszero(value) ? RC_UNDERFLOW : isinf(value) ? RC_OVERFLOW : RC_OK
+    return (value, rc)
+end
 
-@inline function parsefloatpublic(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
-                                  decimal::UInt8) where {T <: Union{Float64, Float32}}
-    value, rc, done = _parsefloat_core(T, buf, i, j, decimal)
-    done && return (value, rc)
-    value = _publicfloatfallback(T, buf, i, j, value < 0, decimal)
-    return (value, RC_OK)
+@inline function parsegroupedfloatpublic(::Type{Float16}, buf::AbstractVector{UInt8},
+                                         i::Int, j::Int, decimal::UInt8,
+                                         groupmark::UInt8)
+    value32, rc = parsegroupedfloatpublic(Float32, buf, i, j, decimal, groupmark)
+    value16, rc, exact, lowerbits = _float16stage(value32, rc)
+    exact || return (value16, rc)
+    return _exactgroupedfloat16fallback(buf, i, j, decimal, groupmark,
+                                        signbit(value32), lowerbits)
 end
 
 @inline function parsegroupedfloatpublic(::Type{T}, buf::AbstractVector{UInt8}, i::Int,
@@ -1052,7 +1438,7 @@ const _POW10F32 = Float32[10.0f0^k for k in 0:10]
 # sticky bit), the binary exponent tracks fraction digits and the `p` part, and
 # one round-half-even from the wide integer gives the correctly rounded T.
 function _parsehexfloat(::Type{T}, buf::AbstractVector{UInt8}, i::Int,
-                        j::Int) where {T <: Union{Float64, Float32}}
+                        j::Int) where {T <: Union{Float64, Float32, Float16}}
     neg = false
     @inbounds if i <= j
         b = buf[i]

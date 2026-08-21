@@ -2,16 +2,18 @@
     Parsers
 
 Fast, exact parsers for Julia's scalar types, with a checked public layer that
-reproduces `Base.parse`/`Base.tryparse` semantics.
+closely follows `Base.parse`/`Base.tryparse` semantics with documented,
+platform-independent range handling.
 
 Two API levels:
 
   * **`Parsers.parse(T, s; kw...)` / `Parsers.tryparse(T, s; kw...)`** — the
-    Base-compatible surface: `s` is an `AbstractString` or a byte vector;
-    numbers and Bools tolerate surrounding whitespace, `parse` throws the same
-    errors `Base.parse` throws (`ArgumentError`, `OverflowError`), `tryparse`
-    returns `nothing`. Also `Parsers.parse(T, bytes, first, last; kw...)` on
-    an explicit byte span. `String`, `SubString`, `CodeUnits`, and one-based
+    Base-like surface: `s` is an `AbstractString` or a byte vector;
+    numbers and Bools tolerate surrounding whitespace, `parse` reports invalid
+    or out-of-range values with `ArgumentError` or `OverflowError`, and
+    `tryparse` returns `nothing`. It also supports
+    `Parsers.parse(T, bytes, first, last; kw...)` on an explicit byte span.
+    `String`, `SubString`, `CodeUnits`, and one-based
     `AbstractVector{UInt8}` inputs use their byte storage directly. Byte vectors
     with offset axes are rejected.
   * **`Parsers.parsenext(T, bytes, pos, last; kw...)`** — the prefix primitive
@@ -60,7 +62,7 @@ include("bigs.jl")     # BigInt / BigFloat / UUID
 include("bools.jl")    # Bool + custom spelling lists
 include("civil.jl")    # CivilParts + format programs (Dates-independent)
 include("dates.jl")    # Date/DateTime/Time adapters
-include("api.jl")      # parse / tryparse / parsenext — the Base-parity surface
+include("api.jl")      # parse / tryparse / parsenext — the documented Base-like surface
 include("precompile.jl")
 
 end # module Parsers

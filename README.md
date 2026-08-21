@@ -157,7 +157,7 @@ untrusted indices. Kernels accept `AbstractVector{UInt8}` buffers; use
 |---|---|
 | `Parsers.parseint(T, buf, i, j)` | `(value, code)` for a decimal integer |
 | `Parsers.parseint(T, buf, i, j, base)` | `(value, code, badpos)` for base 2 through 62 |
-| `Parsers.parsefloat(T, buf, i, j, decimal)` | `(value, code)` for `Float32` or `Float64` |
+| `Parsers.parsefloat(T, buf, i, j, decimal)` | `(value, code)` for `Float16`, `Float32`, or `Float64` |
 | `Parsers.parsebool(buf, i, j)` | `(value, code)` for `true` or `false` |
 | `Parsers.parsebigint(buf, i, j)` | `(value, code)` for a decimal `BigInt` |
 | `Parsers.parsebigint(buf, i, j, base)` | `(value, code, badpos)` for an arbitrary-base `BigInt` |
@@ -187,15 +187,20 @@ Fixed-width numeric kernels use round-to-nearest, ties-to-even.
 
 Parsers aims to match `Base.parse` and `Base.tryparse` for its documented
 whole-value grammar. The test suite compares results and errors against Base.
-Fixed-width float range handling follows Base's platform behavior. On its cold
-range path, Parsers consults Base because Windows accepts some values that
-round to signed zero or infinity where other supported platforms report a
-range error. Low-level kernels always expose the range through
-`RC_UNDERFLOW` or `RC_OVERFLOW`.
+Fixed-width float range handling is platform-independent. A nonzero numeric
+spelling that rounds to signed zero or infinity is a range error for checked
+whole-value parsing. Low-level kernels return the rounded value with
+`RC_UNDERFLOW` or `RC_OVERFLOW`. Parsers does not delegate fixed-width decimal
+conversion to Base or Julia's private C parser.
 
 Known deliberate differences are:
 
 - Whitespace tolerance is limited to ASCII whitespace.
+- Base parses `Float16` through `Float32`, which can double-round at a Float16
+  boundary. Parsers resolves such boundaries against the original decimal.
+  Base also accepts some `Float16` conversions that round to signed zero or
+  infinity, and Windows accepts some such `Float32` values. Parsers reports
+  range errors consistently on every platform.
 - Temporal patterns are field-exact, with an optional sign on year fields.
   String formats use the default English names; a `Dates.DateFormat` keeps its
   locale tables.

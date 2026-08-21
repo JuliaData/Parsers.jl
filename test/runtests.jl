@@ -5,9 +5,9 @@
 #                      pinned adversaries), decompose oracle, BigFloat vs MPFR
 #   kernels_civil.jl   CivilParts, Rata Die, format programs, ISO fast paths, tokens
 #   kernels_misc.jl    Bool, UUID
-#   api.jl             the Base-parity surface: parse/tryparse/parsenext, every T,
+#   api.jl             the Base-like surface: parse/tryparse/parsenext, every T,
 #                      whitespace, bases/prefixes, hex floats, Float32 native,
-#                      Float16, keywords, error messages identical to Base
+#                      Float16, keywords, error messages, and documented deltas
 using Test, Parsers, Aqua
 include("helpers.jl")
 @testset "Parsers" begin

@@ -1,8 +1,8 @@
 # =============================================================================
-# The public surface: parse / tryparse with Base.parse's semantics, the
+# The public surface: parse / tryparse with the documented Base-like semantics,
 # byte-span forms, and parsenext for tokenizers. Fixed-width values use the
-# span-exact kernels. Rare unresolved fixed-float conversions use Julia's
-# bounded C parser, and public BigFloat conversion uses MPFR for Base parity.
+# span-exact package kernels. Public BigFloat conversion uses MPFR for Base
+# parity.
 # =============================================================================
 
 const _INTS = Union{_SIGNED, _UNSIGNED}
@@ -240,8 +240,7 @@ end
 
 @inline function _parsefloatspan(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
                                  decimal::UInt8, groupmark) where {T <: _FLOATS}
-    P = T === Float16 ? Float32 : T          # Base parses Float16 through Float32
-    v = zero(P)
+    v = zero(T)
     rc = RC_INVALID
     gm = _floatgroupbyte(groupmark, decimal)
     if i <= j
@@ -251,29 +250,18 @@ end
         end
         special, isspecial = gm === nothing ? (0.0, false) : _matchspecial(buf, i, j)
         if isspecial
-            v, rc = P(special), RC_OK
+            v, rc = T(special), RC_OK
         elseif @inbounds(k + 1 <= j && buf[k] == UInt8('0') &&
                          _lower(buf[k + 1]) == UInt8('x'))
-            v, rc = _parsehexfloat(P, buf, i, j)
+            v, rc = _parsehexfloat(T, buf, i, j)
         elseif gm !== nothing && _hasbyte(buf, i, j, gm)
-            v, rc = parsegroupedfloatpublic(P, buf, i, j, decimal, gm)
+            v, rc = parsegroupedfloatpublic(T, buf, i, j, decimal, gm)
         else
-            v, rc = parsefloatpublic(P, buf, i, j, decimal)
+            v, rc = parsefloatpublic(T, buf, i, j, decimal)
         end
     end
-    return (T === Float16 ? Float16(v) : v, rc)
+    return (v, rc)
 end
-
-# Julia's Windows float parser accepts some ERANGE results as the rounded
-# infinity or signed zero. Ask Base only on that cold path and only for Base's
-# grammar. The explicit Boolean keeps both policy branches directly testable.
-@inline _checkbasefloatrange(rc, decimal, groupmark,
-                             iswindows::Bool=Sys.iswindows()) =
-    iswindows && decimal == UInt8('.') && groupmark === nothing &&
-    (rc == RC_OVERFLOW || rc == RC_UNDERFLOW)
-
-@noinline _basefloatrange(::Type{T}, buf, i::Int, j::Int) where {T <: _FLOATS} =
-    Base.tryparse(T, _spanstring(buf, i, j))
 
 @inline function _tryparsefloat(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
                                 decimal::UInt8, groupmark,
@@ -284,12 +272,10 @@ end
     if rc == RC_OK
         return v
     end
-    if _checkbasefloatrange(rc, decimal, groupmark)
-        basevalue = _basefloatrange(T, buf, i, j)
-        basevalue === nothing || return basevalue
-    end
     # The kernel still holds the rounded ±Inf / ±0 for callers that want it.
-    # Base rejects these ERANGE results on non-Windows platforms.
+    # Whole-value parsing rejects every nonzero spelling outside the finite
+    # target range. This policy is deterministic across platforms and never
+    # delegates fixed-float conversion to Julia's private C parser.
     Throw || return nothing
     throw(ArgumentError("cannot parse $(_q(_spanstring(buf, orig_i, orig_j))) as $T"))
 end
@@ -1033,17 +1019,6 @@ function _nextvalue(::Type{T}, b, i::Int, stop::Int; decimal::Char='.',
                     groupmark=nothing) where {T <: _FLOATS}
     v, rc = _parsefloatspan(T, b, i, stop, _decimalbyte(decimal), groupmark)
     rc == RC_INVALID && return (zero(T), i, RC_INVALID)
-    return (v, stop + 1, rc)
-end
-function _nextvalue(::Type{Float16}, b, i::Int, stop::Int; decimal::Char='.',
-                    groupmark=nothing)
-    p, rc = _parsefloatspan(Float32, b, i, stop, _decimalbyte(decimal), groupmark)
-    v = Float16(p)
-    if rc == RC_OK
-        isfinite(p) && isinf(v) && (rc = RC_OVERFLOW)
-        p != 0 && iszero(v) && (rc = RC_UNDERFLOW)
-    end
-    rc == RC_INVALID && return (Float16(0), i, RC_INVALID)
     return (v, stop + 1, rc)
 end
 function _nextvalue(::Type{BigFloat}, b, i::Int, stop::Int; decimal::Char='.',

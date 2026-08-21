@@ -650,7 +650,11 @@ end
         text = sign * string(rand(rng, 0:999_999)) * "." *
                lpad(string(rand(rng, 0:999_999)), 6, '0') * "e" * string(rand(rng, -40:40))
         for T in (Float16, Float32, Float64)
-            record(isequal(Parsers.tryparse(T, text), Base.tryparse(T, text)),
+            bytes = codeunits(text)
+            _, rc = Parsers._parsefloatspan(T, bytes, 1, length(bytes), UInt8('.'), nothing)
+            expected = rc == Parsers.RC_OVERFLOW || rc == Parsers.RC_UNDERFLOW ? nothing :
+                       Base.tryparse(T, text)
+            record(isequal(Parsers.tryparse(T, text), expected),
                    "decimal differential mismatch for $T and $(repr(text))")
         end
     end

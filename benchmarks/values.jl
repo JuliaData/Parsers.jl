@@ -12,6 +12,21 @@ using Random
 const CORPUS_SIZE = 100_000
 const SAMPLE_COUNT = 9
 const SEED = 0x0000_0000_5eed_1234
+const FLOAT64_BOUNDARY_55 = (
+    "1.00000000000000011102230246251565404236316680908203124",
+    "1.00000000000000011102230246251565404236316680908203125",
+    "1.00000000000000011102230246251565404236316680908203126",
+)
+const FLOAT64_BOUNDARY_39 = (
+    "4194304.0000000004656612873077392578124",
+    "4194304.0000000004656612873077392578125",
+    "4194304.0000000004656612873077392578126",
+)
+const FLOAT32_BOUNDARY_26 = (
+    "1.000000059604644775390624",
+    "1.000000059604644775390625",
+    "1.000000059604644775390626",
+)
 
 function gitcommit()
     try
@@ -77,7 +92,7 @@ integer_kernel(::Type{T}) where {T <: Integer} = function (buffer, spans)
     return checksum
 end
 
-float_kernel(::Type{T}) where {T <: Union{Float64, Float32}} = function (buffer, spans)
+float_kernel(::Type{T}) where {T <: Union{Float64, Float32, Float16}} = function (buffer, spans)
     checksum = zero(T)
     for (first, last) in spans
         value, _ = Parsers.parsefloat(T, buffer, first, last)
@@ -125,8 +140,16 @@ function main()
          (rng, _) -> string(reinterpret(Float64, rand(rng, UInt64) & 0x7fefffffffffffff))),
         ("float exponent", Float64, float_kernel,
          (rng, _) -> string(rand(rng, 1:999), '.', rand(rng, 0:99), 'e', rand(rng, -30:30))),
+        ("float16 exact midpoint", Float16, float_kernel,
+         (_, _) -> "1.00048828125"),
+        ("float64 boundary 39 digit", Float64, float_kernel,
+         (_, i) -> FLOAT64_BOUNDARY_39[mod1(i, length(FLOAT64_BOUNDARY_39))]),
+        ("float64 boundary 55 digit", Float64, float_kernel,
+         (_, i) -> FLOAT64_BOUNDARY_55[mod1(i, length(FLOAT64_BOUNDARY_55))]),
         ("float32 shortest", Float32, float_kernel,
          (rng, _) -> string(reinterpret(Float32, rand(rng, UInt32) & 0x7f7fffff))),
+        ("float32 boundary 26 digit", Float32, float_kernel,
+         (_, i) -> FLOAT32_BOUNDARY_26[mod1(i, length(FLOAT32_BOUNDARY_26))]),
     ]
 
     for (case_index, (name, type, kernel, generate)) in enumerate(cases)
