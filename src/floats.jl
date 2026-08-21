@@ -414,7 +414,7 @@ _eisel_lemire(mant::UInt64, q::Int) = _eisel_lemire(Float64, mant, q)
 # -1 ambiguous (tier 3 decides), -2 exponent outside the table (certain
 # under/overflow — the caller decides which by q's sign), -3 overflow (±Inf).
 # A ZERO bit pattern here means underflow-to-zero: mant is nonzero on entry.
-function _eisel_lemire(::Type{T}, mant::UInt64, q::Int) where {T <: Union{Float64, Float32}}
+@inline function _eisel_lemire(::Type{T}, mant::UInt64, q::Int) where {T <: Union{Float64, Float32}}
     (q < POW5MIN || q > POW5MAX) && return Int64(-2)   # certain under/overflow, sign applied by caller
     lz = leading_zeros(mant)
     w = mant << lz
@@ -1049,8 +1049,8 @@ const _P10U = (UInt64(1), UInt64(10), UInt64(100), UInt64(1000), UInt64(10_000),
     end
     f = T(mant)
     if q != 0
-        f = T === Float64 ? (q > 0 ? f * _POW10[q + 1] : f / _POW10[-q + 1]) :
-                            (q > 0 ? f * _POW10F32[q + 1] : f / _POW10F32[-q + 1])
+        f = T === Float64 ? (q > 0 ? f * @inbounds(_POW10[q + 1]) : f / @inbounds(_POW10[-q + 1])) :
+                            (q > 0 ? f * @inbounds(_POW10F32[q + 1]) : f / @inbounds(_POW10F32[-q + 1]))
     end
     return (neg ? -f : f, true)
 end
@@ -1118,8 +1118,8 @@ end
     value = T(mant)
     if q != 0
         value = T === Float64 ?
-            (q > 0 ? value * _POW10[q + 1] : value / _POW10[-q + 1]) :
-            (q > 0 ? value * _POW10F32[q + 1] : value / _POW10F32[-q + 1])
+            (q > 0 ? value * @inbounds(_POW10[q + 1]) : value / @inbounds(_POW10[-q + 1])) :
+            (q > 0 ? value * @inbounds(_POW10F32[q + 1]) : value / @inbounds(_POW10F32[-q + 1]))
     end
     return (neg ? -value : value, true)
 end
@@ -1134,6 +1134,9 @@ end
 
 @inline function _float_fast(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
                              decimal::UInt8) where {T <: Union{Float64, Float32}}
+    # neither a special spelling (at most 9 bytes) nor the short path (at most
+    # 16 with a sign) can match a longer span; skip both probes outright
+    j - i + 1 <= 16 || return (zero(T), false)
     orig_i = i
     @inbounds if i <= j
         b = buf[i]
@@ -1158,13 +1161,13 @@ end
     if T === Float64
         if untrunc && -22 <= q <= 22 && mant <= 9007199254740992   # 2^53
             f = Float64(mant)
-            f = q >= 0 ? f * _POW10[q + 1] : f / _POW10[-q + 1]
+            f = q >= 0 ? f * @inbounds(_POW10[q + 1]) : f / @inbounds(_POW10[-q + 1])
             return (parts.neg ? -f : f, RC_OK, true)
         end
     else
         if untrunc && -10 <= q <= 10 && mant <= 16777216             # 2^24
             f = Float32(mant)
-            f = q >= 0 ? f * _POW10F32[q + 1] : f / _POW10F32[-q + 1]
+            f = q >= 0 ? f * @inbounds(_POW10F32[q + 1]) : f / @inbounds(_POW10F32[-q + 1])
             return (parts.neg ? -f : f, RC_OK, true)
         end
     end

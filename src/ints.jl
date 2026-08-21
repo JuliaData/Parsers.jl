@@ -113,7 +113,7 @@ more ASCII digits, nothing else. Leading zeros are accepted (a caller's
 inference policy for zero-padded identifiers lives above this). `rc` is
 OVERFLOW when the digits are well-formed but exceed Int64, INVALID otherwise.
 """
-function parseint64(buf::AbstractVector{UInt8}, i::Int, j::Int)
+@inline function parseint64(buf::AbstractVector{UInt8}, i::Int, j::Int)
     i > j && return (zero(Int64), RC_INVALID)
     @inbounds b = buf[i]
     neg = b == UInt8('-')
@@ -316,7 +316,7 @@ const _SIGNED   = Union{Int8, Int16, Int32, Int64, Int128}
 const _UNSIGNED = Union{UInt8, UInt16, UInt32, UInt64, UInt128}
 
 # UInt64: the parseint64 SWAR core without a sign, with the 20-digit bound
-function _parseuint64(buf::AbstractVector{UInt8}, i::Int, j::Int)
+@inline function _parseuint64(buf::AbstractVector{UInt8}, i::Int, j::Int)
     i > j && return (zero(UInt64), RC_INVALID)          # no sign of any kind (Base's rule for unsigned)
     @inbounds while i <= j && buf[i] == UInt8('0')
         i += 1

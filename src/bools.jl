@@ -10,14 +10,12 @@ also accepts `1` and `0`, or caller-supplied replacement spelling lists.
 """
 function parsebool(buf::AbstractVector{UInt8}, i::Int, j::Int)
     n = j - i + 1
-    @inbounds if n == 4 && buf[i] == UInt8('t') && buf[i+1] == UInt8('r') &&
-                 buf[i+2] == UInt8('u') && buf[i+3] == UInt8('e')
-        return (true, RC_OK)
-    elseif n == 5 && buf[i] == UInt8('f') && buf[i+1] == UInt8('a') &&
-           buf[i+2] == UInt8('l') && buf[i+3] == UInt8('s') && buf[i+4] == UInt8('e')
-        return (false, RC_OK)
-    end
-    return (false, RC_INVALID)
+    1 <= n <= 8 || return (false, RC_INVALID)
+    # one clamped word, compared branch-free against both spellings
+    w = _gather8(buf, i, j)
+    istrue = (n == 4) & ((w & 0x00000000ffffffff) == 0x0000000065757274)
+    isfalse = (n == 5) & ((w & 0x000000ffffffffff) == 0x00000065736c6166)
+    return (istrue, ifelse(istrue | isfalse, RC_OK, RC_INVALID))
 end
 
 """

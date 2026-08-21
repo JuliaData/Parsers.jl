@@ -45,3 +45,24 @@ end
         @test Base.tryparse(Base.UUID, s) === nothing
     end
 end
+
+@testset "bool: branch-free kernel accepts exactly true/false at any offset" begin
+    for (s, expected) in (("true", (true, Parsers.RC_OK)), ("false", (false, Parsers.RC_OK)),
+                          ("", (false, Parsers.RC_INVALID)), ("t", (false, Parsers.RC_INVALID)),
+                          ("tru", (false, Parsers.RC_INVALID)), ("truee", (false, Parsers.RC_INVALID)),
+                          ("fals", (false, Parsers.RC_INVALID)), ("falsee", (false, Parsers.RC_INVALID)),
+                          ("TRUE", (false, Parsers.RC_INVALID)), ("True", (false, Parsers.RC_INVALID)),
+                          ("1", (false, Parsers.RC_INVALID)), ("0", (false, Parsers.RC_INVALID)),
+                          ("truefalse", (false, Parsers.RC_INVALID)), ("xtrue", (false, Parsers.RC_INVALID)))
+        @test pbool(s) == expected
+        padded = b("<<" * s * ">>>>>>>>")
+        @test Parsers.parsebool(padded, 3, 2 + ncodeunits(s)) == expected
+        @test Parsers.parsebool(@view(padded[3:end]), 1, ncodeunits(s)) == expected
+    end
+    for s in ("1", "0", "true", "false", " true ", "\ttrue\n")
+        @test Parsers.parse(Bool, s) == Base.parse(Bool, s)
+    end
+    @test Parsers.tryparse(Bool, "2") === nothing
+    @test Parsers.tryparse(Bool, "") === nothing
+    @test Parsers.tryparse(Bool, " ") === nothing
+end

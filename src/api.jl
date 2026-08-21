@@ -24,6 +24,8 @@ end
 # ASCII whitespace, Base.parse's tolerance for numbers and Bools
 @inline _isws(b::UInt8) = b == UInt8(' ') || (UInt8('\t') <= b <= UInt8('\r'))
 @inline function _stripws(buf::AbstractVector{UInt8}, i::Int, j::Int)
+    i <= j || return (i, j)
+    @inbounds (_isws(buf[i]) | _isws(buf[j])) || return (i, j)
     @inbounds while i <= j && _isws(buf[i]); i += 1; end
     @inbounds while j >= i && _isws(buf[j]); j -= 1; end
     return i, j
@@ -108,8 +110,8 @@ end
         Throw && throw(ArgumentError("invalid base 10 digit '$(Char(buf[i]))' in $(_q(_spanstring(buf, orig_i, orig_j)))"))
         return nothing
     end
-    k = i
-    @inbounds (buf[k] == UInt8('-') || buf[k] == UInt8('+')) && (k += 1)
+    @inbounds b = buf[i]
+    k = i + Int((b == UInt8('-')) | (b == UInt8('+')))
     @inbounds if k + 1 <= j && buf[k] == UInt8('0')
         c = buf[k + 1]
         if c == UInt8('x') || c == UInt8('o') || c == UInt8('b')
@@ -288,12 +290,12 @@ end
     i, j = _stripws(buf, i, j)
     if trues === nothing && falses === nothing
         # Base.parse(Bool, s): "true"/"false"/"1"/"0" exactly
-        v, rc = parsebool(buf, i, j)
-        rc == RC_OK && return v
         if i == j
             @inbounds b = buf[i]
-            b == UInt8('1') && return true
-            b == UInt8('0') && return false
+            ((b == UInt8('1')) | (b == UInt8('0'))) && return b == UInt8('1')
+        else
+            v, rc = parsebool(buf, i, j)
+            rc == RC_OK && return v
         end
     else
         trues !== nothing && matchsentinel(buf, i, j, trues) && return true
@@ -472,8 +474,8 @@ function _parsebigfloatpublic(buf, i::Int, j::Int, decimal::UInt8, groupmark,
     special, isspecial = _matchspecial(buf, i, j)
     isspecial && return (BigFloat(special; precision=precision(BigFloat)), RC_OK)
 
-    k = i
-    @inbounds (buf[k] == UInt8('-') || buf[k] == UInt8('+')) && (k += 1)
+    @inbounds b = buf[i]
+    k = i + Int((b == UInt8('-')) | (b == UInt8('+')))
     @inbounds ishex = k + 1 <= j && buf[k] == UInt8('0') &&
                       _lower(buf[k + 1]) == UInt8('x')
     normalizegroup = !ishex && gm !== nothing && _hasbyte(buf, i, j, gm)
