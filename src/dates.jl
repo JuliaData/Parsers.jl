@@ -74,16 +74,19 @@ Escaped literals and the DateFormat's locale tables are preserved.
 """
 function compilepattern(df::Dates.DateFormat)
     ops = PatternOp[]
+    natural = PatternOp[]
     hasdate = false
     hastime = false
     for t in df.tokens
         if t isa Dates.DatePart
             op, token_hasdate, token_hastime = _datepartop(t)
             push!(ops, op)
+            push!(natural, _naturalop(op, t))
             hasdate |= token_hasdate
             hastime |= token_hastime
         elseif t isa Dates.Delim
             _pushdelimiter!(ops, t)
+            _pushdelimiter!(natural, t)
         else
             throw(ArgumentError("unsupported DateFormat token $(typeof(t))"))
         end
@@ -93,5 +96,57 @@ function compilepattern(df::Dates.DateFormat)
                        ntuple(i -> locale.months_abbr[i], 12),
                        ntuple(i -> locale.months[i], 12),
                        ntuple(i -> locale.days_of_week_abbr[i], 7),
-                       ntuple(i -> locale.days_of_week[i], 7))
+                       ntuple(i -> locale.days_of_week[i], 7),
+                       _fixeddatepattern(natural))
+end
+
+# The fixed fast path reads each numeric field at the token's own width ("mm"
+# is two digits, "yyyy" four). Dates' variable-width rule still governs: every
+# other shape falls through to the interpreter, which reads the same values
+# whenever the fixed attempt would have succeeded.
+@inline function _naturalop(op::PatternOp, t::Dates.DatePart)
+    (1 <= op.kind <= 7 && 1 <= t.width <= typemax(UInt8)) || return op
+    return PatternOp(op.kind, UInt8(t.width), true)
+end
+
+# Patterns compiled from format strings, and from DateFormats with other
+# locales, are memoized. Readers take the current table without locking; a
+# writer publishes a copy holding the new entry, so a lookup never observes a
+# table mid-resize.
+mutable struct PatternCache
+    @atomic table::Dict{Any, DatePattern}
+end
+const _PATTERNCACHE = PatternCache(Dict{Any, DatePattern}())
+const _PATTERNLOCK = ReentrantLock()
+const _PATTERNCACHEMAX = 256
+
+@inline function _cachedpattern(key::Union{AbstractString, Dates.DateFormat})
+    table = @atomic :acquire _PATTERNCACHE.table
+    pattern = get(table, key, nothing)
+    pattern === nothing || return pattern
+    return _cachepattern!(key)
+end
+
+@noinline function _cachepattern!(key)
+    return lock(_PATTERNLOCK) do
+        table = @atomic :acquire _PATTERNCACHE.table
+        pattern = get(table, key, nothing)
+        pattern === nothing || return pattern
+        pattern = compilepattern(key)
+        length(table) < _PATTERNCACHEMAX || return pattern
+        updated = copy(table)
+        updated[key isa AbstractString ? String(key) : key] = pattern
+        @atomic :release _PATTERNCACHE.table = updated
+        return pattern
+    end
+end
+
+# A DateFormat carries its format string as a type parameter, so an
+# English-locale format compiles once per DateFormat type rather than once per
+# parse: the generated body folds the compiled program into a constant.
+@generated function _englishpattern(df::Dates.DateFormat{S, T}) where {S, T}
+    reconstructed = Dates.DateFormat(String(S))
+    typeof(reconstructed) === Dates.DateFormat{S, T} || return :(_cachedpattern(df))
+    pattern = compilepattern(reconstructed)
+    return :($pattern)
 end

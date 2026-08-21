@@ -224,3 +224,85 @@ end
         end
     end
 end
+
+@testset "civil: ISO fraction fast paths agree with parsecivil" begin
+    function checkfrac(fast, pat, bytes)
+        for pad in (0, 1, 7)
+            buf = vcat(fill(UInt8(0xa5), pad), bytes, fill(UInt8(0x5a), 8))
+            i = pad + 1
+            j = i + length(bytes) - 1
+            @test fast(buf, i, j) == Parsers.parsecivil(buf, i, j, pat)
+        end
+    end
+    for s in ("2024-02-29T23:59:59.1", "2024-02-29T23:59:59.12", "2024-02-29T23:59:59.123",
+              "2024-02-29T23:59:59.123456789", "2024-02-29T23:59:59.", "2024-02-29T23:59:59.x",
+              "2024-02-29T23:59:59:123", "2024-02-29 23:59:59.123", "2023-02-29T23:59:59.123",
+              "2024-02-29T24:00:00.123", "2024-02-29T23:59:59.1234567890")
+        checkfrac(Parsers.parseiso19frac, Parsers.ISO_DATETIME, b(s))
+    end
+    for s in ("23:59:59.7", "23:59:59.789", "23:59:59.789012345", "23:59:59.", "24:00:00.1",
+              "23:59:59x1", "23:59:59.1234567890")
+        checkfrac(Parsers.parseiso8frac, Parsers.ISO_TIME, b(s))
+    end
+    for (fast, pat, base) in ((Parsers.parseiso19frac, Parsers.ISO_DATETIME, b("2024-02-29T23:59:59.125")),
+                              (Parsers.parseiso8frac, Parsers.ISO_TIME, b("23:59:59.125")))
+        for pos in eachindex(base), byte in UInt8(0):UInt8(255)
+            bytes = copy(base)
+            bytes[pos] = byte
+            checkfrac(fast, pat, bytes)
+        end
+    end
+    @test Parsers.parse(DateTime, "2024-02-29T23:59:59.125") == DateTime(2024, 2, 29, 23, 59, 59, 125)
+    @test Parsers.parse(DateTime, "2024-02-29T23:59:59.1") == DateTime(2024, 2, 29, 23, 59, 59, 100)
+    @test Parsers.tryparse(DateTime, "2024-02-29T23:59:59.") === nothing
+    @test Parsers.parse(Time, "23:59:59.125") == Time(23, 59, 59, 125)
+    @test Parsers.parse(Time, "23:59:59.000000001") == Time(23, 59, 59) + Nanosecond(1)
+end
+
+@testset "civil: DateFormat patterns take a fixed fast path, compiled once" begin
+    for (f, T) in (("mm/dd/yyyy", Date), ("yyyy-mm-dd HH:MM:SS", DateTime), ("dd.mm.yy", Date),
+                   ("HH:MM", Time), ("yyyymmdd", Date), ("yyyy-mm-ddTHH:MM:SS.sss", DateTime))
+        df = DateFormat(f)
+        pat = Parsers.compilepattern(df)
+        @test pat.fixed.nbytes == ncodeunits(f)
+        @test Parsers._datepattern(df, T) === Parsers._datepattern(df, T)
+        @test Parsers._datepattern(f, T) === Parsers._datepattern(f, T)
+        interp = Parsers.DatePattern(pat.ops, pat.hasdate, pat.hastime, pat.months_abbr,
+                                     pat.months_full, pat.days_abbr, pat.days_full,
+                                     Parsers.FixedDatePattern())
+        rng = MersenneTwister(7)
+        okall = true
+        for _ in 1:2_000
+            dt = DateTime(rand(rng, 1:2100), rand(rng, 1:12), rand(rng, 1:28),
+                          rand(rng, 0:23), rand(rng, 0:59), rand(rng, 0:59), rand(rng, 0:999))
+            x = T === Date ? Date(dt) : T === Time ? Time(dt) : dt
+            s = Dates.format(x, df)
+            bytes = b(s)
+            okall &= Parsers.parsecivil(bytes, 1, length(bytes), pat) ==
+                     Parsers.parsecivil(bytes, 1, length(bytes), interp)
+            okall &= Parsers.parse(T, s; dateformat=df) == T(s, df)
+            # a mutated byte must never let the fixed attempt disagree with the interpreter
+            m = copy(bytes)
+            m[rand(rng, eachindex(m))] = rand(rng, UInt8)
+            okall &= Parsers.parsecivil(m, 1, length(m), pat) == Parsers.parsecivil(m, 1, length(m), interp)
+        end
+        @test okall
+    end
+    @test Parsers.compilepattern(DateFormat("U dd yyyy")).fixed.nbytes == 0
+    @test Parsers.compilepattern(DateFormat("I:MM p")).fixed.nbytes == 0
+    # Dates' variable widths still apply through the interpreter fallback
+    df = DateFormat("mm/dd/yyyy")
+    @test Parsers.parse(Date, "3/14/2021"; dateformat=df) == Date(2021, 3, 14)
+    @test Parsers.parse(Date, "03/14/02021"; dateformat=df) == Date(2021, 3, 14)
+    @test Parsers.parse(Date, "03/14/2021"; dateformat=df) == Date(2021, 3, 14)
+    parsedateformat("03/14/2021", df)
+    @test @allocated(parsedateformat("03/14/2021", df)) == 0
+    parsedateformat("03/14/2021", "mm/dd/yyyy")
+    @test @allocated(parsedateformat("03/14/2021", "mm/dd/yyyy")) == 0
+    # other locales compile through the cache and keep their names
+    months = ["Month$(lpad(string(i), 2, '0'))" for i in 1:12]
+    locale = Dates.DateLocale(months, ["M$i" for i in 1:12], ["Day$i" for i in 1:7], ["D$i" for i in 1:7])
+    localized = DateFormat("U dd yyyy", locale)
+    @test Parsers._datepattern(localized, Date) === Parsers._datepattern(localized, Date)
+    @test Parsers.parse(Date, "Month02 29 2024"; dateformat=localized) == Date(2024, 2, 29)
+end

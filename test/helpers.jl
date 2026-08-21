@@ -45,3 +45,4 @@ Base.length(source::UTF16TestString) = length(source.data)
 Base.getindex(source::UTF16TestString, i::Int) = Char(source.data[i])
 Base.iterate(source::UTF16TestString, i::Int=1) =
     i > length(source.data) ? nothing : (Char(source.data[i]), i + 1)
+parsedateformat(source, dateformat) = Parsers.parse(Date, source; dateformat)

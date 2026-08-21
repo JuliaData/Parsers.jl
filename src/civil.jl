@@ -83,8 +83,11 @@ A compiled, plain-data date/time parse program. Create one with
 [`compilepattern`](@ref), then reuse it with [`parsecivil`](@ref) or as the
 `dateformat` keyword of [`Parsers.parse`](@ref). The pattern stores its literal
 bytes, numeric field rules, and month/day name tables.
+
+A pattern is a heap object that is never mutated after construction, so passing
+one around costs a pointer rather than a copy of its name tables.
 """
-struct DatePattern
+mutable struct DatePattern
     ops::Vector{PatternOp}
     hasdate::Bool
     hastime::Bool
@@ -493,6 +496,53 @@ end
     return (CivilParts(Int32(1), Int8(1), Int8(1), Int8(h), Int8(mi), Int8(s), Int32(0)), RC_OK)
 end
 
+const _NSSCALE = (1_000_000_000, 100_000_000, 10_000_000, 1_000_000, 100_000,
+                  10_000, 1_000, 100, 10, 1)
+
+# One to nine fraction digits at buf[k:j], scaled to nanoseconds exactly as
+# the interpreter scales a subsecond field.
+@inline function _isofraction(buf::AbstractVector{UInt8}, k::Int, j::Int)
+    nd = j - k + 1
+    1 <= nd <= 9 || return (0, false)
+    v = 0
+    @inbounds for p in k:j
+        d = _dig(buf[p])
+        d <= 0x09 || return (0, false)
+        v = 10v + Int(d)
+    end
+    return (v * @inbounds(_NSSCALE[nd + 1]), true)
+end
+
+"""
+    parseiso19frac(buf, i, j) -> (CivilParts, rc)
+
+`yyyy-mm-ddTHH:MM:SS.s` with one to nine fraction digits (21–29 bytes; the
+caller checks the length). Agrees with `parsecivil` and `ISO_DATETIME`.
+"""
+@inline function parseiso19frac(buf::AbstractVector{UInt8}, i::Int, j::Int)
+    @inbounds (buf[i + 10] == UInt8('T')) & (buf[i + 19] == UInt8('.')) ||
+        return (CivilParts(), RC_INVALID)
+    y, mo, d, okd = _iso_ymd(buf, i)
+    h, mi, s, okt = _iso_hms(buf, i + 11)
+    ns, okf = _isofraction(buf, i + 20, j)
+    (okd && okt && okf && _validymd(y, mo, d) && _validhms(h, mi, s)) ||
+        return (CivilParts(), RC_INVALID)
+    return (CivilParts(Int32(y), Int8(mo), Int8(d), Int8(h), Int8(mi), Int8(s), Int32(ns)), RC_OK)
+end
+
+"""
+    parseiso8frac(buf, i, j) -> (CivilParts, rc)
+
+`HH:MM:SS.s` with one to nine fraction digits (10–18 bytes).
+"""
+@inline function parseiso8frac(buf::AbstractVector{UInt8}, i::Int, j::Int)
+    @inbounds buf[i + 8] == UInt8('.') || return (CivilParts(), RC_INVALID)
+    h, mi, s, ok = _iso_hms(buf, i)
+    ns, okf = _isofraction(buf, i + 9, j)
+    (ok && okf && _validhms(h, mi, s)) || return (CivilParts(), RC_INVALID)
+    return (CivilParts(Int32(1), Int8(1), Int8(1), Int8(h), Int8(mi), Int8(s), Int32(ns)), RC_OK)
+end
+
 """
     parsecivil(buf, i, j, pat::DatePattern) -> (CivilParts, rc)
 
@@ -514,6 +564,12 @@ function parsecivil(buf::AbstractVector{UInt8}, i::Int, j::Int, pat::DatePattern
         rc == RC_OK && return (c, rc)
     elseif n == 8 && pat === ISO_TIME
         c, rc = parseiso8(buf, i)
+        rc == RC_OK && return (c, rc)
+    elseif 21 <= n <= 29 && pat === ISO_DATETIME
+        c, rc = parseiso19frac(buf, i, j)
+        rc == RC_OK && return (c, rc)
+    elseif 10 <= n <= 18 && pat === ISO_TIME
+        c, rc = parseiso8frac(buf, i, j)
         rc == RC_OK && return (c, rc)
     end
     if pat.fixed.nbytes != 0

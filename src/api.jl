@@ -516,8 +516,9 @@ end
 @inline _datepattern(::Nothing, ::Type{Dates.Date}) = ISO_DATE
 @inline _datepattern(::Nothing, ::Type{Dates.DateTime}) = ISO_DATETIME
 @inline _datepattern(::Nothing, ::Type{Dates.Time}) = ISO_TIME
-@inline _datepattern(fmt::AbstractString, ::Type) = compilepattern(fmt)
-@inline _datepattern(fmt::Dates.DateFormat, ::Type) = compilepattern(fmt)
+@inline _datepattern(fmt::AbstractString, ::Type) = _cachedpattern(fmt)
+@inline _datepattern(fmt::Dates.DateFormat, ::Type) =
+    fmt.locale === Dates.ENGLISH ? _englishpattern(fmt) : _cachedpattern(fmt)
 @inline _datepattern(p::DatePattern, ::Type) = p
 
 @inline _todates(::Type{Dates.Date}, c::CivilParts) = todate(c)
@@ -536,15 +537,23 @@ end
     return parsecivil(buf, i, j, ISO_DATE)
 end
 @inline function _dateparts(::Type{Dates.DateTime}, buf, i, j, ::Nothing)
-    if j - i == 18
+    n = j - i + 1
+    if n == 19
         c, rc = parseiso19(buf, i)
+        rc == RC_OK && return (c, rc)
+    elseif 21 <= n <= 29
+        c, rc = parseiso19frac(buf, i, j)
         rc == RC_OK && return (c, rc)
     end
     return parsecivil(buf, i, j, ISO_DATETIME)
 end
 @inline function _dateparts(::Type{Dates.Time}, buf, i, j, ::Nothing)
-    if j - i == 7
+    n = j - i + 1
+    if n == 8
         c, rc = parseiso8(buf, i)
+        rc == RC_OK && return (c, rc)
+    elseif 10 <= n <= 18
+        c, rc = parseiso8frac(buf, i, j)
         rc == RC_OK && return (c, rc)
     end
     return parsecivil(buf, i, j, ISO_TIME)
@@ -560,7 +569,7 @@ end
     return parsecivil(buf, i, j, pat)
 end
 @inline _dateparts(::Type{T}, buf, i, j, dateformat) where {T <: Dates.TimeType} =
-    parsecivil(buf, i, j, _datepattern(dateformat, T))
+    _dateparts(T, buf, i, j, _datepattern(dateformat, T))
 
 @inline function _tryparsedate(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int, dateformat,
                                ::Val{Throw}) where {T <: Dates.TimeType, Throw}
