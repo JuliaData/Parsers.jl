@@ -1864,3 +1864,45 @@ end
     @info "deterministic regression fuzz" seed=string(REGRESSION_FUZZ_SEED) checks=checks[]
     @test isempty(failures)
 end
+
+@testset "merge review round: accelerator digit literals, prefixed signs, BigFloat prec" begin
+    # digit literals in a pattern are consumed by a preceding greedy numeric
+    # run under the width rules; the fixed/numeric accelerators must leave
+    # those patterns to the interpreter (which rejects: the literal is eaten)
+    for (T, s, df) in ((Date, "2020012", "yyyy0mm"),
+                       (Date, "202001010000", "yyyymmdd0000"),
+                       (Time, "17004", "HH0MM"),
+                       (Date, "10203", "d0m0y"))
+        @test Parsers.tryparse(T, s; dateformat=df) === nothing
+        @test Parsers.tryparse(T, s; dateformat=Dates.DateFormat(df)) === nothing
+        @test Parsers.tryparse(T, s; dateformat=Parsers.compilepattern(df)) === nothing
+    end
+    # a leading digit literal has no preceding greedy run and stays parseable
+    @test Parsers.tryparse(Date, "02020-01-02"; dateformat="0yyyy-mm-dd") ==
+          Date(2020, 1, 2)
+
+    # negative zero/Inf BigFloat results carry the requested precision and sign
+    v, rc = Parsers.parsebigfloat(codeunits("-0"), 1, 2; prec=30)
+    @test rc == Parsers.RC_OK && precision(v) == 30 && iszero(v) && signbit(v)
+    v, rc = Parsers.parsebigfloat(codeunits("-0x0p0"), 1, 6; prec=24)
+    @test rc == Parsers.RC_OK && precision(v) == 24 && iszero(v) && signbit(v)
+    v, rc = Parsers.parsebigfloat(codeunits("-0x1p99999999999999999999"), 1, 24; prec=24)
+    @test rc == Parsers.RC_OVERFLOW && precision(v) == 24 && v == BigFloat(-Inf)
+    v, rc = Parsers.parsebigfloat(codeunits("-1e-99999"), 1, 9; prec=24)
+    @test rc == Parsers.RC_OVERFLOW && precision(v) == 24 && iszero(v) && signbit(v)
+
+    # custom Bool spellings must not steal caller-owned byte vectors
+    spelling = [0x79, 0x65, 0x73]
+    @test Parsers.parse(Bool, "yes"; trues=Any[spelling, "y"])
+    @test spelling == [0x79, 0x65, 0x73]
+
+    # invalid-digit errors escape the offending character exactly like Base
+    perr = try Parsers.parse(Int, "1\0"); nothing catch e; e end
+    berr = try Base.parse(Int, "1\0"); nothing catch e; e end
+    @test sprint(showerror, perr) == sprint(showerror, berr)
+
+    # documented deltas: Base's Bool integer fallback and C99 nan payloads
+    @test Parsers.tryparse(Bool, "01") === nothing
+    @test Parsers.tryparse(Bool, "0x1") === nothing
+    @test Parsers.tryparse(Float64, "NaN(123)") === nothing
+end

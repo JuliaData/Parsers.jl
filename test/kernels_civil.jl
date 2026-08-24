@@ -109,6 +109,16 @@ end
     end
     c, rc = Parsers.parseiso8(b("03:04:05"), 1)
     @test (c, rc) == (Parsers.CivilParts(1, 1, 1, 3, 4, 5, 0), Parsers.RC_OK)
+    # each accelerator pins one accepted input directly: the differentials above
+    # only assert on RC_OK, so a reject-everything regression would pass them
+    @test Parsers.parseiso10(b("2024-01-02"), 1) ==
+          (Parsers.CivilParts(2024, 1, 2, 0, 0, 0, 0), Parsers.RC_OK)
+    @test Parsers.parseiso19(b("2024-01-02T03:04:05"), 1) ==
+          (Parsers.CivilParts(2024, 1, 2, 3, 4, 5, 0), Parsers.RC_OK)
+    @test Parsers.parseiso19frac(b("2024-01-02T03:04:05.125"), 1, 23) ==
+          (Parsers.CivilParts(2024, 1, 2, 3, 4, 5, 125_000_000), Parsers.RC_OK)
+    @test Parsers.parseiso8frac(b("03:04:05.125"), 1, 12) ==
+          (Parsers.CivilParts(1, 1, 1, 3, 4, 5, 125_000_000), Parsers.RC_OK)
 
     # Every one-byte mutation checks separators and every possible byte at each
     # digit position. This includes the UInt8-underflow cases '/' and 0xff.

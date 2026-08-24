@@ -145,21 +145,22 @@ end
     # across the band, ties above 2^54, decimal .5 ties, and ties under the
     # exact-product exponent range -4..23.
     okall = true
-    for x in (2^53 + 1):2:(2^53 + 40_001)
+    # Int64(2)^k: bare 2^k wraps to 0 on 32-bit Int and the band degrades to tiny integers
+    for x in (Int64(2)^53 + 1):2:(Int64(2)^53 + 40_001)
         s = string(x); v, rc = pflt(s)
         okall &= rc == Parsers.RC_OK && reinterpret(UInt64, v) == reinterpret(UInt64, parse(Float64, s))
     end
-    for x in (2^54 + 2):4:(2^54 + 40_002)
+    for x in (Int64(2)^54 + 2):4:(Int64(2)^54 + 40_002)
         s = string(x); v, rc = pflt(s)
         okall &= rc == Parsers.RC_OK && reinterpret(UInt64, v) == reinterpret(UInt64, parse(Float64, s))
     end
-    for x in (2^52):(2^52 + 20_000)
+    for x in (Int64(2)^52):(Int64(2)^52 + 20_000)
         s = string(x) * ".5"; v, rc = pflt(s)
         okall &= rc == Parsers.RC_OK && reinterpret(UInt64, v) == reinterpret(UInt64, parse(Float64, s))
     end
     rng = MersenneTwister(9)
     for _ in 1:40_000
-        s = string((2^53 + 1) + 2 * rand(rng, 0:10^6)) * "e" * string(rand(rng, -4:23)); v, rc = pflt(s)
+        s = string((Int64(2)^53 + 1) + 2 * rand(rng, Int64(0):Int64(10)^6)) * "e" * string(rand(rng, -4:23)); v, rc = pflt(s)
         okall &= rc == Parsers.RC_OK && reinterpret(UInt64, v) == reinterpret(UInt64, parse(Float64, s))
     end
     @test okall
