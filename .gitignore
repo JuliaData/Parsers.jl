@@ -1,1 +1,4 @@
 Manifest.toml
+*.cov
+*.mem
+lcov.info

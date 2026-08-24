@@ -1,68 +1,93 @@
 name: IntegrationTest
+
 on:
   push:
-    branches: [main]
-    tags: [v*]
+    branches:
+      - main
+      - v3
+    tags:
+      - "v*"
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
-  # Skip intermediate builds: always.
-  # Cancel intermediate builds: only if it is a pull request build.
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    name: ${{ matrix.package.repo }}
-    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.package.repo }} - Parsers 3 compatibility gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        julia-version: [1]
-        os: [ubuntu-latest]
         package:
+          - {user: JuliaTime, repo: NanoDates.jl}
           - {user: JuliaData, repo: CSV.jl}
           - {user: JuliaData, repo: WeakRefStrings.jl}
-          # - {user: JuliaDatabases, repo: MySQL.jl}  # Tests requires a DB.
           - {user: JuliaIO, repo: JSON.jl}
           - {user: JuliaStrings, repo: InlineStrings.jl}
           - {user: nickrobinson251, repo: PowerFlowData.jl}
           - {user: quinnj, repo: JSON3.jl}
           - {user: RelationalAI, repo: ChunkedCSV.jl}
           - {user: cjdoris, repo: ARFFFiles.jl}
-
     steps:
-      - uses: actions/checkout@v2
-      - uses: julia-actions/setup-julia@v1
+      - name: Check out Parsers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          version: ${{ matrix.julia-version }}
+          persist-credentials: false
+      - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3.0.2
+        with:
+          version: "1"
           arch: x64
-      - uses: julia-actions/julia-buildpkg@latest
-      - name: Clone Downstream
-        uses: actions/checkout@v2
+      - name: Check out downstream package
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ matrix.package.user }}/${{ matrix.package.repo }}
           path: downstream
-      - name: Load this and run the downstream tests
-        shell: julia --project=downstream {0}
+          persist-credentials: false
+      - name: Check declared compatibility
+        id: compatibility
+        env:
+          DOWNSTREAM_REPO: ${{ matrix.package.repo }}
+        shell: julia --project=downstream --color=yes {0}
         run: |
           using Pkg
-          try
-            # Force downstream tests to use this PR's version of the package.
-            Pkg.develop(PackageSpec(path="."))  # resolver may fail with main deps
-            if "${{ matrix.package.repo }}" == "ARFFFiles.jl"
-              # ARFFFiles still constructs Tables.DictColumnTable from unordered
-              # Dicts, which OrderedCollections 2 rejects. Keep this downstream
-              # compatibility check useful until ARFFFiles migrates those inputs.
-              Pkg.add(PackageSpec(name="OrderedCollections", version="1"))
-            end
-            Pkg.update()
-            Pkg.test()  # resolver may fail with test time deps
-          catch err
-            err isa Pkg.Resolve.ResolverError || rethrow()
-            # If we can't resolve that means this is incompatible by SemVer and this is fine;
-            # it means we marked this as a breaking change, so we don't need to worry about
-            # mistakenly introducing a breaking change, as we have intentionally made one
-            @info "Not compatible with this release. No problem." exception=err
-            exit(0)  # Exit immediately as a success.
+
+          package_project = Pkg.TOML.parsefile("Project.toml")
+          downstream_project = Pkg.TOML.parsefile(joinpath("downstream", "Project.toml"))
+          parsers_version = VersionNumber(package_project["version"])
+          parsers_compat = get(get(downstream_project, "compat", Dict{String, Any}()),
+                               "Parsers", nothing)
+          supported = parsers_compat === nothing ||
+                      parsers_version in Pkg.Types.semver_spec(parsers_compat)
+          open(ENV["GITHUB_OUTPUT"], "a") do io
+              println(io, "supported=", supported)
           end
+          package = ENV["DOWNSTREAM_REPO"]
+          if supported
+              @info "Declared compatibility allows the downstream test" package parsers_version parsers_compat
+          else
+              @info "Downstream test skipped: declared Parsers compat excludes this version" package parsers_version parsers_compat
+              open(ENV["GITHUB_STEP_SUMMARY"], "a") do io
+                  println(io, "### Declared compatibility skip")
+                  println(io, "`$package` declares `Parsers = ", repr(parsers_compat),
+                          "`, which excludes `$parsers_version`. The test step is skipped.")
+              end
+          end
+
+      - name: Test downstream package
+        if: steps.compatibility.outputs.supported == 'true'
+        shell: julia --project=downstream --color=yes {0}
+        run: |
+          using Pkg
+
+          # From here onward every resolver or test failure is real. Do not
+          # convert an unrelated ResolverError into a successful job.
+          Pkg.develop(PackageSpec(path=pwd()))
+          Pkg.resolve()
+          Pkg.test()

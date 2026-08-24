@@ -37,8 +37,20 @@ function _assert_widening_ladder()::Nothing
 end
 
 function _assert_float_edges()::Nothing
-    Parsers.parse(Float64, "1e310") === Inf || error("overflow Inf")
-    Parsers.parse(Float64, "-1e310") === -Inf || error("overflow -Inf")
+    Parsers.tryparse(Float64, "1e310") === nothing || error("overflow tryparse")
+    Parsers.tryparse(Float64, "-1e310") === nothing || error("negative overflow tryparse")
+    try
+        Parsers.parse(Float64, "1e310")
+        error("overflow parse accepted")
+    catch err
+        err isa ArgumentError || rethrow()
+    end
+    try
+        Parsers.parse(Float64, "-1e310")
+        error("negative overflow parse accepted")
+    catch err
+        err isa ArgumentError || rethrow()
+    end
     Parsers.parse(Float64, "5e-324") === 5.0e-324 || error("denormal")
     Parsers.parse(Float64, "1.7976931348623157e308") === floatmax(Float64) || error("floatmax")
     isnan(Parsers.parse(Float64, "NaN")) || error("nan")

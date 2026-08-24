@@ -1,476 +1,301 @@
-struct Delim{T} <: Dates.AbstractDateToken
-    d::T
+# =============================================================================
+# Dates adapters. The civil kernels produce a `CivilParts` record through pure
+# integer arithmetic. This file owns conversion to Dates values and translates
+# a `DateFormat` into a kernel pattern. The public API dispatches on Dates
+# types, but civil.jl remains independent of the Dates stdlib.
+# =============================================================================
+
+@inline todate(c::CivilParts) = Dates.Date(Dates.UTD(daysfromcivil(c.year, c.month, c.day)))
+
+@inline function todatetime(c::CivilParts)
+    days = daysfromcivil(c.year, c.month, c.day)
+    ms = Int64(c.nanosecond) ÷ 1_000_000
+    return Dates.DateTime(Dates.UTM(((days * 24 + c.hour) * 60 + c.minute) * 60_000 +
+                                    Int64(c.second) * 1000 + ms))
 end
 
-charactercode(::Dates.DatePart{c}) where {c} = c
+@inline totime(c::CivilParts) =
+    Dates.Time(Dates.Nanosecond(((Int64(c.hour) * 60 + c.minute) * 60 + c.second) *
+                                1_000_000_000 + c.nanosecond))
 
-function Format(f::AbstractString, locale::Dates.DateLocale=Dates.ENGLISH)
-    tokens = Dates.AbstractDateToken[]
-    prev = ()
-    prev_offset = 1
+# Translate `Dates.DateFormat` tokens directly. Reconstructing a format string
+# is lossy: an escaped token such as `\m` has already become `Dates.Delim('m')`,
+# and the DateFormat also carries the locale used for textual month/day names.
+# The adapter owns DateFormat translation and caching. Civil plan construction,
+# execution selection, and String-pattern caching remain in civil.jl.
+function _datepartop(t::Dates.DatePart{c}) where {c}
+    width = t.width
+    width >= 1 || throw(ArgumentError("date format token '$c' has invalid width $width"))
 
-    letters = String(collect(keys(Dates.CONVERSION_SPECIFIERS)))
-    for m in eachmatch(Regex("(?<!\\\\)([\\Q$letters\\E])\\1*"), f)
-        tran = replace(f[prev_offset:prevind(f, m.offset)], r"\\(.)" => s"\1")
+    kind = _patternkind(c)
+    kind != 0 || throw(ArgumentError("unsupported DateFormat token '$c'"))
+    hasdate = _kindhasdate(kind)
+    hastime = _kindhastime(kind)
 
-        if !isempty(prev)
-            letter, width = prev
-            typ = Dates.CONVERSION_SPECIFIERS[letter]
-
-            push!(tokens, Dates.DatePart{letter}(width, isempty(tran)))
-        end
-
-        if !isempty(tran)
-            push!(tokens, length(tran) == 1 ? Delim(first(tran)) : Delim(tran))
-        end
-
-        letter = f[m.offset]
-        width = length(m.match)
-
-        prev = (letter, width)
-        prev_offset = m.offset + width
+    # DateFormat's `fixed` bit is the parsing contract. In the civil bytecode,
+    # 0xff marks an unbounded non-fixed numeric field; fixed widths above 255
+    # use the civil program's extended encoding. CivilParts stores at most
+    # nanoseconds, so fractional seconds remain limited to nine digits.
+    maxwidth = if kind == 7
+        t.fixed ? width : 9
+    elseif kind <= 6 || kind == 11
+        t.fixed ? Int(width) : Int(typemax(UInt8))
+    elseif kind in (9, 10, 13, 14)
+        t.fixed ? Int(width) : 0
+    else
+        0
     end
-
-    tran = replace(f[prev_offset:lastindex(f)], r"\\(.)" => s"\1")
-
-    if !isempty(prev)
-        letter, width = prev
-        typ = Dates.CONVERSION_SPECIFIERS[letter]
-
-        push!(tokens, Dates.DatePart{letter}(width, false))
-    end
-
-    if !isempty(tran)
-        push!(tokens, length(tran) == 1 ? Delim(first(tran)) : Delim(tran))
-    end
-
-    return Format(tokens, locale)
+    kind == 7 && width > 9 &&
+        throw(ArgumentError("subsecond date format token has unsupported width $width"))
+    return PatternOp(kind, maxwidth, t.fixed), hasdate, hastime
 end
 
-function Format(f::AbstractString, locale::AbstractString)
-    Format(f, Dates.LOCALES[locale])
-end
-
-function Format(df::Dates.DateFormat{S, T}) where {S, T}
-    N = fieldcount(T)
-    dftokens = df.tokens
-    tokens = Vector{Dates.AbstractDateToken}(undef, fieldcount(T))
-    Base.@nexprs 15 i -> begin
-        if i <= N
-            @inbounds tok = dftokens[i]
-            @inbounds tokens[i] = tok isa Dates.Delim ? Delim(tok.d) : dftokens[i]
+function _pushdelimiter!(ops::Vector{PatternOp}, t::Dates.Delim)
+    d = t.d
+    if d isa AbstractChar
+        # Dates.Delim{Char,N} means the same character repeated N times.
+        n = Int(typeof(t).parameters[2])
+        bytes = codeunits(string(d))
+        for _ in 1:n, b in bytes
+            push!(ops, PatternOp(8, b, true))
+        end
+    else
+        for b in codeunits(String(d))
+            push!(ops, PatternOp(8, b, true))
         end
     end
-    if N > 15
-        for i = 16:N
-            @inbounds tok = dftokens[i]
-            @inbounds tokens[i] = tok isa Dates.Delim ? Delim(tok.d) : dftokens[i]
-        end
-    end
-    return Format(tokens, df.locale)
+    return ops
 end
 
-function Base.show(io::IO, df::Format)
-    print(io, "Parsers.dateformat\"")
+"""
+    compilepattern(df::Dates.DateFormat) -> DatePattern
+
+Compile a `Dates.DateFormat` directly into the byte-oriented pattern program.
+Escaped literals and the DateFormat's locale tables are preserved.
+"""
+function compilepattern(df::Dates.DateFormat)
+    Base.@nospecialize df
+    ops = PatternOp[]
+    natural = PatternOp[]
+    hasdate = false
+    hastime = false
+    hasnames = false
     for t in df.tokens
-        _show_content(io, t)
-    end
-    print(io, '"')
-end
-Base.Broadcast.broadcastable(x::Format) = Ref(x)
-
-function _show_content(io::IO, d::Dates.DatePart{c}) where c
-    for i = 1:d.width
-        print(io, c)
-    end
-end
-
-function _show_content(io::IO, d::Delim{<:AbstractChar})
-    if d.d in keys(Dates.CONVERSION_SPECIFIERS)
-        for i = 1:1
-            print(io, '\\', d.d)
-        end
-    else
-        for i = 1:1
-            print(io, d.d)
-        end
-    end
-end
-
-function _show_content(io::IO, d::Delim)
-    for c in d.d
-        if c in keys(Dates.CONVERSION_SPECIFIERS)
-            print(io, '\\')
-        end
-        print(io, c)
-    end
-end
-
-function Base.show(io::IO, d::Delim)
-    print(io, "Delim(")
-    _show_content(io, d)
-    print(io, ")")
-end
-
-macro dateformat_str(str)
-    Format(str)
-end
-
-# Standard formats
-const ISODateTimeFormat = Format("yyyy-mm-dd\\THH:MM:SS.s")
-const ISODateFormat = Format("yyyy-mm-dd")
-const ISOTimeFormat = Format("HH:MM:SS.s")
-const RFC1123Format = Format("e, dd u yyyy HH:MM:SS")
-
-default_format(::Type{DateTime}) = ISODateTimeFormat
-default_format(::Type{Date}) = ISODateFormat
-default_format(::Type{Time}) = ISOTimeFormat
-
-maxdigits(d::Dates.DatePart) = d.fixed ? d.width : typemax(Int64)
-
-for c in "yYmdHIMS"
-    @eval begin
-        function tryparsenext(d::Dates.DatePart{$c}, source, pos, len, b, code)
-            return tryparsenext_base10(source, pos, len, b, code, maxdigits(d))
-        end
-    end
-end
-
-function tryparsenext_base10(source, pos, len, b, code, maxdigits)
-    x::Int64 = 0
-    b -= UInt8('0')
-    if b > 0x09
-        # character isn't a digit, INVALID value
-        code |= INVALID
-        b += UInt8('0')
-        @goto done
-    end
-    ndigits = 0
-    @inbounds while true
-        x = Int64(10) * x + Int64(b)
-        ndigits += 1
-        pos += 1
-        incr!(source)
-        if eof(source, pos, len)
-            code |= EOF
-            @goto done
-        end
-        b = peekbyte(source, pos) - UInt8('0')
-        if b > 0x09 || ndigits == maxdigits
-            b += UInt8('0')
-            @goto done
-        end
-    end
-    @label done
-    return x, pos, b, code
-end
-
-ascii_lc(c::UInt8) = c in UInt8('A'):UInt8('Z') ? c + 0x20 : c
-
-function tryparsenext(d::Dates.DatePart{'p'}, source, pos, len, b, code)
-    ap = ascii_lc(b)
-    pos += 1
-    incr!(source)
-    if !(ap == UInt8('a') || ap == UInt8('p')) || eof(source, pos, len)
-        code |= INVALID_TOKEN
-    else
-        b = peekbyte(source, pos)
-        if ascii_lc(b) != UInt8('m')
-            code |= INVALID_TOKEN
-        end
-        pos += 1
-        incr!(source)
-        if eof(source, pos, len)
-            code |= EOF
+        if t isa Dates.DatePart
+            op, token_hasdate, token_hastime = _datepartop(t)
+            push!(ops, op)
+            push!(natural, _naturalop(op, t))
+            hasdate |= token_hasdate
+            hastime |= token_hastime
+            hasnames |= op.kind in (0x09, 0x0a, 0x0d, 0x0e)
+        elseif t isa Dates.Delim
+            _pushdelimiter!(ops, t)
+            _pushdelimiter!(natural, t)
         else
-            b = peekbyte(source, pos)
+            throw(ArgumentError("unsupported DateFormat token $(typeof(t))"))
         end
     end
-    return ap == UInt8('a') ? Dates.AM : Dates.PM, pos, b, code
+    locale = df.locale
+    names = !hasnames || locale === Dates.ENGLISH ? _ENGLISH_CIVIL_NAMES_BOX :
+            CivilNamesBox(CivilNames(CivilNameTable(locale.month_abbr_value, Val(24)),
+                                     CivilNameTable(locale.month_value, Val(24)),
+                                     CivilNameTable(locale.day_of_week_abbr_value, Val(14)),
+                                     CivilNameTable(locale.day_of_week_value, Val(14))))
+    return _makepattern(ops, natural, hasdate, hastime, names)
 end
 
-function nextchar(source, pos, len, b)
-    u = UInt32(b) << 24
-    if !Base.between(b, 0x80, 0xf7)
-        pos += 1
-        incr!(source)
-        return reinterpret(Char, u), pos
-    end
-    return nextchar_continued(source, pos, len, u)
+# The fixed fast path reads each numeric field at the token's own width ("mm"
+# is two digits, "yyyy" four). Dates' variable-width rule still governs: every
+# other shape uses the compiled executor or general interpreter, which reads
+# the same values whenever the fixed attempt would have succeeded.
+@inline function _naturalop(op::PatternOp, t::Dates.DatePart)
+    (1 <= op.kind <= 7 && 1 <= t.width) || return op
+    return PatternOp(op.kind, Int(t.width), true)
 end
 
-function nextchar_continued(source, pos, len, u)
-    u < 0xc0000000 && (pos += 1; incr!(source); @goto ret)
-    # first continuation byte
-    pos += 1
-    incr!(source)
-    eof(source, pos, len) && @goto ret
-    b = peekbyte(source, pos)
-    b & 0xc0 == 0x80 || @goto ret
-    u |= UInt32(b) << 16
-    # second continuation byte
-    pos += 1
-    incr!(source)
-    (eof(source, pos, len)) | (u < 0xe0000000) && @goto ret
-    b = peekbyte(source, pos)
-    b & 0xc0 == 0x80 || @goto ret
-    u |= UInt32(b) << 8
-    # third continuation byte
-    pos += 1
-    incr!(source)
-    (eof(source, pos, len)) | (u < 0xf0000000) && @goto ret
-    b = peekbyte(source, pos)
-    b & 0xc0 == 0x80 || @goto ret
-    u |= UInt32(b); pos += 1; incr!(source)
-@label ret
-    return reinterpret(Char, u), pos
+# A canonical English DateFormat carries its source in its type. Reconstruct
+# the format once during specialization and embed its pointer-sized plan.
+# Tuple identity uses Julia's value-based `===` for these immutable tokens, so
+# the guard checks delimiter values, field widths, and fixed bits in one bounded
+# operation. Hand-built same-type tokens that differ at runtime use the cache.
+# DatePattern is an opaque pointer-sized handle, so a canonical compiled plan
+# can be embedded even when its source DateFormat has many tuple-shaped tokens.
+# Execution crosses a function barrier so inference does not expand the
+# interpreter into each public adapter specialization.
+
+struct _RuntimeDateFormatEntry
+    locale::Dates.DateLocale
+    tokens::Tuple
+    pattern::DatePattern
 end
 
-for (tok, fn) in zip("uUeE", Any[Dates.monthabbr_to_value, Dates.monthname_to_value, Dates.dayabbr_to_value, Dates.dayname_to_value])
-    @eval function tryparsenext(d::Dates.DatePart{$tok}, source, pos, len, b, code, locale)
-        startpos = pos
-        while true
-            c, pos = nextchar(source, pos, len, b)
-            if !isletter(c) || eof(source, pos, len)
-                pos -= 1
-                break
-            end
-            b = peekbyte(source, pos)
+struct _RuntimeDateFormatBucket
+    entries::Vector{_RuntimeDateFormatEntry}
+    locale_sensitive::Bool
+end
+
+mutable struct _RuntimeDateFormatCache
+    @atomic table::Dict{DataType, _RuntimeDateFormatBucket}
+end
+
+const _RUNTIME_DATEFORMAT_CACHE =
+    _RuntimeDateFormatCache(Dict{DataType, _RuntimeDateFormatBucket}())
+const _RUNTIME_DATEFORMAT_LOCK = ReentrantLock()
+const _RUNTIME_DATEFORMAT_CACHE_MAX = 256
+const _RUNTIME_DATEFORMAT_BUCKET_MAX = 8
+
+struct _CanonicalDateFormatEntry
+    locale::Dates.DateLocale
+    pattern::DatePattern
+end
+
+struct _CanonicalDateFormatBucket
+    entries::Vector{_CanonicalDateFormatEntry}
+end
+
+mutable struct _CanonicalDateFormatCache
+    @atomic table::Dict{DataType, _CanonicalDateFormatBucket}
+end
+
+const _CANONICAL_DATEFORMAT_CACHE =
+    _CanonicalDateFormatCache(Dict{DataType, _CanonicalDateFormatBucket}())
+
+@inline _sametokens(left::Tuple, right::Tuple) = left === right
+
+@inline function _findruntimepattern(bucket::_RuntimeDateFormatBucket,
+                                     locale::Dates.DateLocale, tokens::Tuple)
+    @inbounds for entry in bucket.entries
+        (!bucket.locale_sensitive || entry.locale === locale) &&
+            _sametokens(entry.tokens, tokens) &&
+            return entry.pattern
+    end
+    return nothing
+end
+
+function _formattypeuseslocale(tokens_type)
+    tokens_type isa DataType && tokens_type <: Tuple || return true
+    # An abstract tuple parameter can hold locale-sensitive DateParts even if
+    # the first value cached under it contains only numeric fields. Key such a
+    # bucket by locale from its first entry so later name formats cannot reuse
+    # a plan compiled from another locale.
+    isconcretetype(tokens_type) || return true
+    for token_type in tokens_type.parameters
+        token_type <: Dates.DatePart || continue
+        c = token_type.parameters[1]
+        c in ('u', 'U', 'e', 'E') && return true
+    end
+    return false
+end
+
+@inline function _findcanonicalpattern(bucket::_CanonicalDateFormatBucket,
+                                       locale::Dates.DateLocale)
+    @inbounds for entry in bucket.entries
+        entry.locale === locale && return entry.pattern
+    end
+    return nothing
+end
+
+@inline function _lookupcanonicalpattern(format_type::DataType,
+                                         locale::Dates.DateLocale)::Union{DatePattern, Nothing}
+    table = @atomic :acquire _CANONICAL_DATEFORMAT_CACHE.table
+    bucket = get(table, format_type, nothing)
+    bucket === nothing && return nothing
+    return _findcanonicalpattern(bucket, locale)
+end
+
+@noinline function _cachecanonicalformat!(format_type::DataType, source::Symbol,
+                                          locale::Dates.DateLocale)::DatePattern
+    return lock(_RUNTIME_DATEFORMAT_LOCK) do
+        table = @atomic :acquire _CANONICAL_DATEFORMAT_CACHE.table
+        bucket = get(table, format_type, nothing)
+        if bucket !== nothing
+            pattern = _findcanonicalpattern(bucket, locale)
+            pattern === nothing || return pattern
         end
-        val = 0
-        if startpos == pos
-            code |= INVALID_TOKEN
-        else
-            if source isa AbstractVector{UInt8}
-                word = unsafe_string(pointer(source, startpos), pos - startpos)
-            else # source isa IO
-                fastseek!(source, startpos - 1)
-                word = String(read(source, pos - startpos))
-            end
-            val = $fn(word, locale)
-            if val == 0
-                code |= INVALID_TOKEN
-            end
+        df = Dates.DateFormat(String(source), locale)
+        typeof(df) === format_type ||
+            throw(ArgumentError("DateFormat source and token type do not agree"))
+        pattern = compilepattern(df)
+        entries = bucket === nothing ? _CanonicalDateFormatEntry[] :
+                                       copy(bucket.entries)
+        length(entries) >= _RUNTIME_DATEFORMAT_BUCKET_MAX && deleteat!(entries, 1)
+        push!(entries, _CanonicalDateFormatEntry(locale, pattern))
+        updated = copy(table)
+        if bucket === nothing && length(updated) >= _RUNTIME_DATEFORMAT_CACHE_MAX
+            delete!(updated, first(keys(updated)))
         end
-        return Int64(val), pos, b, code
+        updated[format_type] = _CanonicalDateFormatBucket(entries)
+        @atomic :release _CANONICAL_DATEFORMAT_CACHE.table = updated
+        return pattern
     end
 end
 
-function tryparsenext(d::Dates.DatePart{'s'}, source, pos, len, b, code, options)
-    ms0, newpos, b, code = tryparsenext_base10(source, pos, len, b, code, maxdigits(d))
-    invalid(code) && return ms0, newpos, b, code
-    rounding = options.rounding
-    len = newpos - pos
-    if len > 3
-        if rounding === nothing
-            ms, r = divrem(ms0, Int64(10) ^ (len - 3))
-            if r != 0
-                code |= INEXACT
-            end
-        elseif rounding === RoundNearest
-            ms = div(ms0, Int64(10) ^ (len - 3), RoundNearest)
-        elseif rounding === RoundToZero
-            ms = div(ms0, Int64(10) ^ (len - 3), RoundToZero)
-        else
-            ms = div(ms0, Int64(10) ^ (len - 3), rounding::RoundingMode)
-        end
-    else
-        ms = ms0 * Int64(10) ^ (3 - len)
-    end
-    return ms, newpos, b, code
+@inline function _canonicalformatplan(format_type::DataType, source::Symbol,
+                                      locale::Dates.DateLocale)::DatePattern
+    pattern = _lookupcanonicalpattern(format_type, locale)
+    pattern === nothing || return pattern
+    return _cachecanonicalformat!(format_type, source, locale)
 end
 
-function tryparsenext(d::Delim{<:AbstractChar}, source, pos, len, b, code)
-    u = bswap(reinterpret(UInt32, d.d))
-    while true
-        if b != (u & 0x000000ff)
-            code |= INVALID_TOKEN
-            break
-        end
-        u >>= 8
-        pos += 1
-        incr!(source)
-        if eof(source, pos, len)
-            code |= EOF | (u == UInt32(0) ? SUCCESS : INVALID_TOKEN)
-            break
-        end
-        b = peekbyte(source, pos)
-        u == UInt32(0) && break
-    end
-    return pos, b, code
+Base.@constprop :none @noinline function _lookupruntimepattern(
+        format_type::DataType, locale::Dates.DateLocale,
+        tokens::Tuple)::Union{DatePattern, Nothing}
+    table = @atomic :acquire _RUNTIME_DATEFORMAT_CACHE.table
+    bucket = get(table, format_type, nothing)
+    bucket === nothing && return nothing
+    return _findruntimepattern(bucket, locale, tokens)
 end
 
-function tryparsenext(d::Delim{String}, source, pos, len, b, code)
-    bytes = codeunits(d.d)
-    tlen = length(bytes)
-    for dpos = 1:tlen
-        @inbounds c = bytes[dpos]
-        if b != c
-            code |= INVALID_TOKEN
-            break
+Base.@nospecializeinfer @noinline function _cacheruntimeformat!(
+        df::Dates.DateFormat, format_type::DataType)::DatePattern
+    Base.@nospecialize df
+    return lock(_RUNTIME_DATEFORMAT_LOCK) do
+        table = @atomic :acquire _RUNTIME_DATEFORMAT_CACHE.table
+        bucket = get(table, format_type, nothing)
+        if bucket !== nothing
+            pattern = _findruntimepattern(bucket, df.locale, df.tokens)
+            pattern === nothing || return pattern
         end
-        pos += 1
-        incr!(source)
-        if eof(source, pos, len)
-            code |= EOF | (dpos == tlen ? SUCCESS : INVALID_TOKEN)
-            break
+        pattern = compilepattern(df)
+        locale_sensitive = bucket === nothing ?
+            _formattypeuseslocale(format_type.parameters[2]) : bucket.locale_sensitive
+        entries = bucket === nothing ? _RuntimeDateFormatEntry[] : copy(bucket.entries)
+        length(entries) >= _RUNTIME_DATEFORMAT_BUCKET_MAX && deleteat!(entries, 1)
+        storedlocale = locale_sensitive ? df.locale : Dates.ENGLISH
+        push!(entries, _RuntimeDateFormatEntry(storedlocale, df.tokens, pattern))
+        updated = copy(table)
+        if bucket === nothing && length(updated) >= _RUNTIME_DATEFORMAT_CACHE_MAX
+            delete!(updated, first(keys(updated)))
         end
-        b = peekbyte(source, pos)
+        updated[format_type] = _RuntimeDateFormatBucket(entries, locale_sensitive)
+        @atomic :release _RUNTIME_DATEFORMAT_CACHE.table = updated
+        return pattern
     end
-    return pos, b, code
 end
 
-# fallback that would call custom DatePart overloads that are expecting a string
-function tryparsenext(tok, source, pos, len, b, code)::Tuple{Any, Int, UInt8, ReturnCode}
-    strlen = min(len - pos + 1, 64)
-    str = getstring(source, PosLen(pos, strlen), 0x00)
-    res = Dates.tryparsenext(tok, str, 1, strlen)
-    if res === nothing
-        val = nothing
-        code |= INVALID_TOKEN
-    else
-        val, i = res
-        pos += i - 1
-        if eof(source, pos, len)
-            code |= EOF
-        else
-            b = peekbyte(source, pos)
-        end
-    end
-    return val, pos, b, code
+Base.@constprop :none @noinline function _runtimeformatplan(df::F)::DatePattern where
+                                                        {F <: Dates.DateFormat}
+    pattern = _lookupruntimepattern(F, df.locale, df.tokens)
+    pattern === nothing || return pattern
+    return _cacheruntimeformat!(df, F)
 end
 
-@inline function typeparser(::AbstractConf{T}, source::Union{AbstractVector{UInt8}, IO}, pos, len, b, code, pl, options) where {T <: Dates.TimeType}
-    fmt = options.dateformat
-    df = fmt === nothing ? default_format(T) : fmt
-    tokens = df.tokens
-    locale::Dates.DateLocale = df.locale
-    year = month = day = Int64(1)
-    hour = minute = second = millisecond = Int64(0)
-    tz = ""
-    ampm = Dates.TWENTYFOURHOUR
-    extras = nothing
-    for tok in tokens
-        # @show pos, Char(b), code, typeof(tok)
-        eof(code) && break
-        if tok isa Delim{Char}
-            pos, b, code = tryparsenext(tok, source, pos, len, b, code)
-        elseif tok isa Delim{String}
-            pos, b, code = tryparsenext(tok, source, pos, len, b, code)
-        elseif T !== Time && tok isa Dates.DatePart{'y'}
-            year, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
-        elseif T !== Time && tok isa Dates.DatePart{'Y'}
-            year, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
-        elseif T !== Time && tok isa Dates.DatePart{'m'}
-            month, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
-        elseif T !== Time && tok isa Dates.DatePart{'u'}
-            month, pos, b, code = tryparsenext(tok, source, pos, len, b, code, locale)
-        elseif T !== Time && tok isa Dates.DatePart{'U'}
-            month, pos, b, code = tryparsenext(tok, source, pos, len, b, code, locale)
-        elseif T !== Time && tok isa Dates.DatePart{'d'}
-            day, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
-        elseif T !== Time && tok isa Dates.DatePart{'e'}
-            _, pos, b, code = tryparsenext(tok, source, pos, len, b, code, locale)
-        elseif T !== Time && tok isa Dates.DatePart{'E'}
-            _, pos, b, code = tryparsenext(tok, source, pos, len, b, code, locale)
-        elseif T !== Date && tok isa Dates.DatePart{'H'}
-            hour, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
-        elseif T !== Date && tok isa Dates.DatePart{'I'}
-            hour, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
-        elseif T !== Date && tok isa Dates.DatePart{'M'}
-            minute, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
-        elseif T !== Date && tok isa Dates.DatePart{'S'}
-            second, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
-        elseif T !== Date && tok isa Dates.DatePart{'p'}
-            ampm, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
-        elseif T !== Date && tok isa Dates.DatePart{'s'}
-            millisecond, pos, b, code = tryparsenext(tok, source, pos, len, b, code, options)
-        elseif tok isa Dates.DatePart{'z'}
-            tz, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
-        elseif tok isa Dates.DatePart{'Z'}
-            tz, pos, b, code = tryparsenext(tok, source, pos, len, b, code)
-        else
-            # non-Dates defined character code
-            # allocate extras if not already and parse
-            if extras === nothing
-                extras = IdDict{Type, Any}()
-            end
-            extraval, pos, b, code = tryparsenext(tok, source, pos, len, b, code)::Tuple{Any, Int, UInt8, ReturnCode}
-            extras[Dates.CONVERSION_SPECIFIERS[charactercode(tok)]] = extraval
-        end
-        if invalid(code)
-            if invalidtoken(code)
-                code &= ~INVALID_TOKEN
-            end
-            break
-        end
-        # @show pos, Char(b), code
+@generated function _translatedpattern(df::Dates.DateFormat{S, T}) where {S, T}
+    fallback = :(_runtimeformatplan(df))
+    S isa Symbol || return fallback
+    reconstructed = try
+        Dates.DateFormat(String(S))
+    catch
+        return fallback
     end
-
-    if T === Time
-        @static if VERSION >= v"1.3-DEV"
-            valid = Dates.validargs(T, hour, minute, second, millisecond, Int64(0), Int64(0), ampm)
-        else
-            valid = Dates.validargs(T, hour, minute, second, millisecond, Int64(0), Int64(0))
-        end
-    elseif T === Date
-        valid = Dates.validargs(T, year, month, day)
-    elseif T === DateTime
-        @static if VERSION >= v"1.3-DEV"
-            valid = Dates.validargs(T, year, month, day, hour, minute, second, millisecond, ampm)
-        else
-            valid = Dates.validargs(T, year, month, day, hour, minute, second, millisecond)
-        end
-    elseif T.name.name === :ZonedDateTime
-        valid = Dates.validargs(T, year, month, day, hour, minute, second, millisecond, tz)
-    else
-        # custom TimeType
-        if extras === nothing
-            extras = IdDict{Type, Any}()
-        end
-        extras[Year] = year; extras[Month] = month; extras[Day] = day;
-        extras[Hour] = hour; extras[Minute] = minute; extras[Second] = second; extras[Millisecond] = millisecond;
-        types = Dates.CONVERSION_TRANSLATIONS[T]
-        vals = Vector{Any}(undef, length(types))
-        for (i, type) in enumerate(types)
-            vals[i] = get(extras, type) do
-                Dates.CONVERSION_DEFAULTS[type]
-            end
-        end
-        valid = Dates.validargs(T, vals...)
+    typeof(reconstructed) === Dates.DateFormat{S, T} || return fallback
+    pattern = compilepattern(reconstructed)
+    expected = QuoteNode(reconstructed.tokens)
+    if _formattypeuseslocale(T)
+        canonical = :(df.locale === Dates.ENGLISH ? $pattern :
+                      _canonicalformatplan($(Dates.DateFormat{S, T}),
+                                           $(QuoteNode(S)), df.locale))
+        return :(df.tokens === $expected ? $canonical : $fallback)
     end
-    if invalid(code) || valid !== nothing
-        if T.name.name === :ZonedDateTime
-            x = T(0, TimeZone("UTC"))
-        else
-            x = T(0)
-        end
-        code |= INVALID
-    else
-        if T === Time
-            @static if VERSION >= v"1.3-DEV"
-                x = Time(Nanosecond(1000000 * millisecond + 1000000000 * second + 60000000000 * minute + 3600000000000 * (Dates.adjusthour(hour, ampm))))
-            else
-                x = Time(Nanosecond(1000000 * millisecond + 1000000000 * second + 60000000000 * minute + 3600000000000 * hour))
-            end
-        elseif T === Date
-            x = Date(Dates.UTD(Dates.totaldays(year, month, day)))
-        elseif T === DateTime
-            @static if VERSION >= v"1.3-DEV"
-                x = DateTime(Dates.UTM(millisecond + 1000 * (second + 60 * minute + 3600 * (Dates.adjusthour(hour, ampm)) + 86400 * Dates.totaldays(year, month, day))))
-            else
-                x = DateTime(Dates.UTM(millisecond + 1000 * (second + 60 * minute + 3600 * hour + 86400 * Dates.totaldays(year, month, day))))
-            end
-        elseif T.name.name === :ZonedDateTime
-            x = T(year, month, day, hour, minute, second, millisecond, tz)
-        else
-            # custom TimeType
-            x = T(vals...)
-        end
-        code |= OK
-    end
-    if eof(source, pos, len)
-        code |= EOF
-    end
-    return pos, code, PosLen(pl.pos, pos - pl.pos), x
+    return :(df.tokens === $expected ? $pattern : $fallback)
 end
