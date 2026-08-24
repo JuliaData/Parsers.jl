@@ -541,6 +541,11 @@ function _parsebigfloatexact(buf::AbstractVector{UInt8}, i::Int, j::Int,
     return _bigfloatfromparts(buf, i, j, decimal, parts, ws, prec, rounding)
 end
 
+# Unary minus on a BigFloat allocates at the global default precision, so
+# signed zero/Inf early returns must construct the signed value at `prec`
+@inline _signedzero(neg::Bool, prec::Int) = BigFloat(neg ? -0.0 : 0.0; precision=prec)
+@inline _signedinf(neg::Bool, prec::Int) = BigFloat(neg ? -Inf : Inf; precision=prec)
+
 function _scaledbigint!(M::BigInt, q::Int, neg::Bool, ws::BigWork,
                         prec::Int, rounding::_ROUNDING)
     # value = M × 10^q = M × 5^q × 2^q — pure integer scaling, one rounding:
@@ -555,8 +560,7 @@ function _scaledbigint!(M::BigInt, q::Int, neg::Bool, ws::BigWork,
     else
         kwide = -Int128(q)
         if kwide > typemax(Int)
-            z = BigFloat(0; precision=prec)
-            return (neg ? -z : z, RC_UNDERFLOW)
+            return (_signedzero(neg, prec), RC_UNDERFLOW)
         end
         k = Int(kwide)
         d5 = _pow5big(ws, k)
@@ -567,11 +571,9 @@ function _scaledbigint!(M::BigInt, q::Int, neg::Bool, ws::BigWork,
         sticky = !iszero(ws.R)
         e2wide = Int128(q) - Int128(s)
         if e2wide < typemin(Int)
-            z = BigFloat(0; precision=prec)
-            return (neg ? -z : z, RC_UNDERFLOW)
+            return (_signedzero(neg, prec), RC_UNDERFLOW)
         elseif e2wide > typemax(Int)
-            inf = BigFloat(Inf; precision=prec)
-            return (neg ? -inf : inf, RC_OVERFLOW)
+            return (_signedinf(neg, prec), RC_OVERFLOW)
         end
         e2 = Int(e2wide)
     end
@@ -597,8 +599,7 @@ function _bigfloatfromparts(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal:
                             parts::DecParts, ws::BigWork, prec::Int, rounding::_ROUNDING,
                             groupmark=nothing)
     if parts.mant == 0
-        z = BigFloat(0; precision=prec)
-        return (parts.neg ? -z : z, RC_OK)
+        return (_signedzero(parts.neg, prec), RC_OK)
     end
     # Freeze significant digits and track the true power of ten. The range test
     # uses the full coefficient exponent, not DecParts.exp10 (which is relative
@@ -608,7 +609,7 @@ function _bigfloatfromparts(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal:
                i + Int(parts.digoffset) - 1
     q, inrange = _collectbigmantissa!(ws.digits, buf, i, digstart, j, decimal,
                                       groupmark)
-    inrange || return (BigFloat(0; precision=prec), RC_OVERFLOW)
+    inrange || return (_signedzero(parts.neg, prec), RC_OVERFLOW)
     digits = ws.digits
     ndig = length(digits)
     keep = min(ndig, _decimalintervaldigits(prec))
@@ -696,8 +697,7 @@ function _parsebigfloathexprefix(buf::AbstractVector{UInt8}, i::Int, j::Int,
         sawdigit = true
         if infrac
             if nfrac == typemax(Int)
-                z = BigFloat(0; precision=prec)
-                return (neg ? -z : z, i + 1, RC_UNDERFLOW)
+                return (_signedzero(neg, prec), i + 1, RC_UNDERFLOW)
             end
             nfrac += 1
         end
@@ -737,16 +737,13 @@ function _parsebigfloathexprefix(buf::AbstractVector{UInt8}, i::Int, j::Int,
     end
 
     iszero(M) && begin
-        z = BigFloat(0; precision=prec)
-        return (neg ? -z : z, commit, RC_OK)
+        return (_signedzero(neg, prec), commit, RC_OK)
     end
     ewide = _signedhexexponent(pexp, eneg) - Int128(4) * Int128(nfrac)
     if ewide < typemin(Int)
-        z = BigFloat(0; precision=prec)
-        return (neg ? -z : z, commit, RC_UNDERFLOW)
+        return (_signedzero(neg, prec), commit, RC_UNDERFLOW)
     elseif ewide > typemax(Int)
-        inf = BigFloat(Inf; precision=prec)
-        return (neg ? -inf : inf, commit, RC_OVERFLOW)
+        return (_signedinf(neg, prec), commit, RC_OVERFLOW)
     end
     v = try
         _roundbig!(M, Int(ewide), neg, prec, rounding)
@@ -761,11 +758,9 @@ function _parsebigfloathexprefix(buf::AbstractVector{UInt8}, i::Int, j::Int,
             rethrow()
         end
         if underflow
-            z = BigFloat(0; precision=prec)
-            return (neg ? -z : z, commit, RC_UNDERFLOW)
+            return (_signedzero(neg, prec), commit, RC_UNDERFLOW)
         end
-        inf = BigFloat(Inf; precision=prec)
-        return (neg ? -inf : inf, commit, RC_OVERFLOW)
+        return (_signedinf(neg, prec), commit, RC_OVERFLOW)
     end
     rc = isinf(v) ? RC_OVERFLOW : iszero(v) ? RC_UNDERFLOW : RC_OK
     return (v, commit, rc)
