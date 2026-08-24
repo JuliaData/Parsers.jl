@@ -40,7 +40,8 @@ end
     ints = ["12", " 12 ", "\t-7\n", "+7", "-0", "0", "00042", "1_000", "0x1f", "-0x1f", "0b101", "0o17",
             "0X1F", "0x", "0b", "abc", "", "  ", "-", "+", "12abc", "1 2", "٣", "9223372036854775807",
             "-9223372036854775808", "9223372036854775808", "-9223372036854775809", "99999999999999999999",
-            "0x7fffffffffffffff", "0x8000000000000000", "0xffffffffffffffff", "0x10000000000000000"]
+            "0x7fffffffffffffff", "0x8000000000000000", "0xffffffffffffffff", "0x10000000000000000",
+            "0x-10", "0x+10", "-0x-10", "0o+7", "0b-1"]
     for s in ints, T in (Int8, Int16, Int32, Int64, Int128, UInt8, UInt16, UInt32, UInt64, UInt128)
         @test sameasbase(T, s)
         @test sametry(T, s)
@@ -75,9 +76,14 @@ end
         @test sameasbase(Bool, s)
         @test sametry(Bool, s)
     end
-    for s in ("123456789012345678901234567890", " 1 ", "-0", "1e3", "+5", "12x")
+    for s in ("123456789012345678901234567890", " 1 ", "-0", "1e3", "+5", "12x",
+              "0x-10", "-0x-10")
         @test sameasbase(BigInt, s)
     end
+    # GMP (and so Base) accepts '-' between a radix prefix and the digits but
+    # rejects '+'; error message text differs, so pin the tryparse values
+    @test Parsers.tryparse(BigInt, "0x+10") === Base.tryparse(BigInt, "0x+10") === nothing
+    @test Parsers.tryparse(BigInt, "-0x+10") === Base.tryparse(BigInt, "-0x+10") === nothing
     for s in ("1.5", " 1.5", "0.1", "1e400", "-2.5e-10", "x", "")
         @test sameasbase(BigFloat, s)
     end

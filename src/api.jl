@@ -291,6 +291,12 @@ function _tryparsebig(::Type{BigInt}, buf, i, j, base, groupmark,
         Throw && throw(ArgumentError("premature end of integer: $(_q(_spanstring(buf, orig_i, orig_j)))"))
         return nothing
     end
+    if prefixed && @inbounds(buf[dstart]) == UInt8('+')
+        # GMP (and so Base) accepts '-' between a radix prefix and the digits
+        # but rejects '+'
+        Throw && throw(ArgumentError("invalid BigInt: $(_q(_spanstring(buf, orig_i, orig_j)))"))
+        return nothing
+    end
     pbuf, pi, pj = buf, prefixed ? dstart : i, j
     if gm !== nothing && _hasbyte(pbuf, pi, pj, gm)
         scratch = Vector{UInt8}(undef, max(pj - pi + 1, 8))

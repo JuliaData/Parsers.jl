@@ -776,6 +776,12 @@ end
 @inline function parseprefixedint(::Type{T}, buf::AbstractVector{UInt8},
                                   i::Int, j::Int, base::Int,
                                   neg::Bool) where {T <: _SIGNED}
+    # Base rejects a second sign between the radix prefix and the digits, so
+    # the sign grammar must not run again on the digit span
+    if i <= j
+        @inbounds b = buf[i]
+        (b == UInt8('-') || b == UInt8('+')) && return (zero(T), RC_INVALID, i)
+    end
     neg || return parseint(T, buf, i, j, base)
     U = unsigned(T)
     mag, rc, bad = parseint(U, buf, i, j, base)
