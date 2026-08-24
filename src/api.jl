@@ -515,15 +515,16 @@ function _parsebigfloatpublic(buf, i::Int, j::Int, decimal::UInt8, groupmark,
                    _prefermpfrdefault(buf, k, j)))
 
     # In-range custom decimal/group syntax converts in Julia because it needs
-    # Parsers' grammar. Short default decimals use the same package-owned path.
-    # Longer default whole values go straight to MPFR: it is BigFloat's native
-    # conversion engine and avoids constructing a full-size BigInt coefficient
-    # before rounding it back to the requested precision. This boundary does
-    # not affect `parsebigfloat` or prefix parsing, which stay self-contained.
-    # A validated configured value outside the limb kernel's range is
-    # normalized below and then passed to MPFR.
+    # Parsers' grammar. Default decimals whose span cannot exceed the interval
+    # threshold use the same package-owned path — the limb kernel beats MPFR's
+    # string parser there. Longer default values go straight to MPFR: it is
+    # BigFloat's native conversion engine and avoids constructing a full-size
+    # BigInt coefficient before rounding it back to the requested precision.
+    # This boundary does not affect `parsebigfloat` or prefix parsing, which
+    # stay self-contained. A validated configured value outside the limb
+    # kernel's range is normalized below and then passed to MPFR.
     if !ishex && kernelrounding && !directmpfr &&
-       (!defaultgrammar || n <= 20)
+       (!defaultgrammar || n <= _decimalintervaldigits(precision(BigFloat)))
         if defaultgrammar
             parts, rc = _decompose(buf, i, j, decimal)
             if rc == RC_OK

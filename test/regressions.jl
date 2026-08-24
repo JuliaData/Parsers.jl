@@ -1906,3 +1906,29 @@ end
     @test Parsers.tryparse(Bool, "0x1") === nothing
     @test Parsers.tryparse(Float64, "NaN(123)") === nothing
 end
+
+@testset "public BigFloat kernel window matches MPFR across the routing boundary" begin
+    # default-grammar decimals whose span fits the interval threshold convert
+    # in the limb kernel; longer ones use MPFR natively — both must agree
+    # with Base (mpfr_strtofr) in value and precision
+    rng = MersenneTwister(0xb16f)
+    okall = true
+    for _ in 1:600
+        ndig = rand(rng, 1:120)
+        mant = join(rand(rng, '0':'9', ndig))
+        point = rand(rng, 0:ndig)
+        s = point == 0 ? mant : mant[1:point] * "." * mant[(point + 1):end]
+        startswith(s, ".") && (s = "0" * s)
+        rand(rng, Bool) && (s *= "e" * string(rand(rng, -60:60)))
+        rand(rng, Bool) && (s = "-" * s)
+        got = Parsers.tryparse(BigFloat, s)
+        want = Base.tryparse(BigFloat, s)
+        okall &= isequal(got, want) && precision(got) == precision(want)
+    end
+    @test okall
+    # negative zero/Inf keep sign and precision through the kernel window
+    setprecision(BigFloat, 64) do
+        v = Parsers.parse(BigFloat, "-0." * "0"^40)
+        @test iszero(v) && signbit(v) && precision(v) == 64
+    end
+end

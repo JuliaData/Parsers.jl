@@ -607,6 +607,13 @@ function _bigfloatfromparts(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal:
     M = ws.M
     digstart = parts.digoffset <= 0 ? _DECPARTS_NO_DIGIT :
                i + Int(parts.digoffset) - 1
+    if groupmark === nothing && j - i + 1 <= _decimalintervaldigits(prec)
+        # ndig is bounded by the span, so the interval proof below can never
+        # trigger; feed the coefficient limbs directly
+        q, inrange = _bigmantissadirect!(M, buf, i, digstart, j, decimal)
+        inrange || return (_signedzero(parts.neg, prec), RC_OVERFLOW)
+        return _scaledbigint!(M, q, parts.neg, ws, prec, rounding)
+    end
     q, inrange = _collectbigmantissa!(ws.digits, buf, i, digstart, j, decimal,
                                       groupmark)
     inrange || return (_signedzero(parts.neg, prec), RC_OVERFLOW)
@@ -919,6 +926,44 @@ end
 # Collect significant digits and their decimal scale from an already validated
 # token. The boolean is false when the magnitude is outside the bounded
 # BigFloat kernel range.
+# Short ungrouped coefficients skip the freeze-into-`ws.digits` pass that only
+# the long-input interval proof needs: the digit runs feed the coefficient
+# limbs directly, as the prefix kernels do. The traversal mirrors the ungrouped
+# _collectbigmantissa! exactly.
+function _bigmantissadirect!(big::BigInt, buf::AbstractVector{UInt8}, i::Int,
+                             digstart::Int, j::Int, decimal::UInt8)
+    digstart, infrac, frac = _bigmantissaprepass(buf, i, j, digstart, decimal)
+    stop1 = _digitrunend(buf, digstart, j)
+    infrac && (frac += stop1 - digstart)
+    start2 = stop1
+    stop2 = stop1
+    @inbounds if stop1 <= j && buf[stop1] == decimal
+        start2 = stop1 + 1
+        stop2 = _digitrunend(buf, start2, j)
+        frac += stop2 - start2
+    end
+    ndig = (stop1 - digstart) + (stop2 - start2)
+    k = stop2
+    q, inrange = @inbounds(k <= j) ?
+        _bigfloatexponent(buf, k, j, ndig - frac, frac) :
+        (-frac, abs(ndig - frac) <= 65536)
+    inrange || return (0, false)
+
+    nlimbs = _limbsfordigits(_Limb, ndig)
+    big.alloc < nlimbs &&
+        Base.GMP.MPZ.realloc2!(big, _gmpbitsforlimbs(nlimbs))
+    GC.@preserve big begin
+        limbs = big.d
+        size, acc, nacc, _ = _feeddigits!(limbs, 0, zero(UInt64), 0, buf,
+                                          digstart, stop1)
+        size, acc, nacc, _ = _feeddigits!(limbs, size, acc, nacc, buf,
+                                          start2, stop2)
+        size = _flushdigits!(limbs, size, acc, nacc)
+    end
+    big.size = _gmpsize(size)
+    return (q, true)
+end
+
 function _collectbigmantissa!(digits::Vector{UInt8},
                               buf::AbstractVector{UInt8}, i::Int,
                               digstart::Int, j::Int, decimal::UInt8)
