@@ -179,7 +179,8 @@ end
     @inbounds _isws(buf[k]) &&                     # digits, whitespace, then more: Base's wording
         throw(ArgumentError("extra characters after whitespace in $(_q(s))"))
     ch = first(String(buf[k:(k + min(3, j - k))]))
-    throw(ArgumentError("invalid base $b digit '$ch' in $(_q(s))"))
+    # repr, matching Base: control and invalid bytes appear escaped, not raw
+    throw(ArgumentError("invalid base $b digit $(repr(ch)) in $(_q(s))"))
 end
 
 # --- floats -----------------------------------------------------------------------
@@ -256,7 +257,8 @@ end
     orig_i, orig_j = i, j
     i, j = _stripws(buf, i, j)
     if trues === nothing && falses === nothing
-        # Base.parse(Bool, s): "true"/"false"/"1"/"0" exactly
+        # "true"/"false"/"1"/"0" exactly; Base additionally falls back to
+        # integer parsing ("01", "0x1") — a documented deliberate difference
         if i == j
             @inbounds b = buf[i]
             ((b == UInt8('1')) | (b == UInt8('0'))) && return b == UInt8('1')
@@ -786,7 +788,9 @@ end
     _checkbytelist(xs)
 @inline _bytelist(xs::Vector{Vector{UInt8}}) = _checkbytelist(xs)
 @inline function _bytelist(xs)
-    normalized = Vector{UInt8}[Vector{UInt8}(codeunits(String(x))) for x in xs]
+    # String(::Vector{UInt8}) steals the caller's buffer; copy byte vectors
+    normalized = Vector{UInt8}[x isa AbstractVector{UInt8} ? Vector{UInt8}(x) :
+                               Vector{UInt8}(codeunits(String(x))) for x in xs]
     return _checkbytelist(normalized)
 end
 
