@@ -665,6 +665,45 @@ end
 @inline _dateparts(::Type{T}, buf, i, j, dateformat) where {T <: Dates.TimeType} =
     _parsecivilvalidated(buf, i, j, _datepattern(dateformat, T), _civilvalidation(T))
 
+# Keep the dominant default shapes out of the plan machinery. `parsecivil`
+# retains the same accelerators for kernel callers, but reaching them through
+# the type-erased plan barrier costs more than parsing the ISO fields
+# themselves.
+@inline function _dateparts(::Type{Dates.Date}, buf, i, j, ::Nothing)
+    if j - i == 9 && !_needsindexwindow(j)
+        c, rc = parseiso10(buf, i)
+        rc == RC_OK && return (c, rc)
+    end
+    return _parsecivilvalidated(buf, i, j, ISO_DATE, _civilvalidation(Dates.Date))
+end
+@inline function _dateparts(::Type{Dates.DateTime}, buf, i, j, ::Nothing)
+    n = j - i + 1
+    if !_needsindexwindow(j)
+        if n == 19
+            c, rc = parseiso19(buf, i)
+            rc == RC_OK && return (c, rc)
+        elseif 21 <= n <= 29
+            c, rc = parseiso19frac(buf, i, j)
+            rc == RC_OK && return (c, rc)
+        end
+    end
+    return _parsecivilvalidated(buf, i, j, ISO_DATETIME,
+                                _civilvalidation(Dates.DateTime))
+end
+@inline function _dateparts(::Type{Dates.Time}, buf, i, j, ::Nothing)
+    n = j - i + 1
+    if !_needsindexwindow(j)
+        if n == 8
+            c, rc = parseiso8(buf, i)
+            rc == RC_OK && return (c, rc)
+        elseif 10 <= n <= 18
+            c, rc = parseiso8frac(buf, i, j)
+            rc == RC_OK && return (c, rc)
+        end
+    end
+    return _parsecivilvalidated(buf, i, j, ISO_TIME, _civilvalidation(Dates.Time))
+end
+
 @inline function _tryparsedate(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int, dateformat,
                                ::Val{Throw}) where {T <: Dates.TimeType, Throw}
     if i > j
