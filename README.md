@@ -207,13 +207,25 @@ conversion to Base or Julia's private C parser.
 Known deliberate differences are:
 
 - Whitespace tolerance is limited to ASCII whitespace.
+- Base tolerates ASCII whitespace between an integer's sign and its digits
+  (`"- 1"` parses as `-1`). Parsers requires the digits (or a radix prefix)
+  to follow the sign directly.
+- Base's `BigInt` parser inherits GMP tolerances that Parsers does not
+  replicate: sign runs (`"--1"`) and interior whitespace (`"1 2"`, `"0x 10"`)
+  are invalid in Parsers.
 - Base parses `Float16` through `Float32`, which can double-round at a Float16
   boundary. Parsers resolves such boundaries against the original decimal.
   Base also accepts some `Float16` conversions that round to signed zero or
   infinity, and Windows accepts some such `Float32` values. Parsers reports
   range errors consistently on every platform.
-- Temporal patterns require every field of the pattern to be present and the
-  whole input to be consumed (Dates allows trailing fields to be omitted).
+- Base accepts C99 `nan(...)` payload spellings such as `"NaN(123)"`. Parsers
+  accepts only plain `NaN` (any case, optional sign).
+- Base's `Bool` parser falls back to integer parsing, so it accepts spellings
+  such as `"01"` and `"0x1"`. Parsers accepts exactly `"true"`, `"false"`,
+  `"1"`, and `"0"`, or the provided `trues`/`falses` spellings.
+- Temporal patterns require every token of the pattern to be matched —
+  literals included — and the whole input to be consumed (Dates allows
+  trailing tokens to be omitted).
   The one intentional omission is a final delimiter plus fractional-second
   field: for example, `HH:MM:SS.s` also accepts `HH:MM:SS`.
   Numeric field widths follow `Dates.DateFormat`: a field is fixed-width only
@@ -224,6 +236,8 @@ Known deliberate differences are:
 - Fractional-second fields accept up to nine digits. `Time` preserves
   nanoseconds; `DateTime` truncates to its millisecond resolution. The Dates
   stdlib parser accepts at most three fractional digits.
+- Dates accepts `DateTime` hour `24` when minutes and seconds are zero,
+  rolling to next-day midnight. Parsers rejects hour `24`.
 - Temporal errors use Parsers-specific message text.
 - `Parsers.parse(BigInt, "")` reports an invalid BigInt rather than Base's
   unrelated base error.
