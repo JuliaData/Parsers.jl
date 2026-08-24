@@ -12,6 +12,9 @@ using PrecompileTools: @setup_workload, @compile_workload
         for s in flts
             parse(Float64, s); tryparse(Float64, s); parse(Float32, s)
         end
+        # "1e10" overflows Float16 (public overflow errors rather than rounding
+        # to Inf16), so Float16 gets its own in-range inputs
+        parse(Float16, "1.5"); tryparse(Float16, "-0.25")
         parse(Bool, "true"); tryparse(Bool, "0")
         parse(Dates.Date, "2024-01-02"); parse(Dates.DateTime, "2024-01-02T03:04:05")
         parse(Dates.Time, "03:04:05"); parse(Dates.Date, "01/02/2024"; dateformat="mm/dd/yyyy")
