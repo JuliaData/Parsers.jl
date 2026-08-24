@@ -357,6 +357,10 @@ function _fixeddatepattern(ops::Vector{PatternOp})
     for op in ops
         if op.kind == 8
             pos <= 32 || return FixedDatePattern()
+            # a digit literal is consumed by a preceding greedy numeric run
+            # under the width rules, so the fixed segmentation is wrong for it;
+            # leave those patterns to the interpreter
+            UInt8('0') <= op.width <= UInt8('9') && return FixedDatePattern()
             block = (pos - 1) ÷ 8 + 1
             shift = 8 * ((pos - 1) % 8)
             masks[block] |= UInt64(0xff) << shift
@@ -383,6 +387,11 @@ function _numericdatepattern(ops::Vector{PatternOp})
     @inbounds begin
         ops[2].kind == 8 || return NumericDelimitedDatePattern()
         ops[4].kind == 8 || return NumericDelimitedDatePattern()
+        # digit delimiters are consumed by the preceding greedy numeric run
+        # under the width rules; leave those patterns to the interpreter
+        (UInt8('0') <= ops[2].width <= UInt8('9') ||
+         UInt8('0') <= ops[4].width <= UInt8('9')) &&
+            return NumericDelimitedDatePattern()
         kinds = (ops[1].kind, ops[3].kind, ops[5].kind)
         all(kind -> 1 <= kind <= 3, kinds) || return NumericDelimitedDatePattern()
         (UInt8(1) << kinds[1]) | (UInt8(1) << kinds[2]) | (UInt8(1) << kinds[3]) ==
