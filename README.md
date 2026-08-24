@@ -48,7 +48,8 @@ Parsers.parse(Base.UUID, "123e4567-e89b-12d3-a456-426614174000")
 ```
 
 `Parsers.tryparse` has the same target and keyword support. It returns
-`nothing` whenever `Parsers.parse` would throw:
+`nothing` for malformed or out-of-range input. Configuration errors, such as
+an invalid base or incompatible numeric marks, still throw:
 
 ```julia
 Parsers.tryparse(Int, "abc")  # nothing
@@ -65,10 +66,13 @@ Supported whole-value targets and their keywords are:
 | `Dates.Date`, `Dates.DateTime`, and `Dates.Time` | `dateformat` |
 | `Base.UUID` | none |
 
-Public `BigFloat` parsing uses MPFR. Its decimal, binary, hexadecimal,
-special-value, and exponent spellings match Base across MPFR's full exponent
-range. Custom `decimal` and `groupmark` syntax is validated before it is
-normalized for MPFR.
+Short default decimals and in-range values with a supported rounding mode and
+a custom `decimal` or `groupmark` use Parsers' package-owned numeric
+conversion. Longer default values go directly to MPFR's native BigFloat string
+parser. That parser also handles hexadecimal values, NaN payloads, and MPFR's
+full exponent range. Configured syntax is always validated by Parsers; a valid
+configured value outside the bounded kernel's range is normalized before MPFR
+converts it.
 
 Numbers and `Bool` accept surrounding ASCII whitespace. Dates and UUIDs must
 fill the input exactly. Custom `trues` and `falses` lists replace the default
@@ -96,7 +100,10 @@ Parsers.parse(Date, "01/20/2018"; dateformat=pattern)
 ```
 
 A `Dates.DateFormat` keeps its escaped literals and locale tables. A format
-string uses the default English tables and is compiled for each call.
+string uses the default English tables. Format strings and dynamic or
+noncanonical `Dates.DateFormat` values use bounded caches. Canonical English
+DateFormats compile lazily into their specialized adapters. `compilepattern`
+lets a caller compile eagerly and keep the resulting plan.
 Fractional-second fields accept up to nine digits. `Time` preserves
 nanoseconds, while `DateTime` truncates to its millisecond resolution.
 
@@ -118,7 +125,9 @@ Parsers.tryparse(Bool, buf, 10, 13)    # true
 rejected because public span indices are one-based.
 
 Use `parsenext` when the token end is not known. It finds and parses the
-longest supported token at `pos` and does not skip whitespace:
+longest supported token at `pos` and does not skip whitespace. Recognition and
+conversion advance together; it does not scan a boundary and then call a
+whole-value parser on the same span:
 
 ```julia
 value, nextpos, code = Parsers.parsenext(Float64, buf, 4, length(buf))
@@ -131,20 +140,22 @@ the rounded or range value, and sets `RC_OVERFLOW` or `RC_UNDERFLOW`. An
 invalid token returns the zero value for the target and sets `RC_INVALID`.
 
 Byte bounds are checked. A nonempty range must satisfy
-`1 <= pos <= last <= length(bytes)`. The one valid empty range is
-`pos == length(bytes) + 1` and `last == length(bytes)`; it returns
-`RC_INVALID`. Other invalid ranges throw `BoundsError`.
+`1 <= pos <= last <= length(bytes)`. When `length(bytes) + 1` is representable,
+the one valid empty range is `pos == length(bytes) + 1` and
+`last == length(bytes)`; it returns `RC_INVALID`. Other invalid ranges throw
+`BoundsError`. If a token consumes byte `typemax(Int)`, its one-past
+`nextpos` is not representable and `parsenext` throws `OverflowError`.
 
 `parsenext` supports fixed-width integers and floats, `BigInt`, `BigFloat`,
-and `Bool`. It uses the same grammar and applicable keywords as whole-value
-parsing, including radix prefixes, digit-group marks, C99 hexadecimal floats,
-and custom Boolean spellings. The longest matching custom Boolean spelling
-wins. `parsenext` does not scan dates or UUIDs, and it is not a quoted-field or
-delimiter scanner.
+and `Bool`. It supports radix prefixes, digit-group marks, C99 hexadecimal
+floats, and custom Boolean spellings. The longest matching custom Boolean
+spelling wins. `parsenext` does not scan dates or UUIDs, and it is not a
+quoted-field or delimiter scanner.
 
 `parsenext(BigFloat, ...)` uses the bounded low-level kernel. It returns a
 range code outside that kernel's decimal prove-out range. Whole-value
-`BigFloat` parsing instead uses MPFR's full range.
+`BigFloat` parsing instead uses MPFR's full range and can accept additional
+MPFR-only spellings.
 
 ## Low-level kernels
 
@@ -203,6 +214,8 @@ Known deliberate differences are:
   range errors consistently on every platform.
 - Temporal patterns require every field of the pattern to be present and the
   whole input to be consumed (Dates allows trailing fields to be omitted).
+  The one intentional omission is a final delimiter plus fractional-second
+  field: for example, `HH:MM:SS.s` also accepts `HH:MM:SS`.
   Numeric field widths follow `Dates.DateFormat`: a field is fixed-width only
   when another field follows it directly, otherwise it is greedy. Year fields
   take an optional sign.
@@ -217,15 +230,17 @@ Known deliberate differences are:
 
 ## Performance
 
-Run the dependency-free benchmark from a clean checkout:
+Instantiate the package environment once, then run the included benchmark:
 
 ```sh
+julia --project=. -e 'using Pkg; Pkg.instantiate()'
 julia --project=. benchmarks/values.jl
 ```
 
-The script prints the Julia version, package version, commit, CPU, corpus size,
-seed, and timing statistic. Treat the output as a local microbenchmark. Record
-the complete header when publishing comparisons.
+The script needs no benchmark framework. It prints the Julia version, package
+version, commit, CPU, corpus size, seed, and timing statistic. Treat the output
+as a local microbenchmark. Record the complete header when publishing
+comparisons.
 
 ## Development
 

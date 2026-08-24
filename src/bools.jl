@@ -1,5 +1,5 @@
 # =============================================================================
-# bool — exactly true/false (or the caller's explicit lists, matched above)
+# bool — exact true/false plus prefix matching for caller spellings
 # =============================================================================
 
 """
@@ -36,6 +36,86 @@ missing fast path and never reach here.)
         k > n && return true
     end
     return false
+end
+
+# Prefix spelling helpers live with the Bool grammar. `api.jl` validates and
+# normalizes public spelling lists before it calls the prefix kernel.
+@inline function _boolsentinelprefix(buf::AbstractVector{UInt8}, i::Int, j::Int,
+    s::AbstractVector{UInt8})
+    n = length(s)
+    (n > 0 && i <= j && n <= j - i + 1) || return false
+    @inbounds for k in 1:n
+        buf[i + k - 1] == s[k] || return false
+    end
+    return true
+end
+
+@inline function _boolsentinelprefix(buf::AbstractVector{UInt8}, i::Int, j::Int,
+    s::AbstractString)
+    n = ncodeunits(s)
+    (n > 0 && i <= j && n <= j - i + 1) || return false
+    @inbounds for k in 1:n
+        buf[i + k - 1] == codeunit(s, k) || return false
+    end
+    return true
+end
+
+@inline _boolsentinellength(s::AbstractString) = ncodeunits(s)
+@inline _boolsentinellength(s) = length(s)
+
+@inline function _longestboolprefix(buf::AbstractVector{UInt8}, pos::Int, last::Int,
+                                    spellings, value::Bool, bestlen::Int,
+                                    bestvalue::Bool)
+    spellings === nothing && return bestlen, bestvalue
+    @inbounds for spelling in spellings
+        n = _boolsentinellength(spelling)
+        # True spellings are visited first. Do not replace an equal-length
+        # match, so a spelling present in both lists keeps true-first behavior.
+        if n > bestlen && _boolsentinelprefix(buf, pos, last, spelling)
+            bestlen = n
+            bestvalue = value
+        end
+    end
+    return bestlen, bestvalue
+end
+
+"""
+    _parseboolprefix(buf, pos, last, trues, falses) -> (Bool, nextpos, code)
+
+Parse the longest Bool spelling at `pos` without scanning it again. `trues`
+and `falses` must be `nothing` or collections of nonempty spellings already
+normalized and validated by the public API's `_bytelist` helper. If both are
+`nothing`, the accepted spellings are `1`, `0`, `true`, and `false`.
+"""
+@inline function _parseboolprefix(buf::AbstractVector{UInt8}, pos::Int, last::Int,
+                                  trues, falses)
+    pos > last && return false, pos, RC_INVALID
+    if trues === nothing && falses === nothing
+        @inbounds lead = buf[pos]
+        lead == UInt8('1') && return true, pos + 1, RC_OK
+        lead == UInt8('0') && return false, pos + 1, RC_OK
+        if lead == UInt8('t') && last - pos >= 3
+            @inbounds if buf[pos + 1] == UInt8('r') &&
+                         buf[pos + 2] == UInt8('u') &&
+                         buf[pos + 3] == UInt8('e')
+                return true, pos + 4, RC_OK
+            end
+        elseif lead == UInt8('f') && last - pos >= 4
+            @inbounds if buf[pos + 1] == UInt8('a') &&
+                         buf[pos + 2] == UInt8('l') &&
+                         buf[pos + 3] == UInt8('s') &&
+                         buf[pos + 4] == UInt8('e')
+                return false, pos + 5, RC_OK
+            end
+        end
+        return false, pos, RC_INVALID
+    end
+
+    bestlen, value = _longestboolprefix(buf, pos, last, trues, true, 0, false)
+    bestlen, value = _longestboolprefix(buf, pos, last, falses, false,
+                                        bestlen, value)
+    bestlen == 0 && return false, pos, RC_INVALID
+    return value, pos + bestlen, RC_OK
 end
 
 @inline function matchsentinel(buf::AbstractVector{UInt8}, i::Int, j::Int,

@@ -4,8 +4,10 @@
 using Test, Random, Dates, Parsers
 
 module DecomposeRef
-using Parsers: DecParts, RC_OK, RC_INVALID
+using Parsers: DecParts, RC_OK, RC_INVALID, _decimalexponentdigit,
+               _signeddecimalexponent, _decparts
 function _decompose_ref(buf::Vector{UInt8}, i::Int, j::Int, decimal::UInt8)
+        spanstart = i
         neg = false
         @inbounds if i <= j
             b = buf[i]
@@ -51,22 +53,24 @@ function _decompose_ref(buf::Vector{UInt8}, i::Int, j::Int, decimal::UInt8)
                     (eneg | (eb == UInt8('+'))) && (i += 1)
                 end
                 i > j && return (DecParts(0, 0, 0, false, neg, 0), RC_INVALID)
-                e = 0
+                e = zero(UInt64)
                 @inbounds while i <= j
                     ed = buf[i] - UInt8('0')
                     ed > 0x09 && return (DecParts(0, 0, 0, false, neg, 0), RC_INVALID)
-                    e < 100_000 && (e = e * 10 + Int(ed))   # clamp: beyond ±99999 saturates
+                    e = _decimalexponentdigit(e, ed)
                     i += 1
                 end
-                exp10 += eneg ? -e : e
-                return (DecParts(mant, Int32(exp10), Int32(ndig), truncated, neg, Int32(digstart)), RC_OK)
+                exp10 = Int128(exp10) + _signeddecimalexponent(e, eneg)
+                return (_decparts(mant, exp10, ndig, truncated, neg,
+                                  digstart, spanstart), RC_OK)
             else
                 return (DecParts(0, 0, 0, false, neg, 0), RC_INVALID)
             end
             i += 1
         end
         sawdigit || return (DecParts(0, 0, 0, false, neg, 0), RC_INVALID)
-        return (DecParts(mant, Int32(exp10), Int32(ndig), truncated, neg, Int32(digstart)), RC_OK)
+        return (_decparts(mant, exp10, ndig, truncated, neg, digstart,
+                          spanstart), RC_OK)
     end
 
 end
@@ -253,8 +257,9 @@ end
         oracle = parse(Float64, decimal == UInt8('.') ? s : replace(s, ',' => '.'))
         v, rc = Parsers.parsefloat64(buf, i, j, decimal)
         @test rc == Parsers.RC_OK && reinterpret(UInt64, v) == reinterpret(UInt64, oracle)
-        fast, handled = Parsers._float_fast(buf, i, j, decimal)
-        @test !handled || reinterpret(UInt64, fast) == reinterpret(UInt64, oracle)
+        fast, fastrc, handled = Parsers._float_fast(buf, i, j, decimal)
+        @test !handled || (fastrc == Parsers.RC_OK &&
+                          reinterpret(UInt64, fast) == reinterpret(UInt64, oracle))
         return nothing
     end
     for decimal in (UInt8('.'), UInt8(',')), len in 1:17, _ in 1:50
@@ -273,12 +278,17 @@ end
         for len in 1:17, _ in 1:1_000
             raw = rand(rng, UInt8, len)
             buf = [raw; rand(rng, UInt8, 16)]
-            fast, handled = Parsers._float_fast(buf, 1, len, decimal)
+            fast, rc, handled = Parsers._float_fast(buf, 1, len, decimal)
             if handled
                 text = String(raw)
                 oracle = tryparse(Float64, decimal == UInt8('.') ? text : replace(text, ',' => '.'))
-                @test oracle !== nothing
-                @test reinterpret(UInt64, fast) == reinterpret(UInt64, oracle::Float64)
+                if rc == Parsers.RC_OK
+                    @test oracle !== nothing
+                    @test reinterpret(UInt64, fast) == reinterpret(UInt64, oracle::Float64)
+                else
+                    @test rc in (Parsers.RC_INVALID, Parsers.RC_OVERFLOW,
+                                 Parsers.RC_UNDERFLOW)
+                end
             end
         end
     end
@@ -287,19 +297,29 @@ end
     raw = Vector{UInt8}(codeunits("1.25"))
     for suffixlen in 0:16
         buf = [UInt8[0xaa, 0xbb]; raw; fill(UInt8('x'), suffixlen)]
-        @test Parsers._float_fast(buf, 3, 6, UInt8('.')) == (1.25, true)
+        @test Parsers._float_fast(buf, 3, 6, UInt8('.')) ==
+              (1.25, Parsers.RC_OK, true)
     end
     for s in ("1", "12345678", "1234.5678", "12345678.123456")
         raw = Vector{UInt8}(codeunits(s))
-        @test Parsers._float_fast([raw; fill(UInt8('x'), 16)], 1, length(raw), UInt8('.'))[2]
+        @test Parsers._float_fast([raw; fill(UInt8('x'), 16)], 1,
+                                  length(raw), UInt8('.'))[3]
     end
-    for s in ("1..2", "9007199254740991", "9007199254740992", "9007199254740993")
+    for s in ("1..2", "1.2.3", "1e", "1e+", "1x", ".x", "+", "-")
         raw = Vector{UInt8}(codeunits(s))
-        @test !Parsers._float_fast([raw; fill(UInt8('x'), 16)], 1, length(raw), UInt8('.'))[2]
+        @test Parsers._float_fast([raw; fill(UInt8('x'), 16)], 1,
+                                  length(raw), UInt8('.')) ==
+              (0.0, Parsers.RC_INVALID, true)
+    end
+    for s in ("9007199254740991", "9007199254740992", "9007199254740993")
+        raw = Vector{UInt8}(codeunits(s))
+        @test !Parsers._float_fast([raw; fill(UInt8('x'), 16)], 1,
+                                   length(raw), UInt8('.'))[3]
     end
     # A decimal in the readable suffix is outside the requested span.
     padded = Vector{UInt8}(codeunits("12.3456789012345"))
-    @test Parsers._float_fast(padded, 1, 2, UInt8('.')) == (12.0, true)
+    @test Parsers._float_fast(padded, 1, 2, UInt8('.')) ==
+          (12.0, Parsers.RC_OK, true)
     w = Parsers._load8(Vector{UInt8}(codeunits("12345678")), 1)
     @test Parsers._rundigits(w, 0) == (UInt64(0), true)
     @test Parsers._rundigits(w, 8) == (UInt64(12_345_678), true)
@@ -368,6 +388,14 @@ end
         rcw == Parsers.RC_OK && @test (isnan(vw) && isnan(vf)) ||
                                 (vw == vf && signbit(vw) == signbit(vf))
     end
+    # Automatic workspace leasing is exception-safe. A bad configuration must
+    # return the same workspace to the current thread's slot.
+    pooled = Parsers._takebigwork()
+    Parsers._givebigwork(pooled)
+    @test_throws ArgumentError Parsers.parsebigfloat(b("1.0"), 1, 3; prec=1)
+    returned = Parsers._takebigwork()
+    @test returned === pooled
+    Parsers._givebigwork(returned)
 
     # prove-out range bound is explicit, not silent
     for s in ("1e65535", "1e-65537")
@@ -389,7 +417,7 @@ end
         @test rc == Parsers.RC_OK && v == parse(BigFloat, longfraction)
     end
     # A fixed exponent clamp could be cancelled by a long mantissa at the gate,
-    # after which _bigmantissa reconstructed an enormous q for pow_ui.
+    # after which exact coefficient collection reconstructed an enormous scale.
     clamptrap = "1"^50_000 * "e-100000000000000000000"
     @test Parsers.parsebigfloat(b(clamptrap), 1, ncodeunits(clamptrap); prec=24)[2] == Parsers.RC_OVERFLOW
     # Zero bypasses scaling and preserves its sign even with a huge exponent.
@@ -401,7 +429,7 @@ end
     end
 end
 
-@testset "BigFloat public path converts in Julia; MPFR only for its own spellings" begin
+@testset "BigFloat public package and native conversion paths" begin
     rng = MersenneTwister(21)
     okall = true
     for _ in 1:3_000
@@ -418,12 +446,14 @@ end
     end
     long = "123456789.123456789123456789123456789e-57"
     Parsers.parse(BigFloat, long)
-    @test @allocated(Parsers.parse(BigFloat, long)) <= 128
+    @test @allocated(Parsers.parse(BigFloat, long)) <= 192
     # concurrent parses never share a workspace
     inputs = [string(rand(rng, 1:999)) * "." * String(rand(rng, '0':'9', 40)) * "e" *
               string(rand(rng, -100:100)) for _ in 1:4_000]
     expected = [parse(BigFloat, s) for s in inputs]
     results = Vector{BigFloat}(undef, length(inputs))
+    get(ENV, "PARSERS_REQUIRE_THREADS", "false") == "true" &&
+        @test Threads.nthreads() >= 2
     Threads.@threads for k in eachindex(inputs)
         results[k] = Parsers.parse(BigFloat, inputs[k])
     end

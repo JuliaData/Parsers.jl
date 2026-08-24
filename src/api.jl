@@ -1,8 +1,9 @@
 # =============================================================================
 # The public surface: parse / tryparse with the documented Base-like semantics,
 # byte-span forms, and parsenext for tokenizers. Fixed-width values use the
-# span-exact package kernels. Public BigFloat conversion uses MPFR for Base
-# parity.
+# span-exact package kernels. Public BigFloat conversion uses the package-owned
+# limb kernel where documented; MPFR handles longer default values and the
+# additional validated grammar/range cases.
 # =============================================================================
 
 const _INTS = Union{_SIGNED, _UNSIGNED}
@@ -31,68 +32,11 @@ end
     return i, j
 end
 _spanstring(buf::AbstractVector{UInt8}, i::Int, j::Int) =
-    String(buf[max(i, 1):min(j, length(buf))])
+    i > j ? "" : String(buf[i:j])
 # Base's error messages show the input through `repr` (escapes visible)
 _q(s::String) = repr(s)
 
-@inline function _bytechar(c::Char, name::Symbol)
-    UInt32(c) <= 0xff ||
-        throw(ArgumentError("$name must fit in one byte, got $(repr(c))"))
-    return UInt8(c)
-end
-
-@inline function _decimalbyte(c::Char)
-    b = _bytechar(c, :decimal)
-    ((b - UInt8('0')) > 0x09 && b != UInt8('+') && b != UInt8('-') &&
-     _lower(b) != UInt8('e')) ||
-        throw(ArgumentError("decimal must not be a digit, sign, or exponent marker"))
-    return b
-end
-
-@inline function _floatgroupbyte(groupmark, decimal::UInt8)
-    groupmark === nothing && return nothing
-    b = _bytechar(groupmark, :groupmark)
-    ((b - UInt8('0')) > 0x09 && b != decimal && b != UInt8('+') &&
-     b != UInt8('-') && _lower(b) != UInt8('e')) ||
-        throw(ArgumentError("groupmark must differ from decimal and must not be a digit, sign, or exponent marker"))
-    return b
-end
-
-@inline _normalizebase(::Nothing) = nothing
-@inline function _normalizebase(base)
-    base isa Integer || throw(ArgumentError("base must be an integer, got $(repr(base))"))
-    2 <= base <= 62 ||
-        throw(ArgumentError("invalid base: base must be 2 ≤ base ≤ 62, got $base"))
-    return Int(base)
-end
-
-@inline function _intgroupbyte(groupmark, base::Int)
-    groupmark === nothing && return nothing
-    gm = _bytechar(groupmark, :groupmark)
-    (_digitvalue(gm, base) >= base && gm != UInt8('+') && gm != UInt8('-')) ||
-        throw(ArgumentError("groupmark must not be a sign or a base-$base digit"))
-    return gm
-end
-
 # --- integers ---------------------------------------------------------------------
-
-# the base and where the digits start after an optional 0x/0o/0b prefix
-# (Base's rule: prefixes are recognized only when no base is given, after the
-# sign, lowercase letters only)
-@inline function _intprefix(buf::AbstractVector{UInt8}, i::Int, j::Int,
-                            base::Union{Nothing, Int})
-    base === nothing || return (i, base, false)
-    k = i
-    @inbounds if k <= j && (buf[k] == UInt8('-') || buf[k] == UInt8('+'))
-        k += 1
-    end
-    @inbounds if k + 1 <= j && buf[k] == UInt8('0')
-        c = buf[k + 1]
-        b = c == UInt8('x') ? 16 : c == UInt8('o') ? 8 : c == UInt8('b') ? 2 : 0
-        b != 0 && return (k + 2, b, true)       # digits start after the prefix; sign handled by caller
-    end
-    return (i, 10, false)
-end
 
 """
     tryparse(T, buf, i, j; base=nothing, groupmark=nothing) -> Union{T, Nothing}
@@ -112,7 +56,7 @@ end
     end
     @inbounds b = buf[i]
     k = i + Int((b == UInt8('-')) | (b == UInt8('+')))
-    @inbounds if k + 1 <= j && buf[k] == UInt8('0')
+    @inbounds if k < j && buf[k] == UInt8('0')
         c = buf[k + 1]
         if c == UInt8('x') || c == UInt8('o') || c == UInt8('b')
             return _tryparseintradix(T, buf, orig_i, orig_j, i, j, nothing, nothing,
@@ -147,7 +91,7 @@ end
         k = i
         @inbounds (buf[k] == UInt8('-') || buf[k] == UInt8('+')) && (k += 1)
         prefixed = false
-        @inbounds if k + 1 <= j && buf[k] == UInt8('0')
+        @inbounds if k < j && buf[k] == UInt8('0')
             c = buf[k + 1]
             prefixed = c == UInt8('x') || c == UInt8('o') || c == UInt8('b')
         end
@@ -234,14 +178,19 @@ end
     end
     @inbounds _isws(buf[k]) &&                     # digits, whitespace, then more: Base's wording
         throw(ArgumentError("extra characters after whitespace in $(_q(s))"))
-    ch = first(String(buf[k:min(k + 3, j)]))
+    ch = first(String(buf[k:(k + min(3, j - k))]))
     throw(ArgumentError("invalid base $b digit '$ch' in $(_q(s))"))
 end
 
 # --- floats -----------------------------------------------------------------------
 
+@inline _parsefloatspan(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
+                        decimal::UInt8, groupmark) where {T <: _FLOATS} =
+    _parsefloatspan(T, buf, i, j, decimal, groupmark, Val(false))
+
 @inline function _parsefloatspan(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
-                                 decimal::UInt8, groupmark) where {T <: _FLOATS}
+                                 decimal::UInt8, groupmark,
+                                 ::Val{Whole}) where {T <: _FLOATS, Whole}
     v = zero(T)
     rc = RC_INVALID
     gm = _floatgroupbyte(groupmark, decimal)
@@ -250,16 +199,28 @@ end
         @inbounds if buf[k] == UInt8('-') || buf[k] == UInt8('+')
             k += 1
         end
-        special, isspecial = gm === nothing ? (0.0, false) : _matchspecial(buf, i, j)
+        probespecial = @inbounds gm !== nothing && k <= j &&
+            (_lower(buf[k]) == UInt8('i') || _lower(buf[k]) == UInt8('n'))
+        special, isspecial = probespecial ? _matchspecial(buf, i, j) : (0.0, false)
         if isspecial
             v, rc = T(special), RC_OK
-        elseif @inbounds(k + 1 <= j && buf[k] == UInt8('0') &&
+        elseif @inbounds(k < j && buf[k] == UInt8('0') &&
                          _lower(buf[k + 1]) == UInt8('x'))
             v, rc = _parsehexfloat(T, buf, i, j)
+        elseif gm !== nothing && T !== Float16
+            v, rc, handled = _floatgroupedsmall(T, buf, i, j, decimal, gm)
+            if !handled
+                if _hasbyte(buf, i, j, gm)
+                    v, rc = parsegroupedfloatpublic(T, buf, i, j, decimal, gm)
+                else
+                    v, rc = parsefloatpublic(T, buf, i, j, decimal)
+                end
+            end
         elseif gm !== nothing && _hasbyte(buf, i, j, gm)
             v, rc = parsegroupedfloatpublic(T, buf, i, j, decimal, gm)
         else
-            v, rc = parsefloatpublic(T, buf, i, j, decimal)
+            v, rc = Whole ? parsefloatwholepublic(T, buf, i, j, decimal) :
+                            parsefloatpublic(T, buf, i, j, decimal)
         end
     end
     return (v, rc)
@@ -268,9 +229,15 @@ end
 @inline function _tryparsefloat(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
                                 decimal::UInt8, groupmark,
                                 ::Val{Throw}) where {T <: _FLOATS, Throw}
+    return _tryparsefloat(T, buf, i, j, decimal, groupmark, Val(Throw), Val(false))
+end
+
+@inline function _tryparsefloat(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
+                                decimal::UInt8, groupmark, ::Val{Throw},
+                                whole::Val{Whole}) where {T <: _FLOATS, Throw, Whole}
     orig_i, orig_j = i, j
     i, j = _stripws(buf, i, j)
-    v, rc = _parsefloatspan(T, buf, i, j, decimal, groupmark)
+    v, rc = _parsefloatspan(T, buf, i, j, decimal, groupmark, whole)
     if rc == RC_OK
         return v
     end
@@ -394,11 +361,11 @@ const _BIGFLOAT_POW10 = ntuple(i -> UInt64(10)^(i - 1), 20)
     return rounding
 end
 
-# A short decimal with an exactly representable UInt64 significand needs one
-# result allocation and a small number of MPFR arithmetic operations. This
-# avoids the general MPFR string scanner for the dominant BigFloat shapes
-# without changing precision or directed-rounding semantics. Inputs that would
-# round the significand before scaling stay on the general path.
+# A short decimal whose UInt64 significand is exact at the target precision,
+# or needs no later decimal scaling, needs one result allocation and a small
+# number of MPFR operations. This avoids the general MPFR string scanner.
+# A significand that would round before a nontrivial scale stays on the
+# general path, which prevents double rounding.
 @inline function _smallbigfloat(parts::DecParts,
                                 rounding::Base.MPFR.MPFRRoundingMode)
     (!parts.truncated && parts.ndig <= 19) || return nothing
@@ -409,7 +376,9 @@ end
     mant = parts.mant
     mant <= typemax(Culong) || return nothing
     prec = precision(BigFloat)
-    (mant == 0 || 64 - leading_zeros(mant) <= prec) || return nothing
+    # With q == 0, mpfr_set_ui is the only rounding operation. It can round
+    # the exact UInt64 directly even when the coefficient is wider than prec.
+    (mant == 0 || q == 0 || 64 - leading_zeros(mant) <= prec) || return nothing
 
     value = BigFloat(; precision=prec)
     magrounding = _magnituderounding(rounding, parts.neg)
@@ -439,6 +408,28 @@ end
     rounding == Base.MPFR.MPFRRoundUp || rounding == Base.MPFR.MPFRRoundDown ||
     rounding == Base.MPFR.MPFRRoundFromZero
 
+@noinline function _bigfloatfromdecimalpartswide(
+        buf, i::Int, j::Int, decimal::UInt8, parts::DecParts,
+        rounding::Base.MPFR.MPFRRoundingMode)
+    workspace = _takebigwork()
+    try
+        return _bigfloatfromparts(buf, i, j, decimal, parts, workspace,
+                                  precision(BigFloat), rounding)
+    finally
+        _givebigwork(workspace)
+    end
+end
+
+@inline function _bigfloatfromdecimalparts(
+        buf, i::Int, j::Int, decimal::UInt8, parts::DecParts,
+        rounding::Base.MPFR.MPFRRoundingMode)
+    if j - i + 1 <= 20
+        fast = _smallbigfloat(parts, rounding)
+        fast === nothing || return fast
+    end
+    return _bigfloatfromdecimalpartswide(buf, i, j, decimal, parts, rounding)
+end
+
 # A decimal spelling converts in Julia: the short exact path, then the limb
 # kernel with a per-thread workspace. OVERFLOW means the magnitude is beyond
 # the kernel's scaling range; INVALID means the decimal grammar rejected it.
@@ -446,14 +437,7 @@ function _bigfloatdecimal(buf, i::Int, j::Int, decimal::UInt8,
                           rounding::Base.MPFR.MPFRRoundingMode)
     parts, rc = _decompose(buf, i, j, decimal)
     rc == RC_OK || return (BigFloat(0), rc)
-    if j - i + 1 <= 20
-        fast = _smallbigfloat(parts, rounding)
-        fast === nothing || return fast
-    end
-    ws = _takebigwork()
-    result = _bigfloatfromparts(buf, i, j, decimal, parts, ws, precision(BigFloat), rounding)
-    _givebigwork(ws)
-    return result
+    return _bigfloatfromdecimalparts(buf, i, j, decimal, parts, rounding)
 end
 
 function _bigfloatgrouped(buf, i::Int, j::Int, decimal::UInt8, gm::UInt8,
@@ -462,6 +446,39 @@ function _bigfloatgrouped(buf, i::Int, j::Int, decimal::UInt8, gm::UInt8,
     m = degroup!(scratch, buf, i, j, gm, decimal)
     m >= 0 || return (BigFloat(0), RC_INVALID)
     return _bigfloatdecimal(scratch, 1, m, decimal, rounding)
+end
+
+@inline function _obviousmpfrdefault(buf, k::Int, j::Int)
+    k <= j || return false
+    @inbounds begin
+        byte = buf[k]
+        lower = _lower(byte)
+        (byte == UInt8('@') || lower == UInt8('i') ||
+         lower == UInt8('n')) && return true
+        return byte == UInt8('0') && k < j &&
+               _lower(buf[k + 1]) == UInt8('b')
+    end
+end
+
+# `_digitrunend` returns one-past the digit run. Avoid that unrepresentable
+# sentinel only for a whole-value source whose final index is typemax(Int).
+@inline function _alldecimaldigits(buf, k::Int, j::Int)
+    j < typemax(Int) && return _digitrunend(buf, k, j) > j
+    @inbounds while k < j
+        buf[k] - UInt8('0') <= 0x09 || return false
+        k += 1
+    end
+    return @inbounds buf[j] - UInt8('0') <= 0x09
+end
+
+# The short MPFR scanner is cheaper than the limb workspace for a 20-digit
+# integer, which cannot use `_smallbigfloat`. Leading-zero spellings stay on
+# the small package path.
+@inline function _prefermpfrdefault(buf, k::Int, j::Int)
+    bodybytes = j - k + 1
+    bodybytes >= 20 || return false
+    @inbounds buf[k] == UInt8('0') && return false
+    return _alldecimaldigits(buf, k, j)
 end
 
 function _parsebigfloatpublic(buf, i::Int, j::Int, decimal::UInt8, groupmark,
@@ -476,22 +493,69 @@ function _parsebigfloatpublic(buf, i::Int, j::Int, decimal::UInt8, groupmark,
 
     @inbounds b = buf[i]
     k = i + Int((b == UInt8('-')) | (b == UInt8('+')))
-    @inbounds ishex = k + 1 <= j && buf[k] == UInt8('0') &&
+    @inbounds ishex = k < j && buf[k] == UInt8('0') &&
                       _lower(buf[k + 1]) == UInt8('x')
     normalizegroup = !ishex && gm !== nothing && _hasbyte(buf, i, j, gm)
     normalizedecimal = !ishex && decimal != UInt8('.')
     defaultgrammar = gm === nothing && decimal == UInt8('.')
+    kernelrounding = _kernelsupports(mpfrrounding)
 
-    # Every decimal spelling the grammar accepts converts here, in Julia:
-    # digits to limbs, one exact scaling, one rounding. MPFR finishes only
-    # what that grammar does not model — hexadecimal floats, `1@2`, NaN
-    # payloads — and magnitudes beyond the kernel's ±10^65536 range.
-    if !ishex && _kernelsupports(mpfrrounding)
-        value, rc = normalizegroup ?
-            _bigfloatgrouped(buf, i, j, decimal, gm, mpfrrounding) :
-            _bigfloatdecimal(buf, i, j, decimal, mpfrrounding)
-        rc == RC_OK && return (value, RC_OK)
-        rc == RC_INVALID && !defaultgrammar && return (value, rc)
+    directmpfr = defaultgrammar && n <= 20 &&
+                 (_obviousmpfrdefault(buf, k, j) ||
+                  (!(buf isa Base.CodeUnits{UInt8,String} &&
+                     j == length(buf)) &&
+                   _prefermpfrdefault(buf, k, j)))
+
+    # In-range custom decimal/group syntax converts in Julia because it needs
+    # Parsers' grammar. Short default decimals use the same package-owned path.
+    # Longer default whole values go straight to MPFR: it is BigFloat's native
+    # conversion engine and avoids constructing a full-size BigInt coefficient
+    # before rounding it back to the requested precision. This boundary does
+    # not affect `parsebigfloat` or prefix parsing, which stay self-contained.
+    # A validated configured value outside the limb kernel's range is
+    # normalized below and then passed to MPFR.
+    if !ishex && kernelrounding && !directmpfr &&
+       (!defaultgrammar || n <= 20)
+        if defaultgrammar
+            parts, rc = _decompose(buf, i, j, decimal)
+            if rc == RC_OK
+                value, rc = _bigfloatfromdecimalparts(
+                    buf, i, j, decimal, parts, mpfrrounding)
+                rc == RC_OK && return (value, RC_OK)
+            end
+        else
+            value, rc = normalizegroup ?
+                _bigfloatgrouped(buf, i, j, decimal, gm, mpfrrounding) :
+                _bigfloatdecimal(buf, i, j, decimal, mpfrrounding)
+            rc == RC_OK && return (value, RC_OK)
+            rc == RC_INVALID && return (value, rc)
+        end
+    end
+
+    # MPFR's faithful mode has no package-kernel equivalent. Configured
+    # decimal grammar must still be Parsers grammar: validate it before the
+    # native conversion so MPFR-only forms such as `1@2` and `nan(payload)` do
+    # not become valid only because the rounding mode changed. When a group
+    # mark is present, validate the normalized span and reuse it immediately.
+    if !ishex && !defaultgrammar && !kernelrounding
+        if normalizegroup
+            scratch = Vector{UInt8}(undef, n + 1)
+            m = degroup!(scratch, buf, i, j, gm, decimal)
+            m >= 0 || return (BigFloat(0), RC_INVALID)
+            _, rc = _decompose(scratch, 1, m, decimal)
+            rc == RC_OK || return (BigFloat(0), rc)
+            if normalizedecimal
+                @inbounds for index in 1:m
+                    scratch[index] == decimal && (scratch[index] = UInt8('.'))
+                end
+            end
+            @inbounds scratch[m + 1] = 0x00
+            GC.@preserve scratch begin
+                return _finishmpfr(pointer(scratch), m, mpfrrounding)
+            end
+        end
+        _, rc = _decompose(buf, i, j, decimal)
+        rc == RC_OK || return (BigFloat(0), rc)
     end
 
     # Julia Strings carry a trailing NUL. The whole-string/default-decimal path
@@ -509,7 +573,9 @@ function _parsebigfloatpublic(buf, i::Int, j::Int, decimal::UInt8, groupmark,
         m >= 0 || return (BigFloat(0), RC_INVALID)
         n = m
     else
-        copyto!(scratch, 1, buf, i, n)
+        @inbounds for offset in 0:(n - 1)
+            scratch[offset + 1] = buf[i + offset]
+        end
     end
     if normalizedecimal
         @inbounds for k in 1:n
@@ -522,14 +588,47 @@ function _parsebigfloatpublic(buf, i::Int, j::Int, decimal::UInt8, groupmark,
     end
 end
 
+@inline function _validbigfloatstart(buf, i::Int, j::Int, decimal::UInt8)
+    i <= j || return false
+    @inbounds begin
+        byte = buf[i]
+        (byte == UInt8('-') || byte == UInt8('+')) && (i += 1)
+        i <= j || return false
+        byte = buf[i]
+        lower = _lower(byte)
+        return byte - UInt8('0') <= 0x09 || byte == decimal ||
+               lower == UInt8('i') || lower == UInt8('n') || byte == UInt8('@')
+    end
+end
+
+@noinline _throwbigfloat(buf, i::Int, j::Int) =
+    throw(ArgumentError("cannot parse $(_q(_spanstring(buf, i, j))) as BigFloat"))
+
 function _tryparsebig(::Type{BigFloat}, buf, i, j, decimal::UInt8, groupmark,
                       rounding, ::Val{Throw}) where {Throw}
     orig_i, orig_j = i, j
     i, j = _stripws(buf, i, j)
+    if !_validbigfloatstart(buf, i, j, decimal)
+        Throw || return nothing
+        return _throwbigfloat(buf, orig_i, orig_j)
+    end
+    if buf isa Base.CodeUnits{UInt8,String} && j == length(buf) &&
+       decimal == UInt8('.') && groupmark === nothing
+        @inbounds byte = buf[i]
+        k = i + Int((byte == UInt8('-')) | (byte == UInt8('+')))
+        if _prefermpfrdefault(buf, k, j)
+            n = j - i + 1
+            mpfrrounding = _mpfrrounding(rounding)
+            value, rc = GC.@preserve buf begin
+                _finishmpfr(pointer(buf.s, i), n, mpfrrounding)
+            end
+            rc == RC_OK && return value
+        end
+    end
     v, rc = _parsebigfloatpublic(buf, i, j, decimal, groupmark, rounding)
     rc == RC_OK && return v
     Throw || return nothing
-    throw(ArgumentError("cannot parse $(_q(_spanstring(buf, orig_i, orig_j))) as BigFloat"))
+    return _throwbigfloat(buf, orig_i, orig_j)
 end
 function _tryparseuuid(buf, i, j, ::Val{Throw}) where {Throw}
     u, rc = parseuuid(buf, i, j)
@@ -544,67 +643,50 @@ end
 @inline _datepattern(::Nothing, ::Type{Dates.DateTime}) = ISO_DATETIME
 @inline _datepattern(::Nothing, ::Type{Dates.Time}) = ISO_TIME
 @inline _datepattern(fmt::AbstractString, ::Type) = _cachedpattern(fmt)
-@inline _datepattern(fmt::Dates.DateFormat, ::Type) =
-    fmt.locale === Dates.ENGLISH ? _englishpattern(fmt) : _cachedpattern(fmt)
+@inline _datepattern(fmt::Dates.DateFormat, ::Type) = _translatedpattern(fmt)
 @inline _datepattern(p::DatePattern, ::Type) = p
 
 @inline _todates(::Type{Dates.Date}, c::CivilParts) = todate(c)
 @inline _todates(::Type{Dates.DateTime}, c::CivilParts) = todatetime(c)
 @inline _todates(::Type{Dates.Time}, c::CivilParts) = totime(c)
 
-# Keep the dominant default shapes out of the generic pattern interpreter.
-# `parsecivil` retains the same fast paths for kernel callers, but reaching it
-# through an abstract DatePattern argument costs more than parsing the fixed
-# ISO fields themselves.
-@inline function _dateparts(::Type{Dates.Date}, buf, i, j, ::Nothing)
-    if j - i == 9
-        c, rc = parseiso10(buf, i)
-        rc == RC_OK && return (c, rc)
-    end
-    return parsecivil(buf, i, j, ISO_DATE)
-end
-@inline function _dateparts(::Type{Dates.DateTime}, buf, i, j, ::Nothing)
-    n = j - i + 1
-    if n == 19
-        c, rc = parseiso19(buf, i)
-        rc == RC_OK && return (c, rc)
-    elseif 21 <= n <= 29
-        c, rc = parseiso19frac(buf, i, j)
-        rc == RC_OK && return (c, rc)
-    end
-    return parsecivil(buf, i, j, ISO_DATETIME)
-end
-@inline function _dateparts(::Type{Dates.Time}, buf, i, j, ::Nothing)
-    n = j - i + 1
-    if n == 8
-        c, rc = parseiso8(buf, i)
-        rc == RC_OK && return (c, rc)
-    elseif 10 <= n <= 18
-        c, rc = parseiso8frac(buf, i, j)
-        rc == RC_OK && return (c, rc)
-    end
-    return parsecivil(buf, i, j, ISO_TIME)
-end
-@inline function _dateparts(::Type{T}, buf, i, j, pat::DatePattern) where {T <: Dates.TimeType}
-    if pat.fixed.nbytes != 0
-        c, rc = _parsefixeddate(buf, i, j, pat)
-        rc == RC_OK && return (c, rc)
-    end
-    # Fixed parsing deliberately falls through on failure. The interpreter
-    # accepts cases such as a signed fixed-width year and remains the single
-    # source of truth for every non-fixed or locale-aware pattern.
-    return _interpretcivil(buf, i, j, pat)
-end
+@inline _civilvalidation(::Type{Dates.Date}) = _HAS_DATE
+@inline _civilvalidation(::Type{Dates.DateTime}) = _HAS_DATE | _HAS_TIME
+@inline _civilvalidation(::Type{Dates.Time}) = _HAS_TIME
+
 @inline _dateparts(::Type{T}, buf, i, j, dateformat) where {T <: Dates.TimeType} =
-    _dateparts(T, buf, i, j, _datepattern(dateformat, T))
+    _parsecivilvalidated(buf, i, j, _datepattern(dateformat, T), _civilvalidation(T))
 
 @inline function _tryparsedate(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int, dateformat,
                                ::Val{Throw}) where {T <: Dates.TimeType, Throw}
+    if i > j
+        Throw || return nothing
+        throw(ArgumentError("cannot parse \"\" as $T" *
+                            (dateformat === nothing ? "" :
+                             " with format $(repr(dateformat))")))
+    end
     c, rc = _dateparts(T, buf, i, j, dateformat)
     rc == RC_OK && return _todates(T, c)
     Throw || return nothing
     throw(ArgumentError("cannot parse \"$(_spanstring(buf, i, j))\" as $T" *
                         (dateformat === nothing ? "" : " with format $(repr(dateformat))")))
+end
+
+# Large DateFormat types resolve to the same pointer-sized DatePattern. Keep
+# execution behind one type-erased plan barrier so inference does not rebuild
+# the civil executor for every tuple-shaped DateFormat type.
+Base.@constprop :none @noinline function _tryparsedateruntime(
+        ::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
+        pattern::DatePattern) where {T <: Dates.TimeType}
+    return _tryparsedate(T, buf, i, j, pattern, Val(false))
+end
+
+@noinline function _throwdateformatfailure(::Type{T}, buf::AbstractVector{UInt8},
+                                           i::Int, j::Int,
+                                           dateformat::Dates.DateFormat) where {T <: Dates.TimeType}
+    Base.@nospecialize dateformat
+    throw(ArgumentError("cannot parse \"$(_spanstring(buf, i, j))\" as $T" *
+                        " with format $(repr(dateformat))"))
 end
 
 # --- dispatch: the public functions -------------------------------------------------------
@@ -628,8 +710,9 @@ Keywords:
   * `decimal`   floats: the decimal separator character (default `'.'`)
   * `groupmark` numbers: a digit-group separator to ignore (`1,000,000`)
   * `rounding`  `BigFloat`: a supported `RoundingMode` (current MPFR mode by default)
-  * `trues`/`falses`  Bool: nonempty replacement spelling lists (`["yes"]`, `["no"]`)
-  * `dateformat` Date/DateTime/Time: a format string or `Dates.DateFormat`
+  * `trues`/`falses`  Bool: replacement lists of nonempty spellings (`["yes"]`, `["no"]`)
+  * `dateformat` Date/DateTime/Time: a format string, `Dates.DateFormat`, or
+                 compiled `Parsers.DatePattern`
 
 Supported `T`: `Int8`…`Int128`, `UInt8`…`UInt128`, `Bool`, `Float16`,
 `Float32`, `Float64`, `BigInt`, `BigFloat`, `Base.UUID`, `Date`, `DateTime`,
@@ -722,13 +805,23 @@ end
                        base=nothing, groupmark=nothing) where {T <: _INTS}
     checkbounds(buf, first:last)
     bytes = _bytes(buf)
-    return _tryparseint(T, bytes, Int(first), Int(last), base, groupmark, Val(true))::T
+    i, j = Int(first), Int(last)
+    if _needsindexwindow(j)
+        window, i, j = _indexwindow(bytes, i, j)
+        return _tryparseint(T, window, i, j, base, groupmark, Val(true))::T
+    end
+    return _tryparseint(T, bytes, i, j, base, groupmark, Val(true))::T
 end
 @inline function tryparse(::Type{T}, buf::AbstractVector{UInt8}, first::Integer, last::Integer;
                           base=nothing, groupmark=nothing) where {T <: _INTS}
     checkbounds(buf, first:last)
     bytes = _bytes(buf)
-    return _tryparseint(T, bytes, Int(first), Int(last), base, groupmark, Val(false))
+    i, j = Int(first), Int(last)
+    if _needsindexwindow(j)
+        window, i, j = _indexwindow(bytes, i, j)
+        return _tryparseint(T, window, i, j, base, groupmark, Val(false))
+    end
+    return _tryparseint(T, bytes, i, j, base, groupmark, Val(false))
 end
 
 # Fixed-width floats need the same concrete wrapper on Julia 1.10. Keeping the
@@ -738,7 +831,7 @@ end
     GC.@preserve s begin
         buf = _bytes(s)
         return _tryparsefloat(T, buf, 1, length(buf), _decimalbyte(decimal),
-                              groupmark, Val(true))::T
+                              groupmark, Val(true), Val(true))::T
     end
 end
 @inline function tryparse(::Type{T}, s::Union{AbstractString, AbstractVector{UInt8}};
@@ -746,52 +839,160 @@ end
     GC.@preserve s begin
         buf = _bytes(s)
         return _tryparsefloat(T, buf, 1, length(buf), _decimalbyte(decimal),
-                              groupmark, Val(false))
+                              groupmark, Val(false), Val(true))
     end
 end
 @inline function parse(::Type{T}, buf::AbstractVector{UInt8}, first::Integer, last::Integer;
                        decimal::Char='.', groupmark=nothing) where {T <: _FLOATS}
     checkbounds(buf, first:last)
     bytes = _bytes(buf)
-    return _tryparsefloat(T, bytes, Int(first), Int(last), _decimalbyte(decimal),
-                          groupmark, Val(true))::T
+    i, j = Int(first), Int(last)
+    if _needsindexwindow(j)
+        window, i, j = _indexwindow(bytes, i, j)
+        return _tryparsefloat(T, window, i, j, _decimalbyte(decimal),
+                              groupmark, Val(true))::T
+    end
+    return _tryparsefloat(T, bytes, i, j, _decimalbyte(decimal), groupmark,
+                          Val(true))::T
 end
 @inline function tryparse(::Type{T}, buf::AbstractVector{UInt8}, first::Integer, last::Integer;
                           decimal::Char='.', groupmark=nothing) where {T <: _FLOATS}
     checkbounds(buf, first:last)
     bytes = _bytes(buf)
-    return _tryparsefloat(T, bytes, Int(first), Int(last), _decimalbyte(decimal),
-                          groupmark, Val(false))
+    i, j = Int(first), Int(last)
+    if _needsindexwindow(j)
+        window, i, j = _indexwindow(bytes, i, j)
+        return _tryparsefloat(T, window, i, j, _decimalbyte(decimal),
+                              groupmark, Val(false))
+    end
+    return _tryparsefloat(T, bytes, i, j, _decimalbyte(decimal), groupmark,
+                          Val(false))
 end
 
-# Date and time targets also need a concrete keyword wrapper on Julia 1.10.
-# Keep the reusable DatePattern path visible to inference so compiled fixed
-# formats can reach their direct field readers without a generic keyword splat.
+# Date and time targets need concrete keyword wrappers on Julia 1.10. Keep the
+# keyword sorter shallow. DateFormat translation selects its compiled plan;
+# execution then crosses a bounded positional barrier.
+
+Base.@constprop :none @noinline function _executedateplan(
+        ::Type{T}, s, pattern::DatePattern) where {T <: Dates.TimeType}
+    GC.@preserve s begin
+        buf = _bytes(s)
+        return _tryparsedateruntime(T, buf, 1, length(buf), pattern)
+    end
+end
+
+@noinline function _throwdateformatwhole(::Type{T}, s,
+                                         dateformat::Dates.DateFormat) where
+                                         {T <: Dates.TimeType}
+    Base.@nospecialize dateformat
+    GC.@preserve s begin
+        buf = _bytes(s)
+        return _throwdateformatfailure(T, buf, 1, length(buf), dateformat)
+    end
+end
+
+Base.@constprop :none @noinline function _executedatespanplan(
+        ::Type{T}, buf::AbstractVector{UInt8}, first::Integer, last::Integer,
+        pattern::DatePattern) where {T <: Dates.TimeType}
+    bytes = _bytes(buf)
+    i, j = Int(first), Int(last)
+    if _needsindexwindow(j)
+        window, i, j = _indexwindow(bytes, i, j)
+        return _tryparsedateruntime(T, window, i, j, pattern)
+    end
+    return _tryparsedateruntime(T, bytes, i, j, pattern)
+end
+
+@generated function _parsedatewhole(::Type{T},
+                                    s::S, dateformat::F,
+                                    ::Val{Throw}) where
+                                    {T <: Dates.TimeType,
+                                     S <: Union{AbstractString, AbstractVector{UInt8}},
+                                     F, Throw}
+    if F <: Dates.DateFormat
+        resolve = :(_datepattern(dateformat, T))
+        execute = :(_executedateplan(T, s, $resolve))
+        Throw || return execute
+        return quote
+            value = $execute
+            value === nothing && _throwdateformatwhole(T, s, dateformat)
+            return value::T
+        end
+    end
+    return quote
+        GC.@preserve s begin
+            buf = _bytes(s)
+            return _tryparsedate(T, buf, 1, length(buf), dateformat,
+                                 Val(Throw))
+        end
+    end
+end
+
 @inline function parse(::Type{T}, s::Union{AbstractString, AbstractVector{UInt8}};
                        dateformat=nothing) where {T <: Dates.TimeType}
-    GC.@preserve s begin
-        buf = _bytes(s)
-        return _tryparsedate(T, buf, 1, length(buf), dateformat, Val(true))::T
-    end
+    return _parsedatewhole(T, s, dateformat, Val(true))::T
 end
+
 @inline function tryparse(::Type{T}, s::Union{AbstractString, AbstractVector{UInt8}};
                           dateformat=nothing) where {T <: Dates.TimeType}
-    GC.@preserve s begin
-        buf = _bytes(s)
-        return _tryparsedate(T, buf, 1, length(buf), dateformat, Val(false))
+    return _parsedatewhole(T, s, dateformat, Val(false))
+end
+
+@generated function _parsedatespan(::Type{T}, buf::B, first::I, last::J,
+                                   dateformat::F, ::Val{Throw}) where
+                                   {T <: Dates.TimeType,
+                                    B <: AbstractVector{UInt8}, I <: Integer,
+                                    J <: Integer, F, Throw}
+    isformat = F <: Dates.DateFormat
+    resolve = isformat ?
+              :(_datepattern(dateformat, T)) : nothing
+    if isformat
+        execute = :(_executedatespanplan(T, buf, first, last, pattern))
+        Throw || return quote
+            checkbounds(buf, first:last)
+            pattern = $resolve
+            return $execute
+        end
+        return quote
+            checkbounds(buf, first:last)
+            pattern = $resolve
+            value = $execute
+            if value === nothing
+                bytes = _bytes(buf)
+                i, j = Int(first), Int(last)
+                if _needsindexwindow(j)
+                    window, i, j = _indexwindow(bytes, i, j)
+                    _throwdateformatfailure(T, window, i, j, dateformat)
+                end
+                _throwdateformatfailure(T, bytes, i, j, dateformat)
+            end
+            return value::T
+        end
+    end
+    directvalue = :(_tryparsedate(T, bytes, i, j, dateformat, Val(Throw)))
+    windowvalue = :(_tryparsedate(T, window, i, j, dateformat, Val(Throw)))
+    return quote
+        checkbounds(buf, first:last)
+        bytes = _bytes(buf)
+        i, j = Int(first), Int(last)
+        if _needsindexwindow(j)
+            window, i, j = _indexwindow(bytes, i, j)
+            return $windowvalue
+        end
+        return $directvalue
     end
 end
-@inline function parse(::Type{T}, buf::AbstractVector{UInt8}, first::Integer, last::Integer;
+
+@inline function parse(::Type{T}, buf::AbstractVector{UInt8},
+                       first::Integer, last::Integer;
                        dateformat=nothing) where {T <: Dates.TimeType}
-    checkbounds(buf, first:last)
-    bytes = _bytes(buf)
-    return _tryparsedate(T, bytes, Int(first), Int(last), dateformat, Val(true))::T
+    return _parsedatespan(T, buf, first, last, dateformat, Val(true))::T
 end
-@inline function tryparse(::Type{T}, buf::AbstractVector{UInt8}, first::Integer, last::Integer;
+
+@inline function tryparse(::Type{T}, buf::AbstractVector{UInt8},
+                          first::Integer, last::Integer;
                           dateformat=nothing) where {T <: Dates.TimeType}
-    checkbounds(buf, first:last)
-    bytes = _bytes(buf)
-    return _tryparsedate(T, bytes, Int(first), Int(last), dateformat, Val(false))
+    return _parsedatespan(T, buf, first, last, dateformat, Val(false))
 end
 
 # whole-input forms: hold the source alive across the zero-copy byte view
@@ -813,14 +1014,26 @@ end
 function parse(::Type{T}, buf::AbstractVector{UInt8}, first::Integer, last::Integer; kw...) where {T}
     checkbounds(buf, first:last)
     bytes = _bytes(buf)
-    return (isempty(kw) ? _dispatchdefault(T, bytes, Int(first), Int(last), Val(true)) :
-                          _dispatch(T, bytes, Int(first), Int(last), Val(true); kw...))::T
+    i, j = Int(first), Int(last)
+    if _needsindexwindow(j)
+        window, i, j = _indexwindow(bytes, i, j)
+        return (isempty(kw) ? _dispatchdefault(T, window, i, j, Val(true)) :
+                              _dispatch(T, window, i, j, Val(true); kw...))::T
+    end
+    return (isempty(kw) ? _dispatchdefault(T, bytes, i, j, Val(true)) :
+                          _dispatch(T, bytes, i, j, Val(true); kw...))::T
 end
 function tryparse(::Type{T}, buf::AbstractVector{UInt8}, first::Integer, last::Integer; kw...) where {T}
     checkbounds(buf, first:last)
     bytes = _bytes(buf)
-    return isempty(kw) ? _dispatchdefault(T, bytes, Int(first), Int(last), Val(false)) :
-                         _dispatch(T, bytes, Int(first), Int(last), Val(false); kw...)
+    i, j = Int(first), Int(last)
+    if _needsindexwindow(j)
+        window, i, j = _indexwindow(bytes, i, j)
+        return isempty(kw) ? _dispatchdefault(T, window, i, j, Val(false)) :
+                             _dispatch(T, window, i, j, Val(false); kw...)
+    end
+    return isempty(kw) ? _dispatchdefault(T, bytes, i, j, Val(false)) :
+                         _dispatch(T, bytes, i, j, Val(false); kw...)
 end
 
 # --- parsenext: the tokenizer primitive ---------------------------------------
@@ -832,241 +1045,163 @@ Parse the longest well-formed value of `T` that starts at `bytes[pos]`.
 `nextpos` is the first byte not consumed. `code` is `RC_OK`, `RC_INVALID`,
 `RC_OVERFLOW`, or `RC_UNDERFLOW`; range tokens are consumed and retain the
 kernel's range value. No whitespace is skipped.
+If a token consumes byte `typemax(Int)`, the one-past `nextpos` cannot be
+represented and the function throws `OverflowError`.
+
+Token recognition and conversion state advance together. The implementation
+does not first scan a token boundary and then call a whole-value parser on the
+same span.
 
 The supported targets are the integer types, `Float16`/`Float32`/`Float64`,
 `BigInt`, `BigFloat`, and `Bool`. Their `base`, radix-prefix, `decimal`,
-`groupmark`, and `trues`/`falses` grammar rules match the whole-input parsers.
-Custom Bool lists replace the default spellings. `BigFloat` tokenization uses
-the bounded low-level kernel and accepts its `RoundingMode` values. It reports
-values outside that kernel's documented decimal prove-out range with a range
-code instead of using the public whole-input MPFR fallback.
+`groupmark`, and `trues`/`falses` rules match the corresponding package
+grammars. Custom Bool lists replace the default spellings. `BigFloat`
+tokenization uses the bounded low-level decimal, hexadecimal, and special-value
+grammar and accepts its `RoundingMode` values. It reports values outside that
+kernel's documented decimal prove-out range with a range code. It does not
+accept MPFR-only spellings handled by public whole-value parsing.
 """
-function parsenext(::Type{T}, buf::AbstractVector{UInt8}, pos::Integer,
-                   last::Integer; kw...) where {T}
+@inline function _prefixbounds(buf::AbstractVector{UInt8}, pos::Integer,
+                               last::Integer)
     b = _bytes(buf)
     (typemin(Int) <= pos <= typemax(Int) &&
      typemin(Int) <= last <= typemax(Int)) ||
         throw(BoundsError(b, pos:last))
     i, j = Int(pos), Int(last)
     n = length(b)
-    ((i <= j && 1 <= i && j <= n) || (i == n + 1 && j == n)) ||
+    nonempty = i <= j && 1 <= i && j <= n
+    emptyend = i > j && j == n && i > 0 && i - 1 == n
+    (nonempty || emptyend) ||
         throw(BoundsError(b, i:j))
-    i > j && return (_zero(T), i, RC_INVALID)
-    stop = _tokenend(T, b, i, j; kw...)
-    stop < i && return (_zero(T), i, RC_INVALID)
-    return _nextvalue(T, b, i, stop; kw...)
+    return b, i, j
 end
 
-_zero(::Type{T}) where {T <: Number} = zero(T)
-_zero(::Type{Bool}) = false
-_zero(::Type{T}) where {T} = nothing
+# Prefix kernels use an ordinary `Int` as their cursor and therefore need room
+# for bounded lookahead plus one index after the input span. Very high public
+# spans are rebased to a window that starts near `typemin(Int)` with bounded
+# low-side guard space. This keeps every internal index and lookahead
+# representable and leaves normal one-based hot paths unchanged. Position state
+# distinguishes a real index zero from its no-position marker. The public result
+# is translated back once. Consuming the final addressable byte has no
+# representable `nextpos`, so report that fact instead of wrapping the cursor.
+@noinline _prefixendoverflow() =
+    throw(OverflowError("parsenext consumed byte at typemax(Int); nextpos is not representable"))
 
-@inline _validdigit(b::UInt8, base::Int) = begin
-    d = _digitvalue(b, base)
-    d != 0xff && d < base
+@inline function _restoreprefix(window::_IndexWindow, result)
+    value, nextpos, code = result
+    offset = nextpos - _INDEX_WINDOW_FIRST
+    0 <= offset <= window.len || _prefixendoverflow()
+    offset <= typemax(Int) - window.origin || _prefixendoverflow()
+    return (value, window.origin + offset, code)
 end
 
-# Return the first byte after a digit run and whether at least one digit was
-# consumed. A group mark is consumed only when it is between two valid digits.
-@inline function _scandigits(buf, k::Int, j::Int, base::Int, gm)
-    saw = false
-    @inbounds while k <= j
-        if _validdigit(buf[k], base)
-            saw = true
-            k += 1
-        elseif gm !== nothing && saw && buf[k] == gm && k < j &&
-               _validdigit(buf[k + 1], base)
-            k += 1
-        else
-            break
-        end
+@inline function _runprefix(f::F, b::AbstractVector{UInt8}, i::Int,
+                            j::Int) where {F}
+    if _needsindexwindow(j)
+        window, first, final = _indexwindow(b, i, j)
+        return _restoreprefix(window, f(window, first, final))
     end
-    return k, saw
+    return f(b, i, j)
 end
 
-# Integer scanner, including the sign-before-prefix shape that the exact-span
-# kernel receives through `parseprefixedint`.
-function _tokenend(::Type{T}, buf, i::Int, j::Int; base=nothing,
-                   groupmark=nothing) where {T <: Union{_INTS, BigInt}}
-    base = _normalizebase(base)
-    @inbounds if T <: _UNSIGNED &&
-                 (buf[i] == UInt8('-') || buf[i] == UInt8('+'))
-        return i - 1
-    end
-    dstart, b, prefixed = _intprefix(buf, i, j, base)
-    gm = _intgroupbyte(groupmark, b)
-    k = prefixed ? dstart : i
-    @inbounds if !prefixed && k <= j &&
-                 (buf[k] == UInt8('-') || buf[k] == UInt8('+'))
-        k += 1
-    end
-    k, saw = _scandigits(buf, k, j, b, gm)
-    return saw ? k - 1 : i - 1
+# Keep the rare high-index source type out of the normal fixed-float
+# specialization. Passing both source types through the higher-order
+# `_runprefix` seam prevents Julia from inlining the short decimal path.
+@noinline function _parsenextfloatwindow(::Type{T},
+                                         b::B, i::Int, j::Int,
+                                         decimal::UInt8, groupmark::G) where
+                                         {T <: _FLOATS,
+                                          B <: AbstractVector{UInt8}, G}
+    window, first, final = _indexwindow(b, i, j)
+    result = _parsefloatprefix(T, window, first, final, decimal, groupmark)
+    return _restoreprefix(window, result)
 end
 
-@inline function _scanhexdigits(buf, k::Int, j::Int)
-    saw = false
-    @inbounds while k <= j
-        b = buf[k]
-        d = b - UInt8('0')
-        ishex = d <= 0x09 || (_lower(b) - UInt8('a')) <= 0x05
-        ishex || break
-        saw = true
-        k += 1
-    end
-    return k, saw
+function parsenext(::Type{T}, buf::AbstractVector{UInt8}, pos::Integer,
+                   last::Integer; kw...) where {T}
+    _prefixbounds(buf, pos, last)
+    throw(ArgumentError("parsenext does not support $T"))
 end
 
-function _tokenendhex(buf, i::Int, k::Int, j::Int)
-    @inbounds (k + 1 <= j && buf[k] == UInt8('0') &&
-               _lower(buf[k + 1]) == UInt8('x')) || return i - 1
-    k += 2
-    k, sawint = _scanhexdigits(buf, k, j)
-    sawfrac = false
-    @inbounds if k <= j && buf[k] == UInt8('.')
-        k += 1
-        k, sawfrac = _scanhexdigits(buf, k, j)
+function parsenext(::Type{T}, buf::AbstractVector{UInt8}, pos::Integer,
+                   last::Integer; base=nothing,
+                   groupmark=nothing) where {T <: _INTS}
+    b, i, j = _prefixbounds(buf, pos, last)
+    i > j && return (zero(T), i, RC_INVALID)
+    return _runprefix(b, i, j) do source, first, final
+        _parseintprefix(T, source, first, final, base, groupmark)
     end
-    (sawint || sawfrac) || return i - 1
-    @inbounds if k <= j && _lower(buf[k]) == UInt8('p')
-        e = k + 1
-        e <= j && (buf[e] == UInt8('-') || buf[e] == UInt8('+')) && (e += 1)
-        estart = e
-        while e <= j && (buf[e] - UInt8('0')) <= 0x09
-            e += 1
-        end
-        e > estart && (k = e)  # incomplete p/sign stays outside the token
-    end
-    return k - 1
 end
 
-function _tokenend(::Type{T}, buf, i::Int, j::Int; decimal::Char='.',
-                   groupmark=nothing) where {T <: _FLOATS}
-    return _tokenendfloat(T, buf, i, j, decimal, groupmark)
-end
-function _tokenend(::Type{BigFloat}, buf, i::Int, j::Int; decimal::Char='.',
-                   groupmark=nothing,
-                   rounding::RoundingMode=Base.Rounding.rounding(BigFloat))
-    # Validate even when the token is exact; this keeps scanner and parser
-    # keyword behavior identical.
-    _roundup(rounding, false, false, false, false)
-    return _tokenendfloat(BigFloat, buf, i, j, decimal, groupmark)
+function parsenext(::Type{BigInt}, buf::AbstractVector{UInt8}, pos::Integer,
+                   last::Integer; base=nothing, groupmark=nothing)
+    b, i, j = _prefixbounds(buf, pos, last)
+    i > j && return (BigInt(0), i, RC_INVALID)
+    return _runprefix(b, i, j) do source, first, final
+        _parsebigintprefix(source, first, final, base, groupmark)
+    end
 end
 
-function _tokenendfloat(::Type{T}, buf, i::Int, j::Int, decimal::Char,
-                        groupmark) where {T}
+@inline function parsenext(::Type{T}, buf::AbstractVector{UInt8}, pos::Integer,
+                           last::Integer; decimal::Char='.',
+                           groupmark=nothing) where {T <: _FLOATS}
+    b, i, j = _prefixbounds(buf, pos, last)
+    i > j && return (zero(T), i, RC_INVALID)
     dec = _decimalbyte(decimal)
-    gm = _floatgroupbyte(groupmark, dec)
-    k = i
-    @inbounds if buf[k] == UInt8('-') || buf[k] == UInt8('+')
-        k += 1
-    end
-    k > j && return i - 1
-    @inbounds if _lower(buf[k]) == UInt8('i') || _lower(buf[k]) == UInt8('n')
-        for len in (8, 3)
-            k + len - 1 <= j || continue
-            _, ok = _matchspecial(buf, i, k + len - 1)
-            ok && return k + len - 1
-        end
-        return i - 1
-    end
-    @inbounds if k + 1 <= j && buf[k] == UInt8('0') &&
-                 _lower(buf[k + 1]) == UInt8('x')
-        return _tokenendhex(buf, i, k, j)
-    end
-    k, sawint = _scandigits(buf, k, j, 10, gm)
-    sawfrac = false
-    @inbounds if k <= j && buf[k] == dec
-        k += 1
-        k, sawfrac = _scandigits(buf, k, j, 10, nothing)
-    end
-    (sawint || sawfrac) || return i - 1
-    @inbounds if k <= j && _lower(buf[k]) == UInt8('e')
-        e = k + 1
-        e <= j && (buf[e] == UInt8('-') || buf[e] == UInt8('+')) && (e += 1)
-        estart = e
-        while e <= j && (buf[e] - UInt8('0')) <= 0x09
-            e += 1
-        end
-        e > estart && (k = e)
-    end
-    return k - 1
+    _needsindexwindow(j) &&
+        return _parsenextfloatwindow(T, b, i, j, dec, groupmark)
+    return _parsefloatprefix(T, b, i, j, dec, groupmark)
 end
 
-@inline function _sentinelprefix(buf, i::Int, j::Int, s::Vector{UInt8})
-    n = length(s)
-    (n > 0 && i + n - 1 <= j) || return false
-    @inbounds for k in 1:n
-        buf[i + k - 1] == s[k] || return false
-    end
-    return true
+# The omitted keyword uses a concrete marker. Resolving the current task-local
+# BigFloat mode through literal branches prevents the generated keyword wrapper
+# from widening it back to abstract `RoundingMode`.
+struct _DefaultBigFloatRounding end
+const _DEFAULT_BIGFLOAT_ROUNDING = _DefaultBigFloatRounding()
+
+@inline function _parsenextbigfloat(buf::AbstractVector{UInt8}, pos::Integer,
+                                    last::Integer, decimal::Char, groupmark,
+                                    ::_DefaultBigFloatRounding)
+    rounding = Base.Rounding.rounding(BigFloat)
+    rounding == RoundNearest &&
+        return _parsenextbigfloat(buf, pos, last, decimal, groupmark, RoundNearest)
+    rounding == RoundToZero &&
+        return _parsenextbigfloat(buf, pos, last, decimal, groupmark, RoundToZero)
+    rounding == RoundUp &&
+        return _parsenextbigfloat(buf, pos, last, decimal, groupmark, RoundUp)
+    rounding == RoundDown &&
+        return _parsenextbigfloat(buf, pos, last, decimal, groupmark, RoundDown)
+    rounding == RoundFromZero &&
+        return _parsenextbigfloat(buf, pos, last, decimal, groupmark, RoundFromZero)
+    throw(ArgumentError("unsupported BigFloat rounding mode: $rounding"))
 end
 
-@inline function _sentinelprefix(buf, i::Int, j::Int, s::AbstractString)
-    n = ncodeunits(s)
-    (n > 0 && i + n - 1 <= j) || return false
-    @inbounds for k in 1:n
-        buf[i + k - 1] == codeunit(s, k) || return false
+# Explicit rounding modes specialize directly at the same boundary.
+@inline function _parsenextbigfloat(buf::AbstractVector{UInt8}, pos::Integer,
+                                    last::Integer, decimal::Char, groupmark,
+                                    rounding::R) where {R <: RoundingMode}
+    b, i, j = _prefixbounds(buf, pos, last)
+    i > j && return (BigFloat(0), i, RC_INVALID)
+    dec = _decimalbyte(decimal)
+    return _runprefix(b, i, j) do source, first, final
+        _parsebigfloatprefix(source, first, final, dec, groupmark, rounding)
     end
-    return true
 end
 
-@inline _sentinellength(s::AbstractString) = ncodeunits(s)
-@inline _sentinellength(s) = length(s)
+function parsenext(::Type{BigFloat}, buf::AbstractVector{UInt8}, pos::Integer,
+                   last::Integer; decimal::Char='.', groupmark=nothing,
+                   rounding::Union{RoundingMode, _DefaultBigFloatRounding}=
+                       _DEFAULT_BIGFLOAT_ROUNDING)
+    return _parsenextbigfloat(buf, pos, last, decimal, groupmark, rounding)
+end
 
-function _tokenend(::Type{Bool}, buf, i::Int, j::Int; trues=nothing,
-                   falses=nothing)
+function parsenext(::Type{Bool}, buf::AbstractVector{UInt8}, pos::Integer,
+                   last::Integer; trues=nothing, falses=nothing)
+    b, i, j = _prefixbounds(buf, pos, last)
+    i > j && return (false, i, RC_INVALID)
     ts = _bytelist(trues)
     fs = _bytelist(falses)
-    if ts === nothing && fs === nothing
-        @inbounds (buf[i] == UInt8('1') || buf[i] == UInt8('0')) && return i
-        for len in (4, 5)
-            i + len - 1 <= j || continue
-            parsebool(buf, i, i + len - 1)[2] == RC_OK && return i + len - 1
-        end
-        return i - 1
+    return _runprefix(b, i, j) do source, first, final
+        _parseboolprefix(source, first, final, ts, fs)
     end
-    stop = i - 1
-    ts !== nothing && for s in ts
-        _sentinelprefix(buf, i, j, s) && (stop = max(stop, i + _sentinellength(s) - 1))
-    end
-    fs !== nothing && for s in fs
-        _sentinelprefix(buf, i, j, s) && (stop = max(stop, i + _sentinellength(s) - 1))
-    end
-    return stop
-end
-
-_tokenend(::Type{T}, buf, i::Int, j::Int; kw...) where {T} =
-    throw(ArgumentError("parsenext does not support $T"))
-
-function _nextvalue(::Type{T}, b, i::Int, stop::Int; base=nothing,
-                    groupmark=nothing) where {T <: _INTS}
-    v = _tryparseint(T, b, i, stop, base, groupmark, Val(false))
-    v === nothing && return (zero(T), stop + 1, RC_OVERFLOW)
-    return (v, stop + 1, RC_OK)
-end
-function _nextvalue(::Type{BigInt}, b, i::Int, stop::Int; base=nothing,
-                    groupmark=nothing)
-    v = _tryparsebig(BigInt, b, i, stop, base, groupmark, Val(false))
-    v === nothing && return (BigInt(0), i, RC_INVALID)
-    return (v, stop + 1, RC_OK)
-end
-function _nextvalue(::Type{T}, b, i::Int, stop::Int; decimal::Char='.',
-                    groupmark=nothing) where {T <: _FLOATS}
-    v, rc = _parsefloatspan(T, b, i, stop, _decimalbyte(decimal), groupmark)
-    rc == RC_INVALID && return (zero(T), i, RC_INVALID)
-    return (v, stop + 1, rc)
-end
-function _nextvalue(::Type{BigFloat}, b, i::Int, stop::Int; decimal::Char='.',
-                    groupmark=nothing,
-                    rounding::RoundingMode=Base.Rounding.rounding(BigFloat))
-    v, rc = _parsebigfloatspan(b, i, stop, _decimalbyte(decimal), groupmark, rounding)
-    rc == RC_INVALID && return (BigFloat(0), i, RC_INVALID)
-    return (v, stop + 1, rc)
-end
-function _nextvalue(::Type{Bool}, b, i::Int, stop::Int; trues=nothing,
-                    falses=nothing)
-    v = _tryparsebool(b, i, stop, _bytelist(trues), _bytelist(falses), Val(false))
-    v === nothing && return (false, i, RC_INVALID)
-    return (v, stop + 1, RC_OK)
 end

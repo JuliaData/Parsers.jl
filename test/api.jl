@@ -4,6 +4,22 @@
 # listed explicitly at the bottom.
 using Test, Random, Dates, Parsers
 
+@testset "documented API is public but not exported" begin
+    documented = (
+        :parse, :tryparse, :parsenext,
+        :RC_OK, :RC_INVALID, :RC_OVERFLOW, :RC_UNDERFLOW,
+        :parseint, :parsefloat, :parsebool, :parsebigint, :parsebigfloat,
+        :parseuuid, :parsecivil,
+        :compilepattern, :DatePattern, :CivilParts, :BigWork,
+    )
+    if VERSION >= v"1.11"
+        for name in documented
+            @test Base.ispublic(Parsers, name)
+            @test !Base.isexported(Parsers, name)
+        end
+    end
+end
+
 # (:ok, value) or (:err, ErrorType, message)
 outcome(f) = try; (:ok, f()); catch e; (:err, typeof(e), sprint(showerror, e)); end
 function sameasbase(T, s; kw...)
@@ -71,8 +87,8 @@ end
     end
 end
 
-@testset "Float32 is parsed natively (Base's strtof is the oracle)" begin
-    function float32oracle(text)
+@testset "Float32 is parsed natively with Base parity" begin
+    function float32expected(text)
         bytes = codeunits(text)
         _, rc = Parsers._parsefloatspan(Float32, bytes, 1, length(bytes), UInt8('.'),
                                         nothing)
@@ -89,13 +105,13 @@ end
         # decimal strings around every scale, incl. subnormals and halfway cases
         d = rand(rng, -50:40)
         s2 = string(rand(rng, 1:99999999)) * "e" * string(d)
-        okall &= isequal(Parsers.tryparse(Float32, s2), float32oracle(s2))
+        okall &= isequal(Parsers.tryparse(Float32, s2), float32expected(s2))
     end
     @test okall
     for s in ("1.17549435e-38", "1.1754942e-38", "1.4e-45", "7e-46", "7.006492e-46", "3.4028235e38",
               "3.4028236e38", "16777217", "16777216.5", "0.1", "1e-46", "1e39", "0x1p-149", "0x1p-150",
               "0x1.fffffep127", "0x1p128", "0.000000000000000000000000000000000000011754944")
-        @test isequal(Parsers.tryparse(Float32, s), float32oracle(s))
+        @test isequal(Parsers.tryparse(Float32, s), float32expected(s))
     end
 end
 
@@ -324,9 +340,50 @@ end
             value, rc = Parsers.parsefloat(Float16, source, 1, length(source))
             expectedbits = expected | (neg ? signmask(Float16) : 0)
             exhaustive16 &= rc == expectedrc && rawbits(Float16, value) == expectedbits
+            prefixed = vcat(source, UInt8(';'))
+            pvalue, nextpos, prc = Parsers.parsenext(Float16, prefixed, 1,
+                                                     length(prefixed))
+            exhaustive16 &= prc == expectedrc &&
+                            rawbits(Float16, pvalue) == expectedbits &&
+                            nextpos == length(source) + 1
         end
     end
     @test exhaustive16
+
+    # Whole String/CodeUnits calls use the fused Float16 scanner. Explicit
+    # byte spans and prefix parsing keep their span/token-boundary engines.
+    # All three paths must retain identical rounding and special precedence,
+    # including decimal bytes whose lowercase form begins Inf/NaN.
+    for (text, decimal) in (("1.00048828125", '.'),
+                            ("5.960464477539063e-8", '.'),
+                            ("1.5e2", '.'),
+                            ("i5", 'i'), ("I5", 'I'),
+                            ("n5", 'n'), ("N5", 'N'),
+                            ("inf", 'i'), ("Infinity", 'I'),
+                            ("nan", 'n'), ("NaN", 'N'))
+        bytes = codeunits(text)
+        decimalbyte = UInt8(decimal)
+        fused = Parsers._parsefloat16whole(bytes, 1, length(bytes), decimalbyte)
+        exact = Parsers.parsefloat(Float16, bytes, 1, length(bytes), decimalbyte)
+        @test isequal(fused, exact)
+        @test isequal(Parsers._parsefloatspan(Float16, bytes, 1, length(bytes),
+                                              decimalbyte, nothing, Val(true)),
+                      exact)
+
+        vector = collect(bytes)
+        @test isequal(Parsers.parsefloatwholepublic(Float16, vector, 1,
+                                                    length(vector), decimalbyte),
+                      exact)
+        padded = vcat(UInt8('x'), vector, UInt8('x'))
+        @test isequal(Parsers.parsefloat(Float16, padded, 2,
+                                        length(padded) - 1, decimalbyte),
+                      exact)
+        prefix = vcat(vector, UInt8(';'))
+        value, nextpos, rc = Parsers.parsenext(Float16, prefix, 1,
+                                               length(prefix); decimal)
+        @test isequal((value, rc), exact)
+        @test nextpos == length(vector) + 1
+    end
 
     # Sample Float16 midpoints at zero, subnormal, normal, binade-transition,
     # and overflow boundaries. Values inside the Float32 midpoint cell exercise

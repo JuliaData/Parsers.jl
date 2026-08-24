@@ -3,6 +3,10 @@
 # with the oracle on the accept-set; deliberate deltas are pinned explicitly.
 using Test, Random, Dates, Parsers
 
+const _ISO_DATE_ORACLE_FORMAT = DateFormat("yyyy-mm-dd")
+const _ISO_DATETIME_ORACLE_FORMAT = DateFormat("yyyy-mm-ddTHH:MM:SS")
+const _ISO_TIME_ORACLE_FORMAT = DateFormat("HH:MM:SS")
+
 @testset "civil: daysfromcivil vs Dates oracle" begin
     for y in (-4000, -1900, -400, -100, -4, -1, 0,
               1, 100, 1583, 1600, 1900, 1970, 2000, 2020, 2024, 2100, 2400, 9999)
@@ -17,7 +21,8 @@ using Test, Random, Dates, Parsers
     end
     @test okall
     # extremes and negative eras
-    for (y, m, d) in ((-100_000, 1, 1), (275_760, 9, 13), (typemax(Int32) ÷ 400 * 400 - 1, 12, 31))
+    for (y, m, d) in ((-100_000, 1, 1), (275_760, 9, 13),
+                      (typemax(Int64), 1, 1), (typemin(Int64), 1, 1))
         @test Parsers.daysfromcivil(y, m, d) == Dates.value(Date(y, m, d))
     end
 end
@@ -51,65 +56,96 @@ end
 end
 
 @testset "civil: fixed-width ISO fast-path differential" begin
-    # The fixed ISO kernels accept exactly the exact-width shape; the interpreter
-    # may also accept a signed or variable-width field. When the two differ, the
-    # generic fixed path must reject the input as well.
-    function checkfast(fast, pat, bytes)
+    # An accepted accelerator input must agree with Dates, which is independent
+    # of both the accelerator and the compiled-plan fallback. Copy before the
+    # String conversion because String(::Vector{UInt8}) takes its input buffer.
+    function checkdate(bytes)
         for pad in (0, 1, 7)
             buf = vcat(fill(UInt8(0xa5), pad), bytes, fill(UInt8(0x5a), 8))
-            i = pad + 1
-            j = i + length(bytes) - 1
-            f = fast(buf, i)
-            p = Parsers.parsecivil(buf, i, j, pat)
-            if f[2] == Parsers.RC_OK || p[2] != Parsers.RC_OK
-                @test f == p
-            else
-                @test Parsers._parsefixeddate(buf, i, j, pat)[2] == Parsers.RC_INVALID
+            civil, code = Parsers.parseiso10(buf, pad + 1)
+            if code == Parsers.RC_OK
+                expected = tryparse(Date, String(copy(bytes)),
+                                    _ISO_DATE_ORACLE_FORMAT)
+                @test expected !== nothing
+                @test todate(civil) == expected
+            end
+        end
+    end
+    function checkdatetime(bytes)
+        for pad in (0, 1, 7)
+            buf = vcat(fill(UInt8(0xa5), pad), bytes, fill(UInt8(0x5a), 8))
+            civil, code = Parsers.parseiso19(buf, pad + 1)
+            if code == Parsers.RC_OK
+                expected = tryparse(DateTime, String(copy(bytes)),
+                                    _ISO_DATETIME_ORACLE_FORMAT)
+                @test expected !== nothing
+                @test todatetime(civil) == expected
+            end
+        end
+    end
+    function checktime(bytes)
+        for pad in (0, 1, 7)
+            buf = vcat(fill(UInt8(0xa5), pad), bytes, fill(UInt8(0x5a), 8))
+            civil, code = Parsers.parseiso8(buf, pad + 1)
+            if code == Parsers.RC_OK
+                expected = tryparse(Time, String(copy(bytes)),
+                                    _ISO_TIME_ORACLE_FORMAT)
+                @test expected !== nothing
+                @test totime(civil) == expected
             end
         end
     end
 
     for s in ("0000-01-01", "9999-12-31", "2000-02-29", "1900-02-29",
               "2400-02-29", "2020-1-01x", "2020/01-01", "2020-01/01")
-        checkfast(Parsers.parseiso10, Parsers.ISO_DATE, b(s))
+        checkdate(b(s))
     end
     for s in ("2024-01-02T03:04:05", "2024-01-02 03:04:05",
               "2024-01-02t03:04:05", "1900-02-29T03:04:05")
-        checkfast(Parsers.parseiso19, Parsers.ISO_DATETIME, b(s))
+        checkdatetime(b(s))
     end
     for s in ("00:00:00", "23:59:59", "24:00:00")
-        checkfast(Parsers.parseiso8, Parsers.ISO_TIME, b(s))
+        checktime(b(s))
     end
     c, rc = Parsers.parseiso8(b("03:04:05"), 1)
     @test (c, rc) == (Parsers.CivilParts(1, 1, 1, 3, 4, 5, 0), Parsers.RC_OK)
 
     # Every one-byte mutation checks separators and every possible byte at each
     # digit position. This includes the UInt8-underflow cases '/' and 0xff.
-    for (fast, pat, base) in (
-        (Parsers.parseiso10, Parsers.ISO_DATE, b("2024-02-29")),
-        (Parsers.parseiso19, Parsers.ISO_DATETIME, b("2024-02-29T23:59:59")),
-        (Parsers.parseiso8, Parsers.ISO_TIME, b("23:59:59")),
-    )
-        for pos in eachindex(base), byte in UInt8(0):UInt8(255)
-            bytes = copy(base)
-            bytes[pos] = byte
-            checkfast(fast, pat, bytes)
-        end
+    datebytes = b("2024-02-29")
+    for pos in eachindex(datebytes), byte in UInt8(0):UInt8(255)
+        bytes = copy(datebytes)
+        bytes[pos] = byte
+        checkdate(bytes)
+    end
+    datetimebytes = b("2024-02-29T23:59:59")
+    for pos in eachindex(datetimebytes), byte in UInt8(0):UInt8(255)
+        bytes = copy(datetimebytes)
+        bytes[pos] = byte
+        checkdatetime(bytes)
+    end
+    timebytes = b("23:59:59")
+    for pos in eachindex(timebytes), byte in UInt8(0):UInt8(255)
+        bytes = copy(timebytes)
+        bytes[pos] = byte
+        checktime(bytes)
     end
 
     rng = MersenneTwister(0x15)
-    for (fast, pat, n) in ((Parsers.parseiso10, Parsers.ISO_DATE, 10),
-                           (Parsers.parseiso19, Parsers.ISO_DATETIME, 19),
-                           (Parsers.parseiso8, Parsers.ISO_TIME, 8))
-        for _ in 1:10_000
-            checkfast(fast, pat, rand(rng, UInt8, n))
-        end
+    for _ in 1:10_000
+        checkdate(rand(rng, UInt8, 10))
+    end
+    for _ in 1:10_000
+        checkdatetime(rand(rng, UInt8, 19))
+    end
+    for _ in 1:10_000
+        checktime(rand(rng, UInt8, 8))
     end
 end
 
 @testset "civil: fixed numeric DatePattern valid and invalid inputs" begin
     pattern = Parsers.compilepattern("yyyymmddHHMMSS")
-    @test pattern.fixed.nbytes == 14
+    @test !ismutable(pattern)
 
     source = b("xx20240229235958yy")
     civil, code = Parsers.parsecivil(source, 3, 16, pattern)
@@ -118,13 +154,9 @@ end
     @test todatetime(civil) == expected
     @test Parsers.parse(DateTime, "20240229235958"; dateformat=pattern) == expected
 
-    # Dates treats fractional fields as variable-width, so compilepattern does
-    # not normally select this internal fixed-subsecond path. Construct the
-    # fixed program directly to keep that optimized branch covered.
-    fractional_ops = copy(Parsers.compilepattern(DateFormat("yyyymmddHHMMSSsss")).ops)
-    fractional_ops[end] = Parsers.PatternOp(0x07, 0x03, true)
-    fractional_pattern = Parsers.DatePattern(fractional_ops, true, true)
-    @test fractional_pattern.fixed.nbytes == 17
+    # The natural three-digit spelling takes the fixed executor. Other valid
+    # widths fall through to the same plan's interpreter, as Dates requires.
+    fractional_pattern = Parsers.compilepattern(DateFormat("yyyymmddHHMMSSsss"))
     fractional, code = Parsers.parsecivil(b("20240229235958123"), 1, 17,
                                            fractional_pattern)
     @test code == Parsers.RC_OK
@@ -133,10 +165,12 @@ end
                         dateformat=fractional_pattern) == expected + Millisecond(123)
     @test Parsers.parsecivil(b("2024022923595812x"), 1, 17,
                               fractional_pattern)[2] == Parsers.RC_INVALID
-    @test Parsers.parsecivil(b("2024022923595812"), 1, 16,
-                              fractional_pattern)[2] == Parsers.RC_INVALID
-    @test Parsers.parsecivil(b("202402292359581234"), 1, 18,
-                              fractional_pattern)[2] == Parsers.RC_INVALID
+    fractional, code = Parsers.parsecivil(b("2024022923595812"), 1, 16,
+                                           fractional_pattern)
+    @test code == Parsers.RC_OK && fractional.nanosecond == 120_000_000
+    fractional, code = Parsers.parsecivil(b("202402292359581234"), 1, 18,
+                                           fractional_pattern)
+    @test code == Parsers.RC_OK && fractional.nanosecond == 123_400_000
 
     for text in (
         "20230229235958", # invalid leap day
@@ -185,13 +219,16 @@ end
         @test rc == Parsers.RC_OK && todate(c) == Date(2024, month, 2)
     end
     @test Parsers.parsecivil(b("Foo 02 2024"), 1, 11, p)[2] == Parsers.RC_INVALID
-    @test_throws ArgumentError Parsers.compilepattern("yyyy-Qq")
+    literal_pattern = Parsers.compilepattern("yyyy-Qq")
+    c, rc = Parsers.parsecivil(b("2024-Qq"), 1, 7, literal_pattern)
+    @test rc == Parsers.RC_OK && todate(c) == Date(2024, 1, 1)
     # 12-hour clock, AM/PM, and day names — Dates parity (adjusthour + the
     # 1..12 rule when AM/PM is present; day names validated, value ignored)
     let rng = MersenneTwister(4), okall = true
-        for f in ("yyyy-mm-dd I:MM p", "I:MM:SS p", "e, dd u yyyy", "E dd U yyyy HH:MM", "II:MM p", "e yyyy-mm-dd", "I p")
+        for (f, T) in (("yyyy-mm-dd I:MM p", DateTime), ("I:MM:SS p", Time),
+                       ("e, dd u yyyy", Date), ("E dd U yyyy HH:MM", DateTime),
+                       ("II:MM p", Time), ("e yyyy-mm-dd", Date), ("I p", Time))
             p = Parsers.compilepattern(f); df = DateFormat(f)
-            T = p.hasdate && p.hastime ? DateTime : p.hasdate ? Date : Time
             for _ in 1:3_000
                 dt = DateTime(rand(rng, 1900:2100), rand(rng, 1:12), rand(rng, 1:28),
                               rand(rng, 0:23), rand(rng, 0:59), rand(rng, 0:59))
@@ -214,13 +251,21 @@ end
         c, _ = Parsers.parsecivil(b("12 AM"), 1, 5, Parsers.compilepattern("I p")); @test c.hour == 0
         c, _ = Parsers.parsecivil(b("12 PM"), 1, 5, Parsers.compilepattern("I p")); @test c.hour == 12
         c, _ = Parsers.parsecivil(b("7 pm"), 1, 4, Parsers.compilepattern("I p")); @test c.hour == 19
-        # a lone 'e' pattern is neither a date nor a time
-        pe = Parsers.compilepattern("e"); @test !pe.hasdate && !pe.hastime
+        # A day name is validated but does not alter the default civil value.
+        c, rc = Parsers.parsecivil(b("Mon"), 1, 3, Parsers.compilepattern("e"))
+        @test rc == Parsers.RC_OK && c == Parsers.CivilParts()
     end
-    @test_throws ArgumentError Parsers.compilepattern("y"^256)
-    # Large year fields are invalid data, not conversion exceptions.
+    # Greedy fields use a width sentinel. Extended bytecode widths preserve
+    # fixed DateFormat runs above 255 characters.
+    @test Parsers.compilepattern("y"^256 * "-mm-dd") isa Parsers.DatePattern
+    widefixed = Parsers.compilepattern("y"^256 * "m")
+    widevalue = b("0"^255 * "11")
+    cfixed, rcfixed = Parsers.parsecivil(widevalue, 1, length(widevalue), widefixed)
+    @test rcfixed == Parsers.RC_OK && cfixed == Parsers.CivilParts()
+    # Large year fields keep the full Int64 Dates input range.
     pwide = Parsers.compilepattern("yyyyyyyyyy")
-    @test Parsers.parsecivil(b("9999999999"), 1, 10, pwide)[2] == Parsers.RC_INVALID
+    cwide, rcwide = Parsers.parsecivil(b("9999999999"), 1, 10, pwide)
+    @test rcwide == Parsers.RC_OK && cwide.year == 9_999_999_999
     phuge = Parsers.compilepattern("y"^19)
     @test Parsers.parsecivil(b("9999999999999999999"), 1, 19, phuge)[2] == Parsers.RC_INVALID
     # differential against Dates for a spread of dates and formats
@@ -238,18 +283,74 @@ end
     end
 end
 
-@testset "civil: ISO fraction fast paths agree with parsecivil" begin
-    function checkfrac(fast, pat, bytes)
+@testset "civil: compiled numeric-delimited date executor" begin
+    cases = (("y/m/d", "24/2/9"), ("y/d/m", "24/9/2"),
+             ("m/y/d", "2/24/9"), ("m/d/y", "2/9/24"),
+             ("d/y/m", "9/24/2"), ("d/m/y", "9/2/24"))
+    for (format, text) in cases
+        pattern = Parsers.compilepattern(format)
+        @test pattern._storage.plan.executor == Parsers._EXECUTE_NUMERIC_DATE
+        bytes = b(text)
+        padded = [0xff; bytes; 0xfe]
+        for source in (text, codeunits(text), bytes, @view(padded[2:end-1]))
+            @test Parsers.parse(Date, source; dateformat=pattern) == Date(24, 2, 9)
+        end
+        @test Parsers.parse(Date, padded, 2, length(bytes) + 1;
+                            dateformat=pattern) == Date(24, 2, 9)
+        fast = Parsers.parsecivil(bytes, 1, length(bytes), pattern)
+        interpreted = Parsers._interpretcivil(bytes, 1, length(bytes), pattern._storage,
+                                               pattern._storage.plan.flags)
+        @test fast == interpreted
+    end
+
+    pattern = Parsers.compilepattern("y/m/d")
+    for text in ("2024/02/29", "+24/2/9", "-24/2/9",
+                 "000000000000000000000024/0002/0009",
+                 "-9223372036854775808/1/1", "9223372036854775807/1/1",
+                 "", "24-2-9", "24/2/9x", "24/13/1", "2023/2/29",
+                 "9223372036854775808/1/1")
+        bytes = b(text)
+        fast = Parsers.parsecivil(bytes, 1, length(bytes), pattern)
+        interpreted = Parsers._interpretcivil(bytes, 1, length(bytes), pattern._storage,
+                                               pattern._storage.plan.flags)
+        @test fast == interpreted
+    end
+    wide_natural = Parsers.compilepattern("y"^33 * "/m/d")
+    @test Parsers.parsecivil(UInt8[], 1, 0, wide_natural)[2] == Parsers.RC_INVALID
+end
+
+@testset "civil: ISO fraction fast paths agree with Dates" begin
+    datetimewhole = DateFormat("yyyy-mm-ddTHH:MM:SS")
+    timewhole = DateFormat("HH:MM:SS")
+
+    function fractionoracle(::Type{T}, bytes) where {T}
+        datetime = T === DateTime
+        wholeend = datetime ? 19 : 8
+        point = wholeend + 1
+        point < length(bytes) && bytes[point] == UInt8('.') || return nothing
+        whole = tryparse(T, String(bytes[1:wholeend]),
+                         datetime ? datetimewhole : timewhole)
+        whole === nothing && return nothing
+        fraction = tryparse(Int, String(bytes[point + 1:end]))
+        fraction === nothing && return nothing
+        ndigits = length(bytes) - point
+        1 <= ndigits <= 9 || return nothing
+        nanoseconds = fraction * Int(10)^(9 - ndigits)
+        return datetime ? whole + Millisecond(nanoseconds ÷ 1_000_000) :
+                          whole + Nanosecond(nanoseconds)
+    end
+
+    function checkfrac(fast::F, convert::C, ::Type{T},
+                       bytes::B) where {F, C, T, B}
         for pad in (0, 1, 7)
             buf = vcat(fill(UInt8(0xa5), pad), bytes, fill(UInt8(0x5a), 8))
             i = pad + 1
             j = i + length(bytes) - 1
-            f = fast(buf, i, j)
-            p = Parsers.parsecivil(buf, i, j, pat)
-            if f[2] == Parsers.RC_OK || p[2] != Parsers.RC_OK
-                @test f == p
-            else
-                @test Parsers._parsefixeddate(buf, i, j, pat)[2] == Parsers.RC_INVALID
+            civil, code = fast(buf, i, j)
+            if code == Parsers.RC_OK
+                expected = fractionoracle(T, bytes)
+                @test expected !== nothing
+                @test convert(civil) == expected
             end
         end
     end
@@ -257,18 +358,21 @@ end
               "2024-02-29T23:59:59.123456789", "2024-02-29T23:59:59.", "2024-02-29T23:59:59.x",
               "2024-02-29T23:59:59:123", "2024-02-29 23:59:59.123", "2023-02-29T23:59:59.123",
               "2024-02-29T24:00:00.123", "2024-02-29T23:59:59.1234567890")
-        checkfrac(Parsers.parseiso19frac, Parsers.ISO_DATETIME, b(s))
+        checkfrac(Parsers.parseiso19frac, todatetime, DateTime, b(s))
     end
     for s in ("23:59:59.7", "23:59:59.789", "23:59:59.789012345", "23:59:59.", "24:00:00.1",
               "23:59:59x1", "23:59:59.1234567890")
-        checkfrac(Parsers.parseiso8frac, Parsers.ISO_TIME, b(s))
+        checkfrac(Parsers.parseiso8frac, totime, Time, b(s))
     end
-    for (fast, pat, base) in ((Parsers.parseiso19frac, Parsers.ISO_DATETIME, b("2024-02-29T23:59:59.125")),
-                              (Parsers.parseiso8frac, Parsers.ISO_TIME, b("23:59:59.125")))
+    for (fast, convert, T, base) in (
+        (Parsers.parseiso19frac, todatetime, DateTime,
+         b("2024-02-29T23:59:59.125")),
+        (Parsers.parseiso8frac, totime, Time, b("23:59:59.125")),
+    )
         for pos in eachindex(base), byte in UInt8(0):UInt8(255)
             bytes = copy(base)
             bytes[pos] = byte
-            checkfrac(fast, pat, bytes)
+            checkfrac(fast, convert, T, bytes)
         end
     end
     @test Parsers.parse(DateTime, "2024-02-29T23:59:59.125") == DateTime(2024, 2, 29, 23, 59, 59, 125)
@@ -278,17 +382,43 @@ end
     @test Parsers.parse(Time, "23:59:59.000000001") == Time(23, 59, 59) + Nanosecond(1)
 end
 
-@testset "civil: DateFormat patterns take a fixed fast path, compiled once" begin
+@testset "civil: compiled plans own execution and caching" begin
+    invariant_pattern = Parsers.compilepattern("mm/dd/yyyy")
+    invariant_plan = getfield(getfield(invariant_pattern, :_storage), :plan)
+    @test !ismutable(invariant_pattern)
+    @test !ismutable(invariant_plan)
+    @test !ismutable(getfield(invariant_plan, :ops))
+    @test sizeof(typeof(invariant_pattern)) == sizeof(Ptr{Cvoid})
+    cached_string = Parsers._datepattern("mm/dd/yyyy", Date)
+    cached_substring = Parsers._datepattern(SubString("xmm/dd/yyyy", 2), Date)
+    @test getfield(cached_string, :_storage) ===
+          getfield(Parsers._datepattern("mm/dd/yyyy", Date), :_storage) ===
+          getfield(cached_substring, :_storage)
+    cached_format = DateFormat("mm/dd/yyyy")
+    @test getfield(Parsers._datepattern(cached_format, Date), :_storage) ===
+          getfield(Parsers._datepattern(cached_format, Date), :_storage)
+    threaded_patterns = Vector{typeof(invariant_pattern)}(undef, 64)
+    Threads.@threads for i in eachindex(threaded_patterns)
+        threaded_patterns[i] =
+            Parsers._datepattern("yyyy/mm/dd HH:MM:SS.s", DateTime)
+    end
+    threaded_storage = getfield(first(threaded_patterns), :_storage)
+    @test all(pattern -> getfield(pattern, :_storage) === threaded_storage,
+              threaded_patterns)
+
+    longformat = "yyyy" * repeat("-", 20) * "mm-dd"
+    longtext = "24" * repeat("-", 20) * "2-29"
+    longpattern = Parsers.compilepattern(longformat)
+    longplan = getfield(getfield(longpattern, :_storage), :plan)
+    @test ncodeunits(getfield(getfield(longplan, :ops), :code)) > 32
+    @test Parsers.parse(Date, longtext; dateformat=longpattern) ==
+          Date(longtext, DateFormat(longformat)) == Date(24, 2, 29)
+
     for (f, T) in (("mm/dd/yyyy", Date), ("yyyy-mm-dd HH:MM:SS", DateTime), ("dd.mm.yy", Date),
                    ("HH:MM", Time), ("yyyymmdd", Date), ("yyyy-mm-ddTHH:MM:SS.sss", DateTime))
         df = DateFormat(f)
         pat = Parsers.compilepattern(df)
-        @test pat.fixed.nbytes == ncodeunits(f)
-        @test Parsers._datepattern(df, T) === Parsers._datepattern(df, T)
-        @test Parsers._datepattern(f, T) === Parsers._datepattern(f, T)
-        interp = Parsers.DatePattern(pat.ops, pat.hasdate, pat.hastime, pat.months_abbr,
-                                     pat.months_full, pat.days_abbr, pat.days_full,
-                                     Parsers.FixedDatePattern())
+        @test !ismutable(pat)
         rng = MersenneTwister(7)
         okall = true
         for _ in 1:2_000
@@ -297,19 +427,16 @@ end
             x = T === Date ? Date(dt) : T === Time ? Time(dt) : dt
             s = Dates.format(x, df)
             bytes = b(s)
-            okall &= Parsers.parsecivil(bytes, 1, length(bytes), pat) ==
-                     Parsers.parsecivil(bytes, 1, length(bytes), interp)
+            civil, rc = Parsers.parsecivil(bytes, 1, length(bytes), pat)
+            value = rc == Parsers.RC_OK ?
+                    (T === Date ? todate(civil) : T === Time ? totime(civil) : todatetime(civil)) :
+                    nothing
+            okall &= value == T(s, df)
             okall &= Parsers.parse(T, s; dateformat=df) == T(s, df)
-            # a mutated byte must never let the fixed attempt disagree with the interpreter
-            m = copy(bytes)
-            m[rand(rng, eachindex(m))] = rand(rng, UInt8)
-            okall &= Parsers.parsecivil(m, 1, length(m), pat) == Parsers.parsecivil(m, 1, length(m), interp)
         end
         @test okall
     end
-    @test Parsers.compilepattern(DateFormat("U dd yyyy")).fixed.nbytes == 0
-    @test Parsers.compilepattern(DateFormat("I:MM p")).fixed.nbytes == 0
-    # Dates' variable widths still apply through the interpreter fallback
+    # Dates' variable widths still apply through the compiled numeric executor.
     df = DateFormat("mm/dd/yyyy")
     @test Parsers.parse(Date, "3/14/2021"; dateformat=df) == Date(2021, 3, 14)
     @test Parsers.parse(Date, "03/14/02021"; dateformat=df) == Date(2021, 3, 14)
@@ -320,11 +447,67 @@ end
     parsedateformat("03/14/2021", "mm/dd/yyyy")
     @test @allocated(parsedateformat("03/14/2021", "mm/dd/yyyy")) <= 16
     # other locales compile through the cache and keep their names
-    months = ["Month$(lpad(string(i), 2, '0'))" for i in 1:12]
-    locale = Dates.DateLocale(months, ["M$i" for i in 1:12], ["Day$i" for i in 1:7], ["D$i" for i in 1:7])
+    months = ["Alfa", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot",
+              "Golf", "Hotel", "India", "Juliett", "Kilo", "Lima"]
+    months_abbr = ["Ab", "Bc", "Cd", "De", "Ef", "Fg",
+                   "Gh", "Hi", "Ij", "Jk", "Kl", "Lm"]
+    weekdays = ["Mondayx", "Tuesdayx", "Wednesdayx", "Thursdayx",
+                "Fridayx", "Saturdayx", "Sundayx"]
+    weekdays_abbr = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
+    locale = Dates.DateLocale(months, months_abbr, weekdays, weekdays_abbr)
     localized = DateFormat("U dd yyyy", locale)
-    @test Parsers._datepattern(localized, Date) === Parsers._datepattern(localized, Date)
-    @test Parsers.parse(Date, "Month02 29 2024"; dateformat=localized) == Date(2024, 2, 29)
+    @test Dates.tryparse(Date, "Bravo 29 2024", localized) == Date(2024, 2, 29)
+    @test Parsers.parse(Date, "Bravo 29 2024"; dateformat=localized) == Date(2024, 2, 29)
+    @test getfield(Parsers._datepattern(localized, Date), :_storage) ===
+          getfield(Parsers._datepattern(localized, Date), :_storage)
+    parsedateformat("Bravo 29 2024", localized)
+    @test @allocated(parsedateformat("Bravo 29 2024", localized)) <= 16
+    localized_pattern = Parsers.compilepattern(localized)
+    parsedateformat("Bravo 29 2024", localized_pattern)
+    @test @allocated(parsedateformat("Bravo 29 2024", localized_pattern)) <= 16
+
+    unicode_months = copy(months)
+    unicode_months[2] = "Février"
+    unicode_locale = Dates.DateLocale(unicode_months, months_abbr, weekdays,
+                                      weekdays_abbr)
+    unicode_format = DateFormat("U dd yyyy", unicode_locale)
+    @test Parsers.parse(Date, "FÉVRIER 29 2024"; dateformat=unicode_format) ==
+          Date(2024, 2, 29)
+    unicode_pattern = Parsers.compilepattern(unicode_format)
+    parsedateformat("février 29 2024", unicode_pattern)
+    @test @allocated(parsedateformat("février 29 2024", unicode_pattern)) <= 16
+
+    # Numeric formats do not retain or key on unused locale name tables.
+    numeric_a = DateFormat("yyyy/mm/dd", locale)
+    numeric_b = DateFormat("yyyy/mm/dd", unicode_locale)
+    numeric_plan_a = Parsers._datepattern(numeric_a, Date)
+    numeric_plan_b = Parsers._datepattern(numeric_b, Date)
+    @test getfield(numeric_plan_a, :_storage) ===
+          getfield(numeric_plan_b, :_storage)
+
+    # A full locale-sensitive bucket replaces an old entry. The active value
+    # therefore reaches a stable cached plan instead of recompiling forever.
+    newest_localized = localized
+    for index in 1:10
+        variant_months = copy(months)
+        variant_months[2] = "Bravo$index"
+        variant_locale = Dates.DateLocale(variant_months, months_abbr, weekdays,
+                                          weekdays_abbr)
+        newest_localized = DateFormat("U dd yyyy", variant_locale)
+        Parsers._datepattern(newest_localized, Date)
+    end
+    newest_plan_a = Parsers._datepattern(newest_localized, Date)
+    newest_plan_b = Parsers._datepattern(newest_localized, Date)
+    @test getfield(newest_plan_a, :_storage) === getfield(newest_plan_b, :_storage)
+
+    # The bounded String cache also replaces an old entry after saturation.
+    for index in 1:(Parsers._PATTERNCACHEMAX + 2)
+        Parsers._cachedpattern(repeat("!", index) * string(index))
+    end
+    active_format = "!987654321!"
+    active_plan_a = Parsers._cachedpattern(active_format)
+    active_plan_b = Parsers._cachedpattern(active_format)
+    @test getfield(active_plan_a, :_storage) === getfield(active_plan_b, :_storage)
 end
 
 @testset "civil: the fixed fast path accepts every valid field value" begin
@@ -336,27 +519,45 @@ end
         while dt < DateTime(2025, 1, 1)
             x = T === Date ? Date(dt) : T === Time ? Time(dt) : dt
             s = Dates.format(x, f)
-            c, rc = Parsers._parsefixeddate(b(s), 1, ncodeunits(s), pat)
+            c, rc = Parsers.parsecivil(b(s), 1, ncodeunits(s), pat)
             okall &= rc == Parsers.RC_OK && (T === Date ? todate(c) == x : T === Time ? totime(c) == x : todatetime(c) == x)
             dt += T === Time ? Second(7919) : Hour(13) + Minute(29) + Second(49)
         end
         @test okall
     end
-    for s in ("29", "49", "58", "69", "99", "19")
-        @test Parsers._fixednum(b(s), 1, 0x01, 0x02) == (parse(Int, s), true)
+    # Every digit is checked independently. Bitwise combinations such as
+    # 2 | 9 must not make an invalid field look numeric.
+    for s in ("29/01/2024", "49/01/2024", "58/01/2024", "69/01/2024", "99/01/2024",
+              "01/49/2024", "01/58/2024", "01/69/2024", "01/99/2024")
+        @test Parsers.tryparse(Date, s; dateformat="mm/dd/yyyy") === nothing
     end
-    @test Parsers._fixednum(b("2029"), 1, 0x01, 0x04) == (2029, true)
-    @test Parsers._fixednum(b("2x"), 1, 0x01, 0x02) == (0, false)
-    @test Parsers._fixednum(b("/9"), 1, 0x01, 0x02) == (0, false)
+    @test Parsers.tryparse(Date, "2x/01/2024"; dateformat="mm/dd/yyyy") === nothing
+    @test Parsers.tryparse(Date, "/9/01/2024"; dateformat="mm/dd/yyyy") === nothing
 end
 
-@testset "civil: format strings compile to the same program as Dates.DateFormat" begin
-    for f in ("mm/dd/yyyy", "yyyymmdd", "yyyy-mm-dd HH:MM:SS", "HH:MM:SS.s", "yyyy\\mdd", "u dd yyyy",
-              "I:MM p", "dd.mm.yy", "y/m/d", "yyyy-mm-ddTHH:MM:SS.sss", "yyyyyymmdd", "e, dd u yyyy", "yyyy--mm--dd")
+@testset "civil: format-string and DateFormat adapters have the same behavior" begin
+    cases = (("mm/dd/yyyy", Date, Date(2024, 2, 29)),
+             ("yyyymmdd", Date, Date(2024, 2, 29)),
+             ("yyyy-mm-dd HH:MM:SS", DateTime, DateTime(2024, 2, 29, 13, 14, 15)),
+             ("HH:MM:SS.s", Time, Time(13, 14, 15, 123)),
+             ("yyyy\\mdd", Date, Date(2024, 2, 29)),
+             ("u dd yyyy", Date, Date(2024, 2, 29)),
+             ("I:MM p", Time, Time(13, 14)),
+             ("dd.mm.yy", Date, Date(24, 2, 29)),
+             ("y/m/d", Date, Date(2024, 2, 29)),
+             ("yyyy-mm-ddTHH:MM:SS.sss", DateTime, DateTime(2024, 2, 29, 13, 14, 15, 123)),
+             ("yyyyyymmdd", Date, Date(2024, 2, 29)),
+             ("e, dd u yyyy", Date, Date(2024, 2, 29)),
+             ("yyyy年mm月dd日", Date, Date(2024, 2, 29)),
+             ("yyyy--mm--dd", Date, Date(2024, 2, 29)))
+    for (f, T, value) in cases
+        df = DateFormat(f)
+        s = Dates.format(value, df)
+        expected = T(s, df)
         a = Parsers.compilepattern(f)
-        d = Parsers.compilepattern(DateFormat(f))
-        @test a.ops == d.ops
-        @test a.fixed == d.fixed
+        d = Parsers.compilepattern(df)
+        @test Parsers.parse(T, s; dateformat=a) == expected
+        @test Parsers.parse(T, s; dateformat=d) == expected
     end
     # variable widths and greedy trailing fields, as Dates
     for (s, f, T) in (("3/14/2021", "mm/dd/yyyy", Date), ("03/14/02021", "mm/dd/yyyy", Date),
@@ -375,10 +576,14 @@ end
     @test Parsers.parse(Date, "2024-2-29") == Date(2024, 2, 29)
     @test Parsers.parse(DateTime, "2024-2-29T3:4:5") == DateTime(2024, 2, 29, 3, 4, 5)
     @test Parsers.parse(Time, "3:4:5") == Time(3, 4, 5)
-    # ISO spellings, in either form, reuse the ISO constants
-    @test Parsers._datepattern("yyyy-mm-dd", Date) === Parsers.ISO_DATE
-    @test Parsers._datepattern(Dates.ISODateFormat, Date) === Parsers.ISO_DATE
-    @test Parsers._datepattern(Dates.ISODateTimeFormat, DateTime) === Parsers.ISO_DATETIME
-    @test Parsers._datepattern("yyyy-mm-ddTHH:MM:SS.s", DateTime) === Parsers.ISO_DATETIME
-    @test Parsers._datepattern(Dates.ISOTimeFormat, Time) === Parsers.ISO_TIME
+    # ISO plans produced through either adapter use the same deep execution
+    # behavior as the precompiled defaults.
+    for (T, s, source, default) in ((Date, "2024-02-29", Dates.ISODateFormat, Parsers.ISO_DATE),
+                                    (DateTime, "2024-02-29T13:14:15.123", Dates.ISODateTimeFormat, Parsers.ISO_DATETIME),
+                                    (Time, "13:14:15.123", Dates.ISOTimeFormat, Parsers.ISO_TIME))
+        bytes = b(s)
+        @test Parsers.parsecivil(bytes, 1, length(bytes), Parsers.compilepattern(source)) ==
+              Parsers.parsecivil(bytes, 1, length(bytes), default)
+        @test Parsers.parse(T, s; dateformat=source) == T(s, source)
+    end
 end
