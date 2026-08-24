@@ -1357,12 +1357,13 @@ end
               (expecteduuid, Parsers.RC_OK)
     end
 
-    # DecParts keeps its hot 24-byte layout. Values outside its 32-bit state
-    # saturate, and an unrepresentable relative digit offset uses one negative
-    # marker instead of throwing during a valid parse.
-    wide = Int(typemax(Int32)) + 42
-    bounded = Parsers._decparts(UInt64(1), wide, wide, true, false,
-                                wide, 1)
+    # DecParts keeps its hot 24-byte layout. Values at or outside its 32-bit
+    # state saturate, and an unrepresentable relative digit offset uses one
+    # negative marker instead of throwing during a valid parse. Exponents can
+    # exceed machine Int, while digit counts and source positions cannot.
+    wideexp = Int128(typemax(Int32)) + 42
+    bounded = Parsers._decparts(UInt64(1), wideexp, typemax(Int), true, false,
+                                typemax(Int), Parsers._INDEX_WINDOW_FIRST)
     @test sizeof(Parsers.DecParts) == 24
     @test Parsers._decparts(UInt64(1), 0, 19, false, false, 1, 1).ndig == 19
     @test Parsers._decparts(UInt64(1), 0, Int(typemax(Int32)), false,
@@ -1370,13 +1371,13 @@ end
     @test bounded.exp10 == typemax(Int32)
     @test bounded.ndig == typemax(Int32)
     @test bounded.digoffset == Parsers._DECPARTS_OFFSET_SENTINEL
-    @test Parsers._decpartsint32(-wide) == typemin(Int32)
+    @test Parsers._decpartsint32(typemin(Int)) == typemin(Int32)
     @test Parsers._decpartsexp32(typemax(Int32)) == typemax(Int32)
     @test Parsers._decpartsexp32(-typemax(Int32)) == -typemax(Int32)
     @test Parsers._decpartsexp32(Int128(typemax(Int32)) + 1) == typemax(Int32)
     @test Parsers._decpartsexp32(-Int128(typemax(Int32)) - 1) ==
           -typemax(Int32)
-    @test Parsers._decpartsexp32(-wide) == -typemax(Int32)
+    @test Parsers._decpartsexp32(-wideexp) == -typemax(Int32)
     @test Parsers._decpartsdigoffset(0, 1) == 0
     @test Parsers._decpartsdigoffset(1, 1) == 1
     @test Parsers._decpartsdigoffset(Int(typemax(Int32)), 1) == typemax(Int32)
