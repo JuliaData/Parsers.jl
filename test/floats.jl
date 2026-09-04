@@ -368,6 +368,71 @@ end
 # discovered from JSON tests
 @test Parsers.tryparse(Float64, "0e+") === nothing
 
+# mantissas with more than 19 significant digits widen the digit accumulator to
+# UInt128 and then BigInt; these exercised several broken branches in `_scale`
+@testset "long mantissa / negative zero" begin
+    # correctly rounded reference value
+    oracle(::Type{T}, str) where {T} = setprecision(BigFloat, 512) do
+        T(Base.parse(BigFloat, str))
+    end
+    testcases = [
+        # 55/58-digit mantissa with a huge negative exponent: BigInt digits were converted to UInt128 (InexactError)
+        ("295574326048237151328925.8099133506971425945276929554326e-440", 0.0),
+        ("-645846793726181672171.9101155724413627413656362746354480124e-379", -0.0),
+        # 39-digit mantissa scaled by exactly 10^0: BigFloat power-of-ten table indexed at [0] (BoundsError)
+        ("-773185451005006305224330936226383685.195e3", -7.731854510050064e38),
+        # 38-digit mantissa (fits UInt128) with exp == 23: UInt128 product silently overflowed (wrong value)
+        ("0.72741733550162454424961322208253163690E+61", 7.274173355016246e60),
+        # 2^52 e23 falls back from the UInt64 path into the same overflowing UInt128 product
+        ("4503599627370496e23", 4.503599627370496e38),
+        # negative zero with an exponent outside the fast path lost its sign
+        ("-0e291", -0.0),
+        ("-0e347", -0.0),
+        ("-0.0e100", -0.0),
+        ("-0e23", -0.0),
+        ("-0e-23", -0.0),
+    ]
+    for (str, x) in testcases
+        @test x === oracle(Float64, str)
+        @test Parsers.parse(Float64, str) === x
+        res = Parsers.xparse2(Float64, str, 1, length(str))
+        @test res.val === x
+        @test res.code == (OK | EOF)
+        @test res.tlen == length(str)
+        res = Parsers.xparse(Float64, Vector{UInt8}(codeunits(str)))
+        @test res.val === x
+        @test res.code == (OK | EOF)
+        @test res.tlen == length(str)
+        res = Parsers.xparse(Float64, str * ",")
+        @test res.val === x
+        @test res.code == (OK | DELIMITED)
+        @test res.tlen == length(str) + 1
+        for T in (Float32, Float16)
+            # Float16 bails out with INVALID on more than `maxdigits(Float16)` integer digits (pre-existing)
+            T === Float16 && startswith(str, "-773185451005006305224330936226383685") && continue
+            @test Parsers.parse(T, str) === oracle(T, str)
+            @test Parsers.xparse(T, str * ",").tlen == length(str) + 1
+        end
+    end
+    # randomized differential test of the whole long-mantissa path
+    rng = Random.MersenneTwister(2024)
+    for _ = 1:300
+        nd = rand(rng, 20:60)
+        ds = string(rand(rng, '1':'9'), join(rand(rng, '0':'9', nd - 1)))
+        ip = rand(rng, 0:nd)
+        m = ip == 0 ? "0." * ds : ip == nd ? ds : ds[1:ip] * "." * ds[ip+1:end]
+        str = string(rand(rng, ("", "-")), m, "e", rand(rng, -400:400))
+        x = oracle(Float64, str)
+        @test Parsers.parse(Float64, str) === x
+        res = Parsers.xparse2(Float64, str, 1, length(str))
+        @test res.val === x
+        @test res.tlen == length(str)
+        res = Parsers.xparse(Float64, str * ",")
+        @test res.val === x
+        @test res.tlen == length(str) + 1
+    end
+end
+
 @testset "groupmark" begin
     # `parse` is used for parsing inputs with a single value in them,
     # so when delims==groupmarks, we assume what we see are groupmarks

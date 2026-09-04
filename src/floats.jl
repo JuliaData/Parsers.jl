@@ -630,12 +630,13 @@ function __scale(::Type{T}, v, exp, neg) where {T}
             return ifelse(neg, -x, x)
         end
     end
-    v == 0 && return zero(T)
+    v == 0 && return ifelse(neg, -zero(T), zero(T))
     if exp > 308 && T != BigFloat
         return T(neg ? -Inf : Inf)
     elseif exp < -326
         # https://github.com/JuliaData/Parsers.jl/issues/83
-        return _scale(T, UInt128(v), exp, neg)
+        # `v` may already be a BigInt (> 38 digits), which can't be converted to UInt128
+        return _scale(T, v isa BigInt ? v : UInt128(v), exp, neg)
     end
     return _scale(T, v, exp, neg)
 end
@@ -704,17 +705,14 @@ function convert_and_apply_neg(::Type{BigFloat}, x::BigFloat, neg)
 end
 
 function _scale(::Type{T}, v::V, exp, neg) where {T, V <: UInt128}
-    if exp == 23
-        # special-case concluded from https://github.com/JuliaLang/julia/issues/38509
-        x = v * V(1e23)
-    elseif 0 <= exp < 290
-        x = v * exp10(exp)
-    elseif exp < -308 || exp > 308 || v > maxsig(T)
-        # if v is too large, we lose precision by just doing
-        # v / exp10(-exp) since that only promotes to Float64
+    if v > maxsig(T) || exp < -22 || exp > 22
+        # if v is too large, or exp10(exp) isn't exactly representable as a Float64,
+        # we lose precision by just doing v * exp10(exp) since that only promotes to Float64
         # so detect and re-route to this branch where we widen v
         y = _widen(v)
         return _scale(T, y, exp, neg)
+    elseif exp >= 0
+        x = v * exp10(exp)
     else
         x = v / exp10(-exp)
     end
@@ -746,7 +744,7 @@ function _scale(::Type{T}, v::V, exp, neg) where {T, V <: BigInt}
         ccall((:mpfr_div, :libmpfr), Int32,
             (Ref{BigFloat}, Ref{BigFloat}, Ref{BigFloat}, Int32),
             x, x, y, MPFR.ROUNDING_MODE[])
-    else
+    elseif exp > 0
         # v * exp10(V(exp))
         if exp <= 308
             y = BIGFLOATEXP10[exp]
