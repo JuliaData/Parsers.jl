@@ -465,7 +465,8 @@ compilepattern(p::DatePattern) = p
 @inline _patternkind(c::Char) =
     c == 'y' || c == 'Y' ? UInt8(1) :
     c == 'm' ? UInt8(2) : c == 'd' ? UInt8(3) : c == 'H' ? UInt8(4) :
-    c == 'M' ? UInt8(5) : c == 'S' ? UInt8(6) : c == 's' ? UInt8(7) :
+    c == 'M' ? UInt8(5) : c == 'S' ? UInt8(6) :
+    c == 's' || (c == 'n' && _DATES_N_CODE) ? UInt8(7) :
     c == 'u' ? UInt8(9) : c == 'U' ? UInt8(10) : c == 'I' ? UInt8(11) :
     c == 'p' ? UInt8(12) : c == 'e' ? UInt8(13) : c == 'E' ? UInt8(14) : UInt8(0)
 
@@ -484,7 +485,8 @@ end
     compilepattern(fmt::AbstractString) -> DatePattern
 
 Compile a Dates-style format string (numeric tokens `y Y m d H I M S s u U`,
-AM/PM token `p`, named weekday tokens `e E`, plus literal separators) with
+the fractional-second token `n` where the running Dates defines it (Julia 1.14
+and later), AM/PM token `p`, named weekday tokens `e E`, plus literal separators) with
 `Dates.DateFormat`'s width rules: a numeric field is
 fixed-width only when another field follows it directly (`yyyymmdd`);
 otherwise it is greedy, so `mm/dd/yyyy` accepts `3/14/2021`.
