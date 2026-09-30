@@ -550,6 +550,10 @@ end
              ("yyyymmdd", Date, Date(2024, 2, 29)),
              ("yyyy-mm-dd HH:MM:SS", DateTime, DateTime(2024, 2, 29, 13, 14, 15)),
              ("HH:MM:SS.s", Time, Time(13, 14, 15, 123)),
+             # `n` is a fractional-second code in Julia 1.14's Dates and a literal
+             # before; both adapters must follow the running Dates either way
+             ("HH:MM:SS.n", Time, Time(13, 14, 15, 123, 456, 789)),
+             ("yyyy-mm-dd HH:MM:SS.n", DateTime, DateTime(2024, 2, 29, 13, 14, 15, 123)),
              ("yyyy\\mdd", Date, Date(2024, 2, 29)),
              ("u dd yyyy", Date, Date(2024, 2, 29)),
              ("I:MM p", Time, Time(13, 14)),

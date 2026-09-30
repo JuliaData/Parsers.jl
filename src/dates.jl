@@ -27,7 +27,9 @@ function _datepartop(t::Dates.DatePart{c}) where {c}
     width = t.width
     width >= 1 || throw(ArgumentError("date format token '$c' has invalid width $width"))
 
-    kind = _patternkind(c)
+    # A `DatePart{'n'}` exists only where Dates defines the `n` code (Julia 1.14 and
+    # later): a fractional second, read like `s`.
+    kind = c == 'n' ? UInt8(7) : _patternkind(c)
     kind != 0 || throw(ArgumentError("unsupported DateFormat token '$c'"))
     hasdate = _kindhasdate(kind)
     hastime = _kindhastime(kind)
