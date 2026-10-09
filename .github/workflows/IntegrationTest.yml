@@ -82,12 +82,20 @@ jobs:
 
       - name: Test downstream package
         if: steps.compatibility.outputs.supported == 'true'
-        shell: julia --project=downstream --color=yes {0}
+        shell: julia --color=yes {0}
         run: |
           using Pkg
 
+          # Test the downstream package from a scratch environment that also
+          # develops this Parsers checkout. Pkg.test builds the test
+          # environment from that manifest, so tests that load Parsers use this
+          # checkout. Developing Parsers into the downstream project instead
+          # would add it to [deps] (moving it out of [weakdeps]) and fail
+          # stale-dependency checks such as Aqua's.
+          #
           # From here onward every resolver or test failure is real. Do not
           # convert an unrelated ResolverError into a successful job.
-          Pkg.develop(PackageSpec(path=pwd()))
-          Pkg.resolve()
-          Pkg.test()
+          downstream = abspath("downstream")
+          Pkg.activate(; temp=true)
+          Pkg.develop([PackageSpec(path=downstream), PackageSpec(path=pwd())])
+          Pkg.test(Pkg.TOML.parsefile(joinpath(downstream, "Project.toml"))["name"])
