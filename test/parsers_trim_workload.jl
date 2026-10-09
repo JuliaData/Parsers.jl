@@ -76,9 +76,37 @@ function run_parsers_trim_workload()::Nothing
     return nothing
 end
 
+# Build a pattern at runtime: Tuple(vector) erased the fixed field counts and
+# made the FixedDatePattern constructor unreachable in a trimmed reader.
+function _assert_civil_format(fmt::String)::Nothing
+    pattern = Parsers.compilepattern(fmt)
+    bytes = Vector{UInt8}(codeunits("17/09/2026"))
+    parts, rc = Parsers.parsecivil(bytes, 1, length(bytes), pattern)
+    rc == Parsers.RC_OK || error("custom date parse")
+    (parts.year, parts.month, parts.day) == (2026, 9, 17) || error("custom date value")
+    return nothing
+end
+
+function _assert_bigfloat_libraries(text::String)::Nothing
+    # Both the short MPFR path and the wide GMP/MPFR path need their library
+    # bindings in the executable, not deferred module-property lookups.
+    bytes = Vector{UInt8}(codeunits(text))
+    Parsers.parse(BigFloat, bytes) == BigFloat(2.5) || error("BigFloat short")
+    wide = Vector{UInt8}(codeunits("340282366920938463463374607431768211456.5"))
+    expected = BigFloat(typemax(UInt128)) + BigFloat(1.5)
+    Parsers.parse(BigFloat, wide) == expected || error("BigFloat wide")
+    Parsers.parse(BigFloat, "0x1.4p1") == BigFloat(2.5) || error("BigFloat native")
+    # Custom decimal syntax keeps this long coefficient in the package kernel,
+    # including its direct GMP digit-buffer call.
+    long = Vector{UInt8}(codeunits("2," * repeat("0", 100)))
+    Parsers.parse(BigFloat, long; decimal=',') == BigFloat(2) || error("BigFloat GMP")
+    return nothing
+end
+
 function @main(args::Vector{String})::Cint
-    _ = args
     run_parsers_trim_workload()
+    _assert_civil_format(isempty(args) ? "dd/mm/yyyy" : args[1])
+    _assert_bigfloat_libraries(length(args) < 2 ? "2.5" : args[2])
     return 0
 end
 

@@ -347,7 +347,7 @@ end
 @inline function _mpfr_strtofr!(value::BigFloat, ptr::Ptr{UInt8},
                                 rounding::Base.MPFR.MPFRRoundingMode)
     endpoint = Ref{Ptr{UInt8}}()
-    ccall((:mpfr_strtofr, Base.MPFR.libmpfr), Cint,
+    ccall((:mpfr_strtofr, libmpfr), Cint,
           (Ref{BigFloat}, Cstring, Ref{Ptr{UInt8}}, Cint, Base.MPFR.MPFRRoundingMode),
           value, ptr, endpoint, 0, rounding)
     return endpoint[]
@@ -390,20 +390,20 @@ end
 
     value = BigFloat(; precision=prec)
     magrounding = _magnituderounding(rounding, parts.neg)
-    ccall((:mpfr_set_ui, Base.MPFR.libmpfr), Cint,
+    ccall((:mpfr_set_ui, libmpfr), Cint,
           (Ref{BigFloat}, Culong, Base.MPFR.MPFRRoundingMode),
           value, Culong(mant), magrounding)
     if q > 0
-        ccall((:mpfr_mul_ui, Base.MPFR.libmpfr), Cint,
+        ccall((:mpfr_mul_ui, libmpfr), Cint,
               (Ref{BigFloat}, Ref{BigFloat}, Culong, Base.MPFR.MPFRRoundingMode),
               value, value, Culong(factor), magrounding)
     elseif q < 0
-        ccall((:mpfr_div_ui, Base.MPFR.libmpfr), Cint,
+        ccall((:mpfr_div_ui, libmpfr), Cint,
               (Ref{BigFloat}, Ref{BigFloat}, Culong, Base.MPFR.MPFRRoundingMode),
               value, value, Culong(factor), magrounding)
     end
     if parts.neg
-        ccall((:mpfr_neg, Base.MPFR.libmpfr), Cint,
+        ccall((:mpfr_neg, libmpfr), Cint,
               (Ref{BigFloat}, Ref{BigFloat}, Base.MPFR.MPFRRoundingMode),
               value, value, rounding)
     end

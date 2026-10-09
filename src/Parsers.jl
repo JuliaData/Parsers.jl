@@ -48,6 +48,10 @@ Bool spelling lists), and `dateformat`.
 module Parsers
 
 using Dates            # civil.jl stays Dates-free; dates.jl owns translation and adaptation
+# Keep ccall library names as global bindings. Julia 1.12 otherwise defers
+# dotted module lookups to runtime, where trimming can remove getproperty.
+import Base.MPFR: libmpfr
+import Base.GMP: libgmp
 
 # result codes shared by every kernel
 "Successful parse."

@@ -378,8 +378,9 @@ function _fixeddatepattern(ops::Vector{PatternOp})
         end
     end
     1 < pos <= 33 || return FixedDatePattern()
-    return FixedDatePattern(UInt8(pos - 1), Tuple(offsets), Tuple(widths),
-                            Tuple(masks), Tuple(values))
+    return FixedDatePattern(UInt8(pos - 1), ntuple(i -> offsets[i], Val(7)),
+                            ntuple(i -> widths[i], Val(7)),
+                            ntuple(i -> masks[i], Val(4)), ntuple(i -> values[i], Val(4)))
 end
 
 function _numericdatepattern(ops::Vector{PatternOp})

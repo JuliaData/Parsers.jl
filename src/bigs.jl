@@ -98,12 +98,12 @@ end
 
 function _assemble(M::BigInt, e::Int, neg::Bool, prec::Int)
     v = BigFloat(; precision=prec)
-    ccall((:mpfr_set_z, Base.MPFR.libmpfr), Int32,
+    ccall((:mpfr_set_z, libmpfr), Int32,
           (Ref{BigFloat}, Ref{BigInt}, Int32), v, M, 0)
     ce = _cexponent(Clong, e)
-    ccall((:mpfr_mul_2si, Base.MPFR.libmpfr), Int32,
+    ccall((:mpfr_mul_2si, libmpfr), Int32,
           (Ref{BigFloat}, Ref{BigFloat}, Clong, Int32), v, v, ce, 0)
-    neg && ccall((:mpfr_neg, Base.MPFR.libmpfr), Int32,
+    neg && ccall((:mpfr_neg, libmpfr), Int32,
                  (Ref{BigFloat}, Ref{BigFloat}, Int32), v, v, 0)
     return v
 end
@@ -914,7 +914,7 @@ end
     big.alloc < nlimbs &&
         Base.GMP.MPZ.realloc2!(big, _gmpbitsforlimbs(nlimbs))
     rawsize = GC.@preserve big digits begin
-        ccall((:__gmpn_set_str, Base.GMP.libgmp), _GMP_SIZE_T,
+        ccall((:__gmpn_set_str, libgmp), _GMP_SIZE_T,
               (Ptr{_Limb}, Ptr{UInt8}, Csize_t, Cint),
               big.d, pointer(digits), ndig, 10)
     end
