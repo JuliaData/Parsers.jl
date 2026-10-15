@@ -88,6 +88,10 @@ jobs:
 
           # From here onward every resolver or test failure is real. Do not
           # convert an unrelated ResolverError into a successful job.
-          Pkg.develop(PackageSpec(path=pwd()))
-          Pkg.resolve()
-          Pkg.test()
+          parsers_path = pwd()
+          downstream_path = abspath("downstream")
+          downstream_name = Pkg.TOML.parsefile(joinpath(downstream_path, "Project.toml"))["name"]
+          # Keep downstream dependency declarations unchanged, including weak dependencies.
+          Pkg.activate(; temp=true)
+          Pkg.develop([PackageSpec(path=parsers_path), PackageSpec(path=downstream_path)])
+          Pkg.test(downstream_name)
