@@ -49,9 +49,10 @@ module Parsers
 
 using Dates            # civil.jl stays Dates-free; dates.jl owns translation and adaptation
 
-# Julia 1.14's Dates reads `n` in a format string as a fractional-second code; earlier
-# versions read it as a literal letter. Format strings follow the running Dates.
-const _DATES_N_CODE = haskey(Dates.CONVERSION_SPECIFIERS, 'n')
+# Dates reads `n` in a format string as a fractional-second code where it is
+# registered (Julia 1.14, or a package such as Durations.jl at load time) and as
+# a literal letter otherwise. Check when compiling, not at precompile time.
+_datesncode() = haskey(Dates.CONVERSION_SPECIFIERS, 'n')
 
 # result codes shared by every kernel
 "Successful parse."

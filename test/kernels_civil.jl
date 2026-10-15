@@ -573,6 +573,19 @@ end
         @test Parsers.parse(T, s; dateformat=a) == expected
         @test Parsers.parse(T, s; dateformat=d) == expected
     end
+    # Before Julia 1.14 a package can register `n` at load time (Durations.jl
+    # does); format strings compiled afterwards read it as a code.
+    if !haskey(Dates.CONVERSION_SPECIFIERS, 'n')
+        Dates.CONVERSION_SPECIFIERS['n'] = Nanosecond
+        try
+            p = Parsers.compilepattern("HH:MM:SS.n")
+            @test Parsers.parse(Time, "13:14:15.123456789"; dateformat=p) ==
+                  Time(13, 14, 15, 123, 456, 789)
+        finally
+            delete!(Dates.CONVERSION_SPECIFIERS, 'n')
+        end
+        @test Parsers.tryparse(Time, "13:14:15.123"; dateformat=Parsers.compilepattern("HH:MM:SS.n")) === nothing
+    end
     # variable widths and greedy trailing fields, as Dates
     for (s, f, T) in (("3/14/2021", "mm/dd/yyyy", Date), ("03/14/02021", "mm/dd/yyyy", Date),
                       ("2024-2-29", "yyyy-mm-dd", Date), ("24-01-01", "yyyy-mm-dd", Date),
