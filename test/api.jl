@@ -12,6 +12,9 @@ using Test, Random, Dates, Parsers
         :parseuuid, :parsecivil,
         :compilepattern, :DatePattern, :CivilParts, :BigWork,
     )
+    for name in documented
+        @test haskey(Base.Docs.meta(Parsers), Base.Docs.Binding(Parsers, name))
+    end
     if VERSION >= v"1.11"
         for name in documented
             @test Base.ispublic(Parsers, name)
