@@ -28,10 +28,9 @@ const _GMP_SIZE_T = Clong
 """
     BigWork()
 
-Reusable workspace for `parsebigfloat`: the coefficient, division remainder,
-long power of five, and decimal-digit buffer live here so a column loop grows
-them once instead of allocating them per value. GMP objects are
-finalizer-registered. Never share one workspace across concurrent tasks.
+Reusable scratch space for `parsebigfloat(buf, i, j, decimal, work; prec,
+rounding)`, so repeated calls reuse buffers instead of allocating them. Do not
+share one workspace between concurrent tasks.
 """
 mutable struct BigWork
     const M::BigInt
@@ -259,10 +258,7 @@ end
 """
     parsebigint(buf, i, j) -> (BigInt, rc)
 
-Exact-span BigInt: sign and decimal digits only (the strict integer grammar,
-same as `parseint64` without the width limit). The digits become limb-sized
-decimal chunks that multiply-accumulate straight into the BigInt's limbs, so
-the only GMP involvement is the allocation.
+Parse `buf[i:j]` as a decimal `BigInt`: an optional sign followed by digits.
 """
 function parsebigint(buf::AbstractVector{UInt8}, i::Int, j::Int)
     if _needsindexwindow(j)
@@ -486,21 +482,19 @@ function _parsebigintprefix(buf::AbstractVector{UInt8}, pos::Int, last::Int,
     return (big, k, RC_OK)
 end
 
+# Decimal digits go straight into GMP limbs, never through a string parser. A long
+# coefficient is first bracketed by a short interval, and only an endpoint
+# disagreement converts it in full; the 10^±65536 bound keeps that scaling bounded.
 """
-    parsebigfloat(buf, i, j, decimal=UInt8('.'); prec=precision(BigFloat)) -> (BigFloat, rc)
+    parsebigfloat(buf, i, j, decimal=UInt8('.'); prec, rounding) -> (BigFloat, rc)
+    parsebigfloat(buf, i, j, decimal, work::BigWork; prec, rounding) -> (BigFloat, rc)
 
-Correctly rounded BigFloat at `prec` bits, with `rounding` defaulting to the
-current MPFR rounding mode. It accepts the decimal and hexadecimal grammar and
-special spellings of `parsefloat64`. Decimal digits go through GMP's numeric
-digit-to-limb converter, not a string parser. A long coefficient first becomes
-a bounded leading interval. Equal rounded endpoints prove the result; only an
-endpoint disagreement converts the full exact coefficient. Integer powers of
-five and two then produce one correctly rounded value. MPFR stores that value;
-it does not parse the token.
-
-Prove-out range bound: decimal magnitudes beyond ~10^±65536 return
-`RC_OVERFLOW`. This keeps package-owned integer scaling bounded. No subnormal
-handling is needed inside that range — BigFloat's exponent field dwarfs it.
+Parse `buf[i:j]` as a `BigFloat` correctly rounded to `prec` bits (default
+`precision(BigFloat)`) with `rounding` (default the current MPFR rounding
+mode). Accepts decimal and C99 hexadecimal numbers and the case-insensitive
+spellings `Inf`, `Infinity`, and `NaN`. Decimal magnitudes beyond about
+`10^±65536` return `RC_OVERFLOW` with a zero value;
+`Parsers.parse(BigFloat, s)` has no such bound.
 """
 function parsebigfloat(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8=UInt8('.');
                        prec::Int=precision(BigFloat),
@@ -1048,9 +1042,9 @@ end
 """
     parseuuid(buf, i, j) -> (UInt128, rc)
 
-The canonical 8-4-4-4-12 dashed hex form, case-insensitive — exactly the
-spellings `Base.tryparse(UUID, s)` accepts. Returns the raw UInt128; thin
-adapters construct `Base.UUID` (mirroring the CivilParts/Dates split).
+Parse the canonical 8-4-4-4-12 dashed hex form, in either case: the spellings
+`Base.tryparse(UUID, s)` accepts. Returns the value as a `UInt128`;
+`Base.UUID(value)` builds the UUID.
 """
 function parseuuid(buf::AbstractVector{UInt8}, i::Int, j::Int)
     j - i + 1 == 36 || return (UInt128(0), RC_INVALID)

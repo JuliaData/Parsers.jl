@@ -31,13 +31,10 @@ end
 """
     daysfromcivil(y, m, d) -> Int64
 
-Days since 0000-12-31 (Rata Die), matching `Dates.value(Date(y,m,d))` — this
-IS the Dates stdlib's `totaldays` formula (shift the year to start on March 1
-so the leap day is the year's last day; then days + month offset + year days),
-carried here without a Dates dependency so Dates can one day call it instead.
-Equivalence is pinned exhaustively (every day of years -1000..3000 and the
-extremes) in the test suite; the earlier Hinnant era/year-of-era form was
-identical over ±9999 but ~35% slower.
+Days since 0000-12-31 (Rata Die), matching `Dates.value(Date(y,m,d))`. This is
+the Dates stdlib's `totaldays` formula (the year starts on March 1, so the leap
+day is the year's last day), kept here without a Dates dependency. The test
+suite pins it to Dates for every day of years -1000 to 3000 and the extremes.
 """
 const _SHIFTEDMONTHDAYS = (306, 337, 0, 31, 61, 92, 122, 153, 184, 214, 245, 275)
 @inline function daysfromcivil(y::Integer, m::Integer, d::Integer)
@@ -264,9 +261,7 @@ end
 
 A compiled, immutable date/time parse plan. Create one with `compilepattern`,
 then reuse it with `parsecivil` or as the `dateformat` keyword of
-`Parsers.parse`. Its representation is internal. The plan owns its op program,
-fast-path choice, and month/day name tables.
-Use `compilepattern` rather than constructing or inspecting a plan directly.
+`Parsers.parse`. Its representation is internal.
 """
 struct DatePattern
     _storage::CivilPlanBox
@@ -1110,10 +1105,9 @@ end
 """
     parsecivil(buf, i, j, pat::DatePattern) -> (CivilParts, rc)
 
-Run a compiled pattern over the exact span. Trailing sub-second precision
-beyond the pattern (`.s` matching 1–9 digits) is scaled to nanoseconds. The
-whole span must be consumed. Calendar validity (month/day ranges, leap years)
-is checked here — structurally valid but impossible dates are INVALID.
+Run a compiled pattern over the exact span; the whole span must be consumed. A
+fractional-second field takes 1 to 9 digits, whatever its width in the pattern,
+scaled to nanoseconds. Impossible dates, such as February 30, are `RC_INVALID`.
 """
 @inline function parsecivil(buf::AbstractVector{UInt8}, i::Int, j::Int, pat::DatePattern)
     return _parsecivilvalidated(buf, i, j, pat, pat._storage.plan.flags)

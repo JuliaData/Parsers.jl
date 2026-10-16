@@ -1516,29 +1516,20 @@ end
     return _convertparts(T, parts)
 end
 
+# Clinger's exact case, then Eisel–Lemire, then an exact midpoint comparison for
+# rare ambiguous and subnormal inputs (no C, no BigFloat). Float32 and Float16
+# never double-round.
 """
     parsefloat(T, buf, i, j, decimal=UInt8('.')) -> (T, rc)
-        T ∈ Float16, Float32, Float64
-    parsefloat64(buf, i, j, decimal=UInt8('.')) -> (Float64, rc)
 
-Parse `buf[i:j]` as `T` with correct (round-half-even) rounding for every
-input — no C, no BigFloat: Clinger's exact small case, then Eisel–Lemire,
-then an exact fixed-limb midpoint comparison or simple decimal conversion for
-the rare ambiguous and subnormal cases.
-`Float32` is parsed natively (never via Float64, which double-rounds).
-`Float16` uses bounded wider fast stages, then compares the original decimal
-exactly whenever a wider result is a Float16 rounding midpoint.
-Accepts sign, digits, one `decimal` byte, optional e/E exponent, and the
-case-insensitive spellings Inf/Infinity/NaN.
+Parse `buf[i:j]` as `T` (`Float16`, `Float32`, or `Float64`), correctly rounded
+(round-half-even). Accepts a sign, digits, one `decimal` byte, an optional
+`e`/`E` exponent, and the case-insensitive spellings `Inf`, `Infinity`, and
+`NaN`.
 
-`rc` is `RC_OK`, `RC_INVALID`, or one of the two range codes: `RC_OVERFLOW`
-(the value rounded to ±Inf) and `RC_UNDERFLOW` (a nonzero spelling rounded to
-±0). The value returned alongside a range code is that ±Inf / ±0, so a caller
-that wants rounded range values can treat both as success. Checked
-whole-value parsing rejects both range codes on every platform.
-
-Structured as an @inline hot core plus a thin wrapper owning the cold tier-3
-tail. The tail stays @noinline so exact fallback code never bloats the hot path.
+`rc` is `RC_OK`, `RC_INVALID`, `RC_OVERFLOW` (the value rounded to `±Inf`), or
+`RC_UNDERFLOW` (a nonzero spelling rounded to `±0.0`); the returned value is
+the rounded one. Checked whole-value parsing rejects both range codes.
 """
 @inline function parsefloat(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
                             decimal::UInt8=UInt8('.')) where {T <: Union{Float64, Float32}}

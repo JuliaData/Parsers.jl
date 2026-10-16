@@ -1093,14 +1093,11 @@ end
 
 Parse the longest well-formed value of `T` that starts at `bytes[pos]`.
 `nextpos` is the first byte not consumed. `code` is `RC_OK`, `RC_INVALID`,
-`RC_OVERFLOW`, or `RC_UNDERFLOW`; range tokens are consumed and retain the
-kernel's range value. No whitespace is skipped.
+`RC_OVERFLOW`, or `RC_UNDERFLOW`. A range error consumes the whole token;
+`Float16`, `Float32`, and `Float64` return the rounded value (`±Inf` or
+`±0.0`), and other targets return zero. No whitespace is skipped.
 If a token consumes byte `typemax(Int)`, the one-past `nextpos` cannot be
 represented and the function throws `OverflowError`.
-
-Token recognition and conversion state advance together. The implementation
-does not first scan a token boundary and then call a whole-value parser on the
-same span.
 
 The supported targets are the integer types, `Float16`/`Float32`/`Float64`,
 `BigInt`, `BigFloat`, and `Bool`. Their `base`, radix-prefix, `decimal`,
@@ -1111,6 +1108,8 @@ grammar and accepts its `RoundingMode` values. It reports values outside that
 kernel's documented decimal prove-out range with a range code. It does not
 accept MPFR-only spellings handled by public whole-value parsing.
 """
+function parsenext end
+
 @inline function _prefixbounds(buf::AbstractVector{UInt8}, pos::Integer,
                                last::Integer)
     b = _bytes(buf)
