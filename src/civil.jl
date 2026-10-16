@@ -1105,10 +1105,9 @@ end
 """
     parsecivil(buf, i, j, pat::DatePattern) -> (CivilParts, rc)
 
-Run a compiled pattern over the exact span. Trailing sub-second precision
-beyond the pattern (`.s` matching 1–9 digits) is scaled to nanoseconds. The
-whole span must be consumed. Calendar validity (month/day ranges, leap years)
-is checked here — structurally valid but impossible dates are INVALID.
+Run a compiled pattern over the exact span; the whole span must be consumed. A
+fractional-second field takes 1 to 9 digits, whatever its width in the pattern,
+scaled to nanoseconds. Impossible dates, such as February 30, are `RC_INVALID`.
 """
 @inline function parsecivil(buf::AbstractVector{UInt8}, i::Int, j::Int, pat::DatePattern)
     return _parsecivilvalidated(buf, i, j, pat, pat._storage.plan.flags)
