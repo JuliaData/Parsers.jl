@@ -20,7 +20,7 @@ end
 function _bigint_from_digit_values(digits::Vector{UInt8}, ndig::Int, neg::Bool)
     nlimbs = _bigint_decimal_limbs(ndig) + _BIGINT_SETSTR_SCRATCH_LIMBS
     big = BigInt(; nbits = nlimbs * 8 * sizeof(Base.GMP.Limb))
-    rawsize = GC.@preserve big digits ccall((:__gmpn_set_str, Base.GMP.libgmp), Clong,
+    rawsize = GC.@preserve big digits ccall((:__gmpn_set_str, :libgmp), Clong,
         (Ptr{Base.GMP.Limb}, Ptr{UInt8}, Csize_t, Cint),
         big.d, pointer(digits), ndig, 10)
     big.size = (neg && rawsize != 0) ? -(rawsize % Cint) : (rawsize % Cint)
