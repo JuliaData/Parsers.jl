@@ -52,13 +52,16 @@ jobs:
             # downstream Project.toml (including its weak dependencies) stays unchanged.
             Pkg.activate(; temp=true)
             downstream_name = Pkg.TOML.parsefile(joinpath("downstream", "Project.toml"))["name"]
-            Pkg.develop([PackageSpec(path="."), PackageSpec(path="downstream")])  # resolver may fail with main deps
             if "${{ matrix.package.repo }}" == "ARFFFiles.jl"
               # ARFFFiles still constructs Tables.DictColumnTable from unordered
               # Dicts, which OrderedCollections 2 rejects. Keep this downstream
               # compatibility check useful until ARFFFiles migrates those inputs.
+              # Added and pinned before developing ARFFFiles: on Julia 1.13 an add after
+              # developing it fails with "Unknown package: Tables".
               Pkg.add(PackageSpec(name="OrderedCollections", version="1"))
+              Pkg.pin("OrderedCollections")
             end
+            Pkg.develop([PackageSpec(path="."), PackageSpec(path="downstream")])  # resolver may fail with main deps
             Pkg.update()
             Pkg.test(downstream_name)  # resolver may fail with test time deps
           catch err
