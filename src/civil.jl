@@ -1088,7 +1088,7 @@ end
 
 `yyyy-mm-ddTHH:MM:SS.s` with one to nine fraction digits (21–29 bytes; the
 caller checks the length), with `sep` between the date and the time. Agrees
-with `parsecivil` and `ISO_DATETIME`.
+with `parsecivil` for the date-time pattern with that separator.
 """
 @inline function parseiso19frac(buf::AbstractVector{UInt8}, i::Int, j::Int,
                                 sep::UInt8=UInt8('T'))
