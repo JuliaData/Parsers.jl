@@ -18,9 +18,8 @@ const _BIGINT_SETSTR_SCRATCH_LIMBS = 2
 end
 
 function _bigint_from_digit_values(digits::Vector{UInt8}, ndig::Int, neg::Bool)
-    big = BigInt()
     nlimbs = _bigint_decimal_limbs(ndig) + _BIGINT_SETSTR_SCRATCH_LIMBS
-    Base.GMP.MPZ.realloc2!(big, nlimbs * 8 * sizeof(Base.GMP.Limb))
+    big = BigInt(; nbits = nlimbs * 8 * sizeof(Base.GMP.Limb))
     rawsize = GC.@preserve big digits ccall((:__gmpn_set_str, Base.GMP.libgmp), Clong,
         (Ptr{Base.GMP.Limb}, Ptr{UInt8}, Csize_t, Cint),
         big.d, pointer(digits), ndig, 10)
