@@ -329,6 +329,33 @@ end
     @test Parsers.parsecivil(UInt8[], 1, 0, wide_natural)[2] == Parsers.RC_INVALID
 end
 
+@testset "civil: space-separated ISO date-time executor" begin
+    pattern = Parsers.compilepattern("yyyy-mm-dd HH:MM:SS.s")
+    @test pattern._storage.plan.executor == Parsers._EXECUTE_ISO_DATETIME_SPACE
+    @test Parsers.parseiso19(b("2024-01-02 03:04:05"), 1, UInt8(' ')) ==
+          (Parsers.CivilParts(2024, 1, 2, 3, 4, 5, 0), Parsers.RC_OK)
+    @test Parsers.parseiso19frac(b("2024-01-02 03:04:05.125"), 1, 23, UInt8(' ')) ==
+          (Parsers.CivilParts(2024, 1, 2, 3, 4, 5, 125_000_000), Parsers.RC_OK)
+    @test Parsers.parseiso19(b("2024-01-02 03:04:05"), 1)[2] == Parsers.RC_INVALID
+    @test Parsers.parse(DateTime, "2024-01-02 03:04:05.5"; dateformat=pattern) ==
+          DateTime(2024, 1, 2, 3, 4, 5, 500)
+    # Every one-byte mutation of each shape: the accelerator and its fallback
+    # agree with the interpreter on what they accept and on every value.
+    agree = true
+    for base in (b("2024-02-29 23:59:59"), b("2024-02-29 23:59:59.125"),
+                 b("2024-02-29 23:59:59.123456789"))
+        for pos in eachindex(base), byte in UInt8(0):UInt8(255)
+            bytes = copy(base)
+            bytes[pos] = byte
+            fast = Parsers.parsecivil(bytes, 1, length(bytes), pattern)
+            interpreted = Parsers._interpretcivil(bytes, 1, length(bytes), pattern._storage,
+                                                   pattern._storage.plan.flags)
+            agree &= fast == interpreted
+        end
+    end
+    @test agree
+end
+
 @testset "civil: ISO fraction fast paths agree with Dates" begin
     datetimewhole = DateFormat("yyyy-mm-ddTHH:MM:SS")
     timewhole = DateFormat("HH:MM:SS")
