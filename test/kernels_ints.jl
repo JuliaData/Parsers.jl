@@ -189,6 +189,20 @@ end
         @test Parsers.parsenext(BigInt, tok, 1, length(tok); groupmark = '_') ==
               (parse(BigInt, replace(grouped, "_" => "")), length(tok) + 1, Parsers.RC_OK)
     end
+    # long runs of leading zeros give a normalized value on every path
+    # (power-of-two bases and long decimal runs once left zero high limbs)
+    for zeros in (500, 5000), tail in ("", "5", "1"^60)
+        s = "0"^zeros * tail
+        tok = b(s * " ")
+        for base in (10, 16, 7)
+            expect = isempty(tail) ? BigInt(0) : parse(BigInt, tail; base)
+            @test Parsers.parse(BigInt, s; base) == expect
+            @test Parsers.parsebigint(b(s), 1, ncodeunits(s), base)[1] == expect
+            v = Parsers.parsenext(BigInt, tok, 1, length(tok); base)[1]
+            @test v == expect
+            @test v.size == expect.size
+        end
+    end
     # an invalid byte anywhere in a long token is still rejected
     @test Parsers.tryparse(BigInt, "9"^500 * "x") === nothing
     @test Parsers.tryparse(BigInt, "9"^300 * "x" * "9"^300) === nothing

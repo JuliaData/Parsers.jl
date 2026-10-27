@@ -972,6 +972,18 @@ const _GMP_SETSTR_SCRATCH_LIMBS = 2
 # count; see `_bigintgmp`.
 @inline function _setbasedigits!(big::BigInt, digits::Vector{UInt8}, ndig::Int,
                                  base::Int=10)
+    # Skip leading zero digits, as mpz_set_str does: from a zero leading digit
+    # __gmpn_set_str may return zero high limbs, and a BigInt's top limb must
+    # be nonzero.
+    first = 1
+    @inbounds while first <= ndig && digits[first] == 0x00
+        first += 1
+    end
+    ndig -= first - 1
+    if ndig == 0
+        big.size = 0
+        return big
+    end
     nlimbs = _limbsfordigits(_Limb, ndig, base)
     alloclimbs = nlimbs + _GMP_SETSTR_SCRATCH_LIMBS
     big.alloc < alloclimbs &&
@@ -979,7 +991,7 @@ const _GMP_SETSTR_SCRATCH_LIMBS = 2
     rawsize = GC.@preserve big digits begin
         ccall((:__gmpn_set_str, Base.GMP.libgmp), _GMP_SIZE_T,
               (Ptr{_Limb}, Ptr{UInt8}, Csize_t, Cint),
-              big.d, pointer(digits), ndig, base)
+              big.d, pointer(digits, first), ndig, base)
     end
     0 <= rawsize <= alloclimbs || _gmpcapacityoverflow()
     big.size = _gmpsize(Int(rawsize))
