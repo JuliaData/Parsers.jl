@@ -684,7 +684,9 @@ function _scale(::Type{T}, v::UInt64, exp, neg) where {T}
     return T(Core.bitcast(Float64, mantissa))
 end
 
-convert_and_apply_neg(::Type{T}, x, neg) where {T} = neg ? T(-x) : T(x)
+# Negate after converting: `-x` on a BigFloat rounds to the default precision,
+# which can land a long value exactly on a midpoint of `T`.
+convert_and_apply_neg(::Type{T}, x, neg) where {T} = neg ? -T(x) : T(x)
 
 # Copied from https://github.com/JuliaLang/julia/blob/c054dbc6d4e03d7168864fed018e3635b546d251/base/mpfr.jl#L1029-L1031
 function unalias_bigfloat(x::BigFloat)
