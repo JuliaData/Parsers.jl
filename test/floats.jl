@@ -514,6 +514,17 @@ end
         end
     end
 
+    # A negative value rounds like its magnitude, also when the token needs more
+    # than the default BigFloat precision to tell it from a midpoint of `T`.
+    @testset "negative long tokens" begin
+        for (T, s) in ((Float16, "65519." * "9"^90), (Float32, "16777218." * "9"^80),
+                       (Float64, "9007199254740994." * "9"^80))
+            test_float_apis(T, s)
+            test_float_apis(T, "-" * s)
+            @test Parsers.parse(T, "-" * s) === -Parsers.parse(T, s)
+        end
+    end
+
     @testset "UInt128 scale boundaries" begin
         scale_oracle(::Type{T}, v, exp, neg) where {T} = setprecision(BigFloat, 512) do
             x = BigFloat(v)
