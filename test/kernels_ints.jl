@@ -163,6 +163,64 @@ using Random
     @test Parsers.parsebigint(padded, 3, 10)[1] == parse(BigInt, "34567890")
 end
 
+@testset "bigint: long tokens use GMP's subquadratic converter" begin
+    rng = MersenneTwister(2024)
+    # boundary around _BIGINT_GMP_DIGITS: the kernel and GMP paths must agree
+    for len in vcat(collect(Parsers._BIGINT_GMP_DIGITS .+ (-1:2)), [1000, 5000])
+        for sign in ("", "-", "+")
+            s = sign * String(rand(rng, '1':'9', 1)) * String(rand(rng, '0':'9', len - 1))
+            # span kernel, checked parse, and leading zeros
+            @test Parsers.parsebigint(b(s), 1, ncodeunits(s)) == (parse(BigInt, s), Parsers.RC_OK)
+            @test Parsers.parse(BigInt, s) == parse(BigInt, s)
+            @test Parsers.parse(BigInt, sign * "000" * s[length(sign)+1:end]) == parse(BigInt, s)
+            # parsenext stops at the token end and matches
+            tok = b(s * "!")
+            v, np, rc = Parsers.parsenext(BigInt, tok, 1, length(tok))
+            @test (v, np, rc) == (parse(BigInt, s), ncodeunits(s) + 1, Parsers.RC_OK)
+        end
+    end
+    # other bases (radix span and prefix) and grouped digits
+    let hex = "f"^1000
+        @test Parsers.parse(BigInt, hex; base = 16) == parse(BigInt, hex; base = 16)
+        @test Parsers.parse(BigInt, "1" * "0"^2000; base = 2) == parse(BigInt, "1" * "0"^2000; base = 2)
+    end
+    let grouped = "1" * repeat("_000", 400)   # 1 + 1200 digits, groupmark every 3
+        tok = b(grouped)
+        @test Parsers.parsenext(BigInt, tok, 1, length(tok); groupmark = '_') ==
+              (parse(BigInt, replace(grouped, "_" => "")), length(tok) + 1, Parsers.RC_OK)
+    end
+    # long runs of leading zeros give a normalized value on every path
+    # (power-of-two bases and long decimal runs once left zero high limbs)
+    for zeros in (500, 5000), tail in ("", "5", "1"^60)
+        s = "0"^zeros * tail
+        tok = b(s * " ")
+        for base in (10, 16, 7)
+            expect = isempty(tail) ? BigInt(0) : parse(BigInt, tail; base)
+            @test Parsers.parse(BigInt, s; base) == expect
+            @test Parsers.parsebigint(b(s), 1, ncodeunits(s), base)[1] == expect
+            v = Parsers.parsenext(BigInt, tok, 1, length(tok); base)[1]
+            @test v == expect
+            @test v.size == expect.size
+        end
+    end
+    # an invalid byte anywhere in a long token is still rejected
+    @test Parsers.tryparse(BigInt, "9"^500 * "x") === nothing
+    @test Parsers.tryparse(BigInt, "9"^300 * "x" * "9"^300) === nothing
+
+    # Regression: the limb multiply-accumulate kernels are quadratic in the
+    # digit count; GMP's converter is subquadratic. Compare against Base's GMP
+    # conversion so the bound is calibrated to the machine. Before this change
+    # the ratio was ~25x at a million digits.
+    big = "9"^1_000_000
+    bytes = b(big)
+    Parsers.parse(BigInt, big); parse(BigInt, big)              # warm up
+    partime = minimum(@elapsed(Parsers.parse(BigInt, big)) for _ in 1:3)
+    nexttime = minimum(@elapsed(Parsers.parsenext(BigInt, bytes, 1, length(bytes))) for _ in 1:3)
+    basetime = minimum(@elapsed(parse(BigInt, big)) for _ in 1:3)
+    @test partime < 10 * basetime
+    @test nexttime < 10 * basetime
+end
+
 @testset "single-pass integer prefix kernels" begin
     prefix_digits = codeunits("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
 
