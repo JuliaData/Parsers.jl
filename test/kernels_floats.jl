@@ -430,6 +430,38 @@ end
     end
 end
 
+@testset "setdecimaldigits!: coefficient buffer carries GMP scratch" begin
+    L = Base.GMP.Limb
+    # __gmpn_set_str accumulates into the destination and can write one limb
+    # past the value's significant limbs before normalizing. Measure how far
+    # libgmp actually reaches past the significant-limb bound, so this test
+    # pins the real platform requirement rather than a guessed constant.
+    sentinel = ~zero(L)
+    maxover = 0
+    for ndig in 1:4_000
+        nlimbs = Parsers._limbsfordigits(L, ndig)
+        buf = fill(sentinel, nlimbs + 8)
+        digits = fill(UInt8(1), ndig)
+        GC.@preserve buf digits ccall((:__gmpn_set_str, Base.GMP.libgmp), Clong,
+            (Ptr{Base.GMP.Limb}, Ptr{UInt8}, Csize_t, Cint),
+            pointer(buf), pointer(digits), ndig, 10)
+        touched = findlast(!=(sentinel), buf)
+        touched === nothing || (maxover = max(maxover, touched - nlimbs))
+    end
+    @test maxover <= Parsers._GMP_SETSTR_SCRATCH_LIMBS     # scratch covers it
+
+    # _setdecimaldigits! must size the destination so that scratch write stays
+    # inside the allocation. On a buffer sized to only the significant limbs
+    # (the previous behavior) libgmp overwrites the limb just past it.
+    big = BigInt()
+    for ndig in (1819, 1820, 154_015, 156_827)
+        digits = fill(UInt8(1), ndig)
+        Parsers._setdecimaldigits!(big, digits, ndig)
+        @test big.alloc > Parsers._limbsfordigits(L, ndig)
+        @test big == parse(BigInt, String(fill(UInt8('1'), ndig)))
+    end
+end
+
 @testset "BigFloat public package and native conversion paths" begin
     rng = MersenneTwister(21)
     okall = true

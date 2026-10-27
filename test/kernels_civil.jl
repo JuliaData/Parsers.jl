@@ -329,6 +329,33 @@ end
     @test Parsers.parsecivil(UInt8[], 1, 0, wide_natural)[2] == Parsers.RC_INVALID
 end
 
+@testset "civil: space-separated ISO date-time executor" begin
+    pattern = Parsers.compilepattern("yyyy-mm-dd HH:MM:SS.s")
+    @test pattern._storage.plan.executor == Parsers._EXECUTE_ISO_DATETIME_SPACE
+    @test Parsers.parseiso19(b("2024-01-02 03:04:05"), 1, UInt8(' ')) ==
+          (Parsers.CivilParts(2024, 1, 2, 3, 4, 5, 0), Parsers.RC_OK)
+    @test Parsers.parseiso19frac(b("2024-01-02 03:04:05.125"), 1, 23, UInt8(' ')) ==
+          (Parsers.CivilParts(2024, 1, 2, 3, 4, 5, 125_000_000), Parsers.RC_OK)
+    @test Parsers.parseiso19(b("2024-01-02 03:04:05"), 1)[2] == Parsers.RC_INVALID
+    @test Parsers.parse(DateTime, "2024-01-02 03:04:05.5"; dateformat=pattern) ==
+          DateTime(2024, 1, 2, 3, 4, 5, 500)
+    # Every one-byte mutation of each shape: the accelerator and its fallback
+    # agree with the interpreter on what they accept and on every value.
+    agree = true
+    for base in (b("2024-02-29 23:59:59"), b("2024-02-29 23:59:59.125"),
+                 b("2024-02-29 23:59:59.123456789"))
+        for pos in eachindex(base), byte in UInt8(0):UInt8(255)
+            bytes = copy(base)
+            bytes[pos] = byte
+            fast = Parsers.parsecivil(bytes, 1, length(bytes), pattern)
+            interpreted = Parsers._interpretcivil(bytes, 1, length(bytes), pattern._storage,
+                                                   pattern._storage.plan.flags)
+            agree &= fast == interpreted
+        end
+    end
+    @test agree
+end
+
 @testset "civil: ISO fraction fast paths agree with Dates" begin
     datetimewhole = DateFormat("yyyy-mm-ddTHH:MM:SS")
     timewhole = DateFormat("HH:MM:SS")
@@ -572,6 +599,19 @@ end
         d = Parsers.compilepattern(df)
         @test Parsers.parse(T, s; dateformat=a) == expected
         @test Parsers.parse(T, s; dateformat=d) == expected
+    end
+    # Before Julia 1.14 a package can register `n` at load time (Durations.jl
+    # does); format strings compiled afterwards read it as a code.
+    if !haskey(Dates.CONVERSION_SPECIFIERS, 'n')
+        Dates.CONVERSION_SPECIFIERS['n'] = Nanosecond
+        try
+            p = Parsers.compilepattern("HH:MM:SS.n")
+            @test Parsers.parse(Time, "13:14:15.123456789"; dateformat=p) ==
+                  Time(13, 14, 15, 123, 456, 789)
+        finally
+            delete!(Dates.CONVERSION_SPECIFIERS, 'n')
+        end
+        @test Parsers.tryparse(Time, "13:14:15.123"; dateformat=Parsers.compilepattern("HH:MM:SS.n")) === nothing
     end
     # variable widths and greedy trailing fields, as Dates
     for (s, f, T) in (("3/14/2021", "mm/dd/yyyy", Date), ("03/14/02021", "mm/dd/yyyy", Date),

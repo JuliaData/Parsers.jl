@@ -336,6 +336,7 @@ const _EXECUTE_ISO_DATE = UInt8(0x01)
 const _EXECUTE_ISO_DATETIME = UInt8(0x02)
 const _EXECUTE_ISO_TIME = UInt8(0x03)
 const _EXECUTE_NUMERIC_DATE = UInt8(0x04)
+const _EXECUTE_ISO_DATETIME_SPACE = UInt8(0x05)
 const _ORDER_YMD = UInt8(0x39)
 const _ORDER_YDM = UInt8(0x2d)
 const _ORDER_MYD = UInt8(0x36)
@@ -422,6 +423,9 @@ const _ISO_DATETIME_OPS = (
     PatternOp(0x06, 0xff, false), PatternOp(0x08, UInt8('.'), true),
     PatternOp(0x07, 0x09, false),
 )
+# `yyyy-mm-dd HH:MM:SS.s`: the ISO fields with a space between date and time
+const _ISO_DATETIME_SPACE_OPS =
+    Base.setindex(_ISO_DATETIME_OPS, PatternOp(0x08, UInt8(' '), true), 6)
 
 @inline function _sameops(ops::Vector{PatternOp}, expected::Tuple)
     length(ops) == length(expected) || return false
@@ -434,6 +438,7 @@ end
 @inline function _executor(ops::Vector{PatternOp}, numeric::NumericDelimitedDatePattern)
     _sameops(ops, _ISO_DATE_OPS) && return _EXECUTE_ISO_DATE
     _sameops(ops, _ISO_DATETIME_OPS) && return _EXECUTE_ISO_DATETIME
+    _sameops(ops, _ISO_DATETIME_SPACE_OPS) && return _EXECUTE_ISO_DATETIME_SPACE
     _sameops(ops, _ISO_TIME_OPS) && return _EXECUTE_ISO_TIME
     numeric.order != 0 && return _EXECUTE_NUMERIC_DATE
     return _EXECUTE_PROGRAM
@@ -461,7 +466,7 @@ compilepattern(p::DatePattern) = p
     c == 'y' || c == 'Y' ? UInt8(1) :
     c == 'm' ? UInt8(2) : c == 'd' ? UInt8(3) : c == 'H' ? UInt8(4) :
     c == 'M' ? UInt8(5) : c == 'S' ? UInt8(6) :
-    c == 's' || (c == 'n' && _DATES_N_CODE) ? UInt8(7) :
+    c == 's' || (c == 'n' && _datesncode()) ? UInt8(7) :
     c == 'u' ? UInt8(9) : c == 'U' ? UInt8(10) : c == 'I' ? UInt8(11) :
     c == 'p' ? UInt8(12) : c == 'e' ? UInt8(13) : c == 'E' ? UInt8(14) : UInt8(0)
 
@@ -480,8 +485,9 @@ end
     compilepattern(fmt::AbstractString) -> DatePattern
 
 Compile a Dates-style format string (numeric tokens `y Y m d H I M S s u U`,
-the fractional-second token `n` where the running Dates defines it (Julia 1.14
-and later), AM/PM token `p`, named weekday tokens `e E`, plus literal separators) with
+the fractional-second token `n` where the running Dates defines it (Julia 1.14,
+or a package that registers it), AM/PM token `p`, named weekday tokens `e E`,
+plus literal separators) with
 `Dates.DateFormat`'s width rules: a numeric field is
 fixed-width only when another field follows it directly (`yyyymmdd`);
 otherwise it is greedy, so `mm/dd/yyyy` accepts `3/14/2021`.
@@ -1031,12 +1037,13 @@ end
 end
 
 """
-    parseiso19(buf, i) -> (CivilParts, rc)
+    parseiso19(buf, i, sep=UInt8('T')) -> (CivilParts, rc)
 
-`yyyy-mm-ddTHH:MM:SS` in exactly 19 bytes (no subseconds; those fall through).
+`yyyy-mm-ddTHH:MM:SS` in exactly 19 bytes (no subseconds; those fall through),
+with `sep` between the date and the time.
 """
-@inline function parseiso19(buf::AbstractVector{UInt8}, i::Int)
-    @inbounds buf[i + 10] == UInt8('T') || return (CivilParts(), RC_INVALID)
+@inline function parseiso19(buf::AbstractVector{UInt8}, i::Int, sep::UInt8=UInt8('T'))
+    @inbounds buf[i + 10] == sep || return (CivilParts(), RC_INVALID)
     y, mo, d, okd = _iso_ymd(buf, i)
     h, mi, s, okt = _iso_hms(buf, i + 11)
     (okd && okt && _validymd(y, mo, d) && _validhms(h, mi, s)) ||
@@ -1073,13 +1080,15 @@ const _NSSCALE = (1_000_000_000, 100_000_000, 10_000_000, 1_000_000, 100_000,
 end
 
 """
-    parseiso19frac(buf, i, j) -> (CivilParts, rc)
+    parseiso19frac(buf, i, j, sep=UInt8('T')) -> (CivilParts, rc)
 
 `yyyy-mm-ddTHH:MM:SS.s` with one to nine fraction digits (21–29 bytes; the
-caller checks the length). Agrees with `parsecivil` and `ISO_DATETIME`.
+caller checks the length), with `sep` between the date and the time. Agrees
+with `parsecivil` for the date-time pattern with that separator.
 """
-@inline function parseiso19frac(buf::AbstractVector{UInt8}, i::Int, j::Int)
-    @inbounds (buf[i + 10] == UInt8('T')) & (buf[i + 19] == UInt8('.')) ||
+@inline function parseiso19frac(buf::AbstractVector{UInt8}, i::Int, j::Int,
+                                sep::UInt8=UInt8('T'))
+    @inbounds (buf[i + 10] == sep) & (buf[i + 19] == UInt8('.')) ||
         return (CivilParts(), RC_INVALID)
     y, mo, d, okd = _iso_ymd(buf, i)
     h, mi, s, okt = _iso_hms(buf, i + 11)
@@ -1133,6 +1142,8 @@ end
         return _executecivil(buf, i, j, storage, Val(_EXECUTE_ISO_DATE))
     executor == _EXECUTE_ISO_DATETIME &&
         return _executecivil(buf, i, j, storage, Val(_EXECUTE_ISO_DATETIME))
+    executor == _EXECUTE_ISO_DATETIME_SPACE &&
+        return _executecivil(buf, i, j, storage, Val(_EXECUTE_ISO_DATETIME_SPACE))
     executor == _EXECUTE_ISO_TIME &&
         return _executecivil(buf, i, j, storage, Val(_EXECUTE_ISO_TIME))
     return _executecivil(buf, i, j, storage, Val(_EXECUTE_NUMERIC_DATE))
@@ -1156,14 +1167,20 @@ end
     return _fallbackcivil(buf, i, j, storage)
 end
 
-@inline function _executecivil(buf, i::Int, j::Int, storage::CivilPlanBox,
-                               ::Val{_EXECUTE_ISO_DATETIME})
+@inline _executecivil(buf, i::Int, j::Int, storage::CivilPlanBox,
+                       ::Val{_EXECUTE_ISO_DATETIME}) =
+    _isodatetime(buf, i, j, storage, UInt8('T'))
+@inline _executecivil(buf, i::Int, j::Int, storage::CivilPlanBox,
+                       ::Val{_EXECUTE_ISO_DATETIME_SPACE}) =
+    _isodatetime(buf, i, j, storage, UInt8(' '))
+
+@inline function _isodatetime(buf, i::Int, j::Int, storage::CivilPlanBox, sep::UInt8)
     n = j - i + 1
     if n == 19
-        c, rc = parseiso19(buf, i)
+        c, rc = parseiso19(buf, i, sep)
         rc == RC_OK && return (c, rc)
     elseif 21 <= n <= 29
-        c, rc = parseiso19frac(buf, i, j)
+        c, rc = parseiso19frac(buf, i, j, sep)
         rc == RC_OK && return (c, rc)
     end
     return _fallbackcivil(buf, i, j, storage)

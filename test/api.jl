@@ -584,20 +584,27 @@ end
         @test rc == (isinf(value) ? Parsers.RC_OVERFLOW : Parsers.RC_UNDERFLOW)
     end
 
-    # These are deliberate Base deltas. Parsers does not ask Base to parse a
-    # fixed float, even on Base's Windows-specific Float32 range path.
-    @test isequal(Base.tryparse(Float16, "1e5"), Inf16)
-    @test isequal(Base.tryparse(Float16, "-1e-20"), -Float16(0))
-    if Sys.iswindows()
-        @test Base.tryparse(Float64, "1e400") === nothing
-        @test Base.tryparse(Float64, "-1e-400") === nothing
-        @test isequal(Base.tryparse(Float32, "1e40"), Inf32)
-        @test isequal(Base.tryparse(Float32, "-1e-46"), -0.0f0)
+    # Parsers does not ask Base to parse a fixed float. Base itself has two
+    # range behaviors: Julia 1.15's float parser reports these out-of-range
+    # value as Parsers does, while earlier Base rounds an out-of-range Float16
+    # (and, on Windows, Float32) to infinity or signed zero.
+    if Base.tryparse(Float16, "1e5") === nothing
+        for (T, s) in ((Float16, "1e5"), (Float16, "-1e-20"), (Float32, "1e40"),
+                       (Float32, "-1e-46"), (Float64, "1e400"), (Float64, "-1e-400"))
+            @test Base.tryparse(T, s) === nothing
+        end
     else
+        @test isequal(Base.tryparse(Float16, "1e5"), Inf16)
+        @test isequal(Base.tryparse(Float16, "-1e-20"), -Float16(0))
         @test Base.tryparse(Float64, "1e400") === nothing
         @test Base.tryparse(Float64, "-1e-400") === nothing
-        @test Base.tryparse(Float32, "1e40") === nothing
-        @test Base.tryparse(Float32, "-1e-46") === nothing
+        if Sys.iswindows()
+            @test isequal(Base.tryparse(Float32, "1e40"), Inf32)
+            @test isequal(Base.tryparse(Float32, "-1e-46"), -0.0f0)
+        else
+            @test Base.tryparse(Float32, "1e40") === nothing
+            @test Base.tryparse(Float32, "-1e-46") === nothing
+        end
     end
 
     @test !isdefined(Parsers, :_trycfloat)
