@@ -18,11 +18,20 @@ const _BIGINT_SETSTR_SCRATCH_LIMBS = 2
 end
 
 function _bigint_from_digit_values(digits::Vector{UInt8}, ndig::Int, neg::Bool)
+    # Skip leading zero digits, as mpz_set_str does: from a zero leading digit
+    # __gmpn_set_str may return zero high limbs, and a BigInt's top limb must
+    # be nonzero.
+    first = 1
+    while first <= ndig && @inbounds(digits[first]) == 0x00
+        first += 1
+    end
+    ndig -= first - 1
+    ndig == 0 && return BigInt(0)
     nlimbs = _bigint_decimal_limbs(ndig) + _BIGINT_SETSTR_SCRATCH_LIMBS
     big = BigInt(; nbits = nlimbs * 8 * sizeof(Base.GMP.Limb))
     rawsize = GC.@preserve big digits ccall((:__gmpn_set_str, :libgmp), Clong,
         (Ptr{Base.GMP.Limb}, Ptr{UInt8}, Csize_t, Cint),
-        big.d, pointer(digits), ndig, 10)
+        big.d, pointer(digits, first), ndig, 10)
     big.size = (neg && rawsize != 0) ? -(rawsize % Cint) : (rawsize % Cint)
     return big
 end

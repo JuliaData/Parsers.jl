@@ -501,8 +501,10 @@ end
     # Long tokens take the GMP converter and match Base, including leading
     # zeros, signs, and the subquadratic time (the old limb loop was ~250x
     # slower than Base's GMP conversion at 100k digits).
-    for s in ("9"^384, "-" * "9"^385, "0"^500 * "123", "9"^5000)
+    for s in ("9"^384, "-" * "9"^385, "0"^500 * "123", "9"^5000,
+              "0"^5000 * "123", "-" * "0"^5000 * "1"^60, "0"^5000)
         @test Parsers.parse(BigInt, s) == parse(BigInt, s)
+        @test Parsers.parse(BigInt, s).size == parse(BigInt, s).size
     end
     big = "9"^1_000_000
     Parsers.parse(BigInt, big); parse(BigInt, big)      # warm up
