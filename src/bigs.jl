@@ -908,17 +908,24 @@ end
     end
 end
 
+# __gmpn_set_str accumulates into the destination and can touch one limb beyond
+# the value's significant limbs before it normalizes the result, so the buffer
+# must carry scratch room past _limbsfordigits. GMP's own mpz_set_str allocates
+# two guard limbs for this; match that margin.
+const _GMP_SETSTR_SCRATCH_LIMBS = 2
+
 # Convert a numeric digit buffer to GMP limbs without invoking a string parser.
 @inline function _setdecimaldigits!(big::BigInt, digits::Vector{UInt8}, ndig::Int)
     nlimbs = _limbsfordigits(_Limb, ndig)
-    big.alloc < nlimbs &&
-        Base.GMP.MPZ.realloc2!(big, _gmpbitsforlimbs(nlimbs))
+    alloclimbs = nlimbs + _GMP_SETSTR_SCRATCH_LIMBS
+    big.alloc < alloclimbs &&
+        Base.GMP.MPZ.realloc2!(big, _gmpbitsforlimbs(alloclimbs))
     rawsize = GC.@preserve big digits begin
         ccall((:__gmpn_set_str, Base.GMP.libgmp), _GMP_SIZE_T,
               (Ptr{_Limb}, Ptr{UInt8}, Csize_t, Cint),
               big.d, pointer(digits), ndig, 10)
     end
-    0 <= rawsize <= nlimbs || _gmpcapacityoverflow()
+    0 <= rawsize <= alloclimbs || _gmpcapacityoverflow()
     big.size = _gmpsize(Int(rawsize))
     return big
 end
