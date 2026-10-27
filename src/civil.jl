@@ -289,14 +289,14 @@ function _civilnametable(entries::AbstractDict{String, <:Integer}, ::Val{N},
                          executor::UInt8) where {N}
     length(entries) <= N || throw(ArgumentError("too many civil name keys"))
     pairs = sort!(collect(entries); by=first)
-    raw = ntuple(i -> i <= length(pairs) ? String(pairs[i].first) : "", N)
+    raw = ntuple(i -> i <= length(pairs) ? String(pairs[i].first) : "", Val(N))
     values = ntuple(i -> begin
         i <= length(pairs) || return Int8(0)
         value = pairs[i].second
         1 <= value <= typemax(Int8) ||
             throw(ArgumentError("civil name value $value is outside the supported range"))
         Int8(value)
-    end, N)
+    end, Val(N))
     maxchars = 0
     for i in 1:N
         maxchars = max(maxchars, length(raw[i]))
@@ -374,8 +374,9 @@ function _fixeddatepattern(ops::Vector{PatternOp})
         end
     end
     1 < pos <= 33 || return FixedDatePattern()
-    return FixedDatePattern(UInt8(pos - 1), Tuple(offsets), Tuple(widths),
-                            Tuple(masks), Tuple(values))
+    return FixedDatePattern(UInt8(pos - 1), ntuple(i -> offsets[i], Val(7)),
+                            ntuple(i -> widths[i], Val(7)), ntuple(i -> masks[i], Val(4)),
+                            ntuple(i -> values[i], Val(4)))
 end
 
 function _numericdatepattern(ops::Vector{PatternOp})

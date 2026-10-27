@@ -2,9 +2,11 @@
 # rung of the overflow-widening ladder (UInt64 → UInt128 → BigInt) that the
 # trim fix makes statically reachable — under the old Base.inferencebarrier
 # form these calls were verifier errors AND the widened instances were absent
-# from trimmed binaries (wide-mantissa parses would fail at runtime). Compiled
+# from trimmed binaries (wide-mantissa parses would fail at runtime). It also
+# compiles date format strings at run time with `compilepattern`. Compiled
 # by test/trim_compile_tests.jl with `juliac --trim=safe` (error budget zero),
 # then executed so the value assertions prove runtime rounding too.
+using Dates
 using Parsers
 
 function _assert_float_basics()::Nothing
@@ -68,11 +70,26 @@ function _assert_non_floats()::Nothing
     return nothing
 end
 
+# runtime-compiled formats through the fixed-width descriptor, the numeric
+# delimited reader (variable widths), and the general interpreter (names)
+function _assert_date_patterns()::Nothing
+    p = Parsers.compilepattern("yyyy/mm/dd")
+    Parsers.parse(Date, "2024/03/15"; dateformat=p) === Date(2024, 3, 15) ||
+        error("fixed-width date pattern")
+    Parsers.parse(Date, "2024/3/5"; dateformat=p) === Date(2024, 3, 5) ||
+        error("numeric date pattern")
+    p = Parsers.compilepattern("d u yyyy HH:MM")
+    Parsers.parse(DateTime, "5 Mar 2024 13:45"; dateformat=p) ===
+        DateTime(2024, 3, 5, 13, 45) || error("named date pattern")
+    return nothing
+end
+
 function run_parsers_trim_workload()::Nothing
     _assert_float_basics()
     _assert_widening_ladder()
     _assert_float_edges()
     _assert_non_floats()
+    _assert_date_patterns()
     return nothing
 end
 
