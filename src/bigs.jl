@@ -185,10 +185,17 @@ const _Limb = Base.GMP.Limb
     return size
 end
 
-# Limbs that hold `ndig` decimal digits: ⌈ndig·log2(10)⌉ bits, rounded up.
-@inline function _limbsfordigits(::Type{L}, ndig::Int) where {L <: Unsigned}
+# ⌈log2(base)·1024⌉ for bases 2..62, so ndig·_LOG2_BASE_Q10[base] >> 10 never
+# underestimates the bits needed. Entry 10 is 3402, the decimal bound.
+const _LOG2_BASE_Q10 = ntuple(62) do b
+    b < 2 ? 0 : ceil(Int, log2(b) * 1024)
+end
+
+# Limbs that hold `ndig` base-`base` digits: ⌈ndig·log2(base)⌉ bits, rounded up.
+@inline function _limbsfordigits(::Type{L}, ndig::Int, base::Int=10) where {L <: Unsigned}
     ndig >= 0 || throw(ArgumentError("digit count must be nonnegative"))
-    bits = (widemul(ndig, 3402) >> 10) + 1
+    2 <= base <= 62 || throw(ArgumentError("base must be between 2 and 62"))
+    bits = (widemul(ndig, @inbounds _LOG2_BASE_Q10[base]) >> 10) + 1
     limbs = cld(bits, 8 * sizeof(L))
     limbs <= typemax(Int) ||
         throw(OverflowError("BigInt limb count is not representable"))
@@ -260,9 +267,11 @@ end
     parsebigint(buf, i, j) -> (BigInt, rc)
 
 Exact-span BigInt: sign and decimal digits only (the strict integer grammar,
-same as `parseint64` without the width limit). The digits become limb-sized
-decimal chunks that multiply-accumulate straight into the BigInt's limbs, so
-the only GMP involvement is the allocation.
+same as `parseint64` without the width limit). Short tokens multiply-accumulate
+straight into the BigInt's limbs, so the only GMP involvement is the
+allocation. Tokens longer than `_BIGINT_GMP_DIGITS` digits, where that kernel
+is quadratic, instead collect the digit values and use GMP's subquadratic
+converter.
 """
 function parsebigint(buf::AbstractVector{UInt8}, i::Int, j::Int)
     if _needsindexwindow(j)
@@ -285,6 +294,10 @@ function _parsebigintdecimalexact(buf::AbstractVector{UInt8}, i::Int, j::Int)
     i > j && return (BigInt(0), RC_INVALID)
     @inbounds while i < j && buf[i] == UInt8('0')
         i += 1
+    end
+    if j - i + 1 > _BIGINT_GMP_DIGITS
+        value, rc, _ = _bigintgmp(buf, i, j, neg, 10)
+        return (value, rc)
     end
     nlimbs = _limbsfordigits(_Limb, j - i + 1)
     big = BigInt(; nbits=_gmpbitsforlimbs(nlimbs))
@@ -328,6 +341,7 @@ function _parsebigintradixexact(buf::AbstractVector{UInt8}, i::Int, j::Int,
         end
     end
     i > j && return (BigInt(0), RC_INVALID, orig)
+    j - i + 1 > _BIGINT_GMP_DIGITS && return _bigintgmp(buf, i, j, neg, base)
     big = BigInt(0)
     MPZ = Base.GMP.MPZ
     @inbounds while i <= j
@@ -417,6 +431,44 @@ function _parsebigintprefix(buf::AbstractVector{UInt8}, pos::Int, last::Int,
     @inbounds begin
         firstdigit = k <= last ? _digitvalue(buf[k], b) : 0xff
         firstdigit < b || return (BigInt(0), pos, RC_INVALID)
+    end
+
+    # Find the token end and digit count with a cheap scan (same grammar as the
+    # accumulate loop below). A long run builds with GMP's subquadratic
+    # converter instead of the quadratic limb multiply-accumulate; a short run
+    # falls through to that allocation-free kernel.
+    scanend = k
+    ndig = 0
+    sawd = false
+    @inbounds while scanend <= last
+        d = _digitvalue(buf[scanend], b)
+        if d < b
+            sawd = true
+            ndig += 1
+            scanend += 1
+        elseif gm !== nothing && sawd && buf[scanend] == gm && scanend < last &&
+               _digitvalue(buf[scanend + 1], b) < b
+            scanend += 1
+        else
+            break
+        end
+    end
+    if ndig > _BIGINT_GMP_DIGITS
+        digits = Vector{UInt8}(undef, ndig)
+        t = 1
+        kk = k
+        @inbounds while t <= ndig
+            d = _digitvalue(buf[kk], b)
+            if d < b
+                digits[t] = d
+                t += 1
+            end
+            kk += 1
+        end
+        big = BigInt()
+        _setbasedigits!(big, digits, ndig, b)
+        neg && !iszero(big.size) && (big.size = _gmpsize(-Int(big.size)))
+        return (big, scanend, RC_OK)
     end
 
     limbbits = 8 * sizeof(_Limb)
@@ -914,20 +966,63 @@ end
 # two guard limbs for this; match that margin.
 const _GMP_SETSTR_SCRATCH_LIMBS = 2
 
-# Convert a numeric digit buffer to GMP limbs without invoking a string parser.
-@inline function _setdecimaldigits!(big::BigInt, digits::Vector{UInt8}, ndig::Int)
-    nlimbs = _limbsfordigits(_Limb, ndig)
+# Convert a buffer of raw digit values (each < base) to GMP limbs with GMP's
+# own string-to-limb converter. GMP's conversion is subquadratic for large
+# inputs, where the limb multiply-accumulate kernels are quadratic in the digit
+# count; see `_bigintgmp`.
+@inline function _setbasedigits!(big::BigInt, digits::Vector{UInt8}, ndig::Int,
+                                 base::Int=10)
+    # Skip leading zero digits, as mpz_set_str does: from a zero leading digit
+    # __gmpn_set_str may return zero high limbs, and a BigInt's top limb must
+    # be nonzero.
+    first = 1
+    @inbounds while first <= ndig && digits[first] == 0x00
+        first += 1
+    end
+    ndig -= first - 1
+    if ndig == 0
+        big.size = 0
+        return big
+    end
+    nlimbs = _limbsfordigits(_Limb, ndig, base)
     alloclimbs = nlimbs + _GMP_SETSTR_SCRATCH_LIMBS
     big.alloc < alloclimbs &&
         Base.GMP.MPZ.realloc2!(big, _gmpbitsforlimbs(alloclimbs))
     rawsize = GC.@preserve big digits begin
         ccall((:__gmpn_set_str, Base.GMP.libgmp), _GMP_SIZE_T,
               (Ptr{_Limb}, Ptr{UInt8}, Csize_t, Cint),
-              big.d, pointer(digits), ndig, 10)
+              big.d, pointer(digits, first), ndig, base)
     end
     0 <= rawsize <= alloclimbs || _gmpcapacityoverflow()
     big.size = _gmpsize(Int(rawsize))
     return big
+end
+
+# BigFloat coefficients are always decimal.
+@inline _setdecimaldigits!(big::BigInt, digits::Vector{UInt8}, ndig::Int) =
+    _setbasedigits!(big, digits, ndig, 10)
+
+# Past this many digits the limb multiply-accumulate kernels (quadratic in the
+# digit count) are slower than collecting the digit values and handing them to
+# GMP's subquadratic converter. Shorter tokens — every fixed-width value and
+# any normal big integer — stay on the allocation-free kernel path.
+const _BIGINT_GMP_DIGITS = 384
+
+# Build a BigInt magnitude from the delimited digit span buf[i:j] in `base`,
+# validating each byte, using GMP's converter. `neg` sets the sign. Returns
+# (value, rc, badpos); badpos locates the first invalid byte when rc is INVALID.
+function _bigintgmp(buf::AbstractVector{UInt8}, i::Int, j::Int, neg::Bool, base::Int)
+    ndig = j - i + 1
+    digits = Vector{UInt8}(undef, ndig)
+    @inbounds for k in 1:ndig
+        d = _digitvalue(buf[i + k - 1], base)
+        (d == 0xff || d >= base) && return (BigInt(0), RC_INVALID, i + k - 1)
+        digits[k] = d
+    end
+    big = BigInt()
+    _setbasedigits!(big, digits, ndig, base)
+    neg && !iszero(big.size) && (big.size = _gmpsize(-Int(big.size)))
+    return (big, RC_OK, 0)
 end
 
 # Collect significant digits and their decimal scale from an already validated
