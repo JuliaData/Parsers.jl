@@ -421,11 +421,9 @@ end
 """
     parseint(T, buf, i, j) -> (T, rc)
 
-Exact-span base-10 integer of any width: an optional sign for signed targets,
-and digits only for unsigned targets. `rc` is `RC_OK`, `RC_INVALID`, or
-`RC_OVERFLOW` (well-formed digits outside `T`'s range — the code a caller's
-type lattice uses to widen). Int64/UInt64 and narrower go through the SWAR
-kernels; Int128/UInt128 through 8-digit checked blocks.
+Parse `buf[i:j]` as a base-10 integer of type `T`: an optional sign for signed
+targets, and digits only for unsigned targets. `rc` is `RC_OK`, `RC_INVALID`,
+or `RC_OVERFLOW` (well-formed digits outside `T`'s range).
 """
 @inline function parseint(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int) where {T <: _SIGNED}
     if T === Int128
@@ -722,10 +720,8 @@ parsegroupedprefixedint(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
 """
     parseint(T, buf, i, j, base) -> (T, rc, badpos)
 
-Integer in `base` (2 ≤ base ≤ 62; base 10 takes the SWAR path above), any
-width; `badpos` is the position of the offending byte when `rc == RC_INVALID`
-(0 otherwise) so the caller can name it the way `Base.parse` does. Overflow
-is detected with checked arithmetic.
+Parse `buf[i:j]` as an integer in `base` (2 ≤ base ≤ 62). `badpos` is the
+position of the offending byte when `rc == RC_INVALID`, and 0 otherwise.
 """
 function parseint(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
                   base::Int) where {T <: Union{_SIGNED, _UNSIGNED}}

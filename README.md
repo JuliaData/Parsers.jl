@@ -13,12 +13,12 @@ has two levels:
 - Span-exact kernels provide low-level `(value, code)` results for readers and
   tokenizers that already control their input bounds.
 
-Parsers 3 is a rewrite. It keeps whole-value parsing and removes the
-delimited-field machinery from Parsers 2. The reader now owns quoting,
-delimiters, escaping, and missing-value rules.
+Parsers parses values, not delimited fields: quoting, delimiters, escaping,
+and missing values belong to the reader that calls it. See
+[Migrating from Parsers 2](#migrating-from-parsers-2) when upgrading.
 
-Parsers 3 requires Julia 1.10 or later. The package exports no names. Use its
-API through the `Parsers` namespace.
+Parsers requires Julia 1.10 or later and exports no names; use its API
+through the `Parsers` namespace.
 
 ## Installation
 
@@ -66,13 +66,9 @@ Supported whole-value targets and their keywords are:
 | `Dates.Date`, `Dates.DateTime`, and `Dates.Time` | `dateformat` |
 | `Base.UUID` | none |
 
-Short default decimals and in-range values with a supported rounding mode and
-a custom `decimal` or `groupmark` use Parsers' package-owned numeric
-conversion. Longer default values go directly to MPFR's native BigFloat string
-parser. That parser also handles hexadecimal values, NaN payloads, and MPFR's
-full exponent range. Configured syntax is always validated by Parsers; a valid
-configured value outside the bounded kernel's range is normalized before MPFR
-converts it.
+`BigFloat` parsing covers MPFR's full exponent range. Without a custom
+`decimal` or `groupmark`, it also accepts MPFR-only spellings such as `nan(...)`
+payloads.
 
 Numbers and `Bool` accept surrounding ASCII whitespace. Dates and UUIDs must
 fill the input exactly. Custom `trues` and `falses` lists replace the default
@@ -100,10 +96,8 @@ Parsers.parse(Date, "01/20/2018"; dateformat=pattern)
 ```
 
 A `Dates.DateFormat` keeps its escaped literals and locale tables. A format
-string uses the default English tables. Format strings and dynamic or
-noncanonical `Dates.DateFormat` values use bounded caches. Canonical English
-DateFormats compile lazily into their specialized adapters. `compilepattern`
-lets a caller compile eagerly and keep the resulting plan.
+string uses the default English tables. Parsers caches compiled formats, so
+repeating a format string or `DateFormat` does not recompile it.
 Fractional-second fields accept up to nine digits. `Time` preserves
 nanoseconds, while `DateTime` truncates to its millisecond resolution.
 
@@ -124,10 +118,8 @@ Parsers.tryparse(Bool, buf, 10, 13)    # true
 `AbstractString` inputs can require a copy. Byte vectors with offset axes are
 rejected because public span indices are one-based.
 
-Use `parsenext` when the token end is not known. It finds and parses the
-longest supported token at `pos` and does not skip whitespace. Recognition and
-conversion advance together; it does not scan a boundary and then call a
-whole-value parser on the same span:
+Use `parsenext` when the token end is not known. It parses the longest
+supported token at `pos` in one pass and does not skip whitespace:
 
 ```julia
 value, nextpos, code = Parsers.parsenext(Float64, buf, 4, length(buf))
@@ -135,9 +127,10 @@ value, nextpos, code = Parsers.parsenext(Float64, buf, 4, length(buf))
 ```
 
 `nextpos` is the first byte that was not consumed. It equals `pos` when no
-valid token starts there. A range error consumes the complete token, returns
-the rounded or range value, and sets `RC_OVERFLOW` or `RC_UNDERFLOW`. An
-invalid token returns the zero value for the target and sets `RC_INVALID`.
+valid token starts there. A range error consumes the whole token and sets
+`RC_OVERFLOW` or `RC_UNDERFLOW`; `Float16`, `Float32`, and `Float64` return
+the rounded value (`±Inf` or `±0.0`), and other targets return zero. An invalid
+token returns zero and sets `RC_INVALID`.
 
 Byte bounds are checked. A nonempty range must satisfy
 `1 <= pos <= last <= length(bytes)`. When `length(bytes) + 1` is representable,
@@ -218,8 +211,9 @@ Known deliberate differences are:
   Base also accepts some `Float16` conversions that round to signed zero or
   infinity, and Windows accepts some such `Float32` values. Parsers reports
   range errors consistently on every platform.
-- Base accepts C99 `nan(...)` payload spellings such as `"NaN(123)"`. Parsers
-  accepts only plain `NaN` (any case, optional sign).
+- For `Float16`, `Float32`, and `Float64`, Base accepts C99 `nan(...)` payload
+  spellings such as `"NaN(123)"`. Parsers accepts only plain `NaN` (any case,
+  optional sign).
 - Base's `Bool` parser falls back to integer parsing, so it accepts spellings
   such as `"01"` and `"0x1"`. Parsers accepts exactly `"true"`, `"false"`,
   `"1"`, and `"0"`, or the provided `trues`/`falses` spellings.
@@ -337,19 +331,7 @@ and unescaping. The `typeparser`/`supportedtype` extension seam and its
 application-specific target parsing in the dependent package.
 
 `Parsers.Format` was removed. Pass a format string or `Dates.DateFormat`
-through `dateformat`. Compile a repeated format once with
-`Parsers.compilepattern`.
-
-Before enabling Parsers 3 in a dependent package:
-
-1. Search for every removed type, function, and configuration object named
-   above.
-2. Convert each old `pos, len` call to inclusive `first, last` indices.
-3. Move field structure and whitespace policy into the reader.
-4. Test empty input, byte-span boundaries, invalid tokens, overflow, and
-   underflow.
-5. Run the full dependent-package suite with the Parsers 3 source developed in
-   its environment.
+through `dateformat`, or compile one with `Parsers.compilepattern`.
 
 ## Maintenance
 
