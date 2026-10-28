@@ -23,7 +23,12 @@ end
 # and the DateFormat also carries the locale used for textual month/day names.
 # The adapter owns DateFormat translation and caching. Civil plan construction,
 # execution selection, and String-pattern caching remain in civil.jl.
-function _datepartop(t::Dates.DatePart{c}) where {c}
+# The token helpers take type-erased tokens and read type parameters with
+# checks, so `compilepattern` compiles once and still resolves every call.
+function _datepartop(t::Dates.DatePart)
+    Base.@nospecialize t
+    c = (typeof(t)::DataType).parameters[1]
+    c isa Char || throw(ArgumentError("unsupported DateFormat token $(typeof(t))"))
     width = t.width
     width >= 1 || throw(ArgumentError("date format token '$c' has invalid width $width"))
 
@@ -52,19 +57,24 @@ function _datepartop(t::Dates.DatePart{c}) where {c}
     return PatternOp(kind, maxwidth, t.fixed), hasdate, hastime
 end
 
+# `Dates.DateFormat` builds `Delim{Char,1}` and `Delim{String,N}` tokens; only
+# those value types are accepted.
 function _pushdelimiter!(ops::Vector{PatternOp}, t::Dates.Delim)
+    Base.@nospecialize t
     d = t.d
-    if d isa AbstractChar
+    n = (typeof(t)::DataType).parameters[2]
+    if d isa Char && n isa Int
         # Dates.Delim{Char,N} means the same character repeated N times.
-        n = Int(typeof(t).parameters[2])
-        bytes = codeunits(string(d))
-        for _ in 1:n, b in bytes
+        for _ in 1:n
+            _pushliteralchar!(ops, d)
+        end
+    elseif d isa String
+        for b in codeunits(d)
             push!(ops, PatternOp(8, b, true))
         end
     else
-        for b in codeunits(String(d))
-            push!(ops, PatternOp(8, b, true))
-        end
+        throw(ArgumentError("unsupported DateFormat token $(typeof(t)); a delimiter " *
+                            "must hold a String, or a Char repeated an Int number of times"))
     end
     return ops
 end
@@ -73,7 +83,9 @@ end
     compilepattern(df::Dates.DateFormat) -> DatePattern
 
 Compile a `Dates.DateFormat` directly into the byte-oriented pattern program.
-Escaped literals and the DateFormat's locale tables are preserved.
+Escaped literals and the DateFormat's locale tables are preserved. Delimiter
+tokens must hold a `String`, or a `Char` repeated an `Int` number of times, as
+`Dates.DateFormat` builds them; other hand-built delimiters throw `ArgumentError`.
 """
 function compilepattern(df::Dates.DateFormat)
     Base.@nospecialize df
@@ -136,12 +148,14 @@ struct _RuntimeDateFormatBucket
     locale_sensitive::Bool
 end
 
+# The DataType-keyed tables are IdDicts: `setindex!` on a `Dict{DataType}`
+# does not resolve statically, which `juliac --trim` rejects.
 mutable struct _RuntimeDateFormatCache
-    @atomic table::Dict{DataType, _RuntimeDateFormatBucket}
+    @atomic table::IdDict{DataType, _RuntimeDateFormatBucket}
 end
 
 const _RUNTIME_DATEFORMAT_CACHE =
-    _RuntimeDateFormatCache(Dict{DataType, _RuntimeDateFormatBucket}())
+    _RuntimeDateFormatCache(IdDict{DataType, _RuntimeDateFormatBucket}())
 const _RUNTIME_DATEFORMAT_LOCK = ReentrantLock()
 const _RUNTIME_DATEFORMAT_CACHE_MAX = 256
 const _RUNTIME_DATEFORMAT_BUCKET_MAX = 8
@@ -156,11 +170,11 @@ struct _CanonicalDateFormatBucket
 end
 
 mutable struct _CanonicalDateFormatCache
-    @atomic table::Dict{DataType, _CanonicalDateFormatBucket}
+    @atomic table::IdDict{DataType, _CanonicalDateFormatBucket}
 end
 
 const _CANONICAL_DATEFORMAT_CACHE =
-    _CanonicalDateFormatCache(Dict{DataType, _CanonicalDateFormatBucket}())
+    _CanonicalDateFormatCache(IdDict{DataType, _CanonicalDateFormatBucket}())
 
 @inline _sametokens(left::Tuple, right::Tuple) = left === right
 
@@ -174,7 +188,7 @@ const _CANONICAL_DATEFORMAT_CACHE =
     return nothing
 end
 
-function _formattypeuseslocale(tokens_type)
+function _formattypeuseslocale(@nospecialize tokens_type)
     tokens_type isa DataType && tokens_type <: Tuple || return true
     # An abstract tuple parameter can hold locale-sensitive DateParts even if
     # the first value cached under it contains only numeric fields. Key such a
@@ -182,9 +196,10 @@ function _formattypeuseslocale(tokens_type)
     # a plan compiled from another locale.
     isconcretetype(tokens_type) || return true
     for token_type in tokens_type.parameters
+        token_type isa DataType || continue
         token_type <: Dates.DatePart || continue
         c = token_type.parameters[1]
-        c in ('u', 'U', 'e', 'E') && return true
+        c isa Char && c in ('u', 'U', 'e', 'E') && return true
     end
     return false
 end
@@ -205,18 +220,19 @@ end
     return _findcanonicalpattern(bucket, locale)
 end
 
-@noinline function _cachecanonicalformat!(format_type::DataType, source::Symbol,
-                                          locale::Dates.DateLocale)::DatePattern
-    return lock(_RUNTIME_DATEFORMAT_LOCK) do
+# The cache key is (type, locale), so `df` must carry its type's canonical
+# tokens; the only caller, `_translatedpattern`, checks them first.
+Base.@nospecializeinfer @noinline function _cachecanonicalformat!(
+        df::Dates.DateFormat, format_type::DataType)::DatePattern
+    Base.@nospecialize df
+    locale = df.locale
+    @lock _RUNTIME_DATEFORMAT_LOCK begin
         table = @atomic :acquire _CANONICAL_DATEFORMAT_CACHE.table
         bucket = get(table, format_type, nothing)
         if bucket !== nothing
             pattern = _findcanonicalpattern(bucket, locale)
             pattern === nothing || return pattern
         end
-        df = Dates.DateFormat(String(source), locale)
-        typeof(df) === format_type ||
-            throw(ArgumentError("DateFormat source and token type do not agree"))
         pattern = compilepattern(df)
         entries = bucket === nothing ? _CanonicalDateFormatEntry[] :
                                        copy(bucket.entries)
@@ -232,11 +248,10 @@ end
     end
 end
 
-@inline function _canonicalformatplan(format_type::DataType, source::Symbol,
-                                      locale::Dates.DateLocale)::DatePattern
-    pattern = _lookupcanonicalpattern(format_type, locale)
+@inline function _canonicalformatplan(df::F)::DatePattern where {F <: Dates.DateFormat}
+    pattern = _lookupcanonicalpattern(F, df.locale)
     pattern === nothing || return pattern
-    return _cachecanonicalformat!(format_type, source, locale)
+    return _cachecanonicalformat!(df, F)
 end
 
 Base.@constprop :none @noinline function _lookupruntimepattern(
@@ -251,7 +266,7 @@ end
 Base.@nospecializeinfer @noinline function _cacheruntimeformat!(
         df::Dates.DateFormat, format_type::DataType)::DatePattern
     Base.@nospecialize df
-    return lock(_RUNTIME_DATEFORMAT_LOCK) do
+    @lock _RUNTIME_DATEFORMAT_LOCK begin
         table = @atomic :acquire _RUNTIME_DATEFORMAT_CACHE.table
         bucket = get(table, format_type, nothing)
         if bucket !== nothing
@@ -294,9 +309,7 @@ end
     pattern = compilepattern(reconstructed)
     expected = QuoteNode(reconstructed.tokens)
     if _formattypeuseslocale(T)
-        canonical = :(df.locale === Dates.ENGLISH ? $pattern :
-                      _canonicalformatplan($(Dates.DateFormat{S, T}),
-                                           $(QuoteNode(S)), df.locale))
+        canonical = :(df.locale === Dates.ENGLISH ? $pattern : _canonicalformatplan(df))
         return :(df.tokens === $expected ? $canonical : $fallback)
     end
     return :(df.tokens === $expected ? $pattern : $fallback)

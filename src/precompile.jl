@@ -18,6 +18,8 @@ using PrecompileTools: @setup_workload, @compile_workload
         parse(Bool, "true"); tryparse(Bool, "0")
         parse(Dates.Date, "2024-01-02"); parse(Dates.DateTime, "2024-01-02T03:04:05")
         parse(Dates.Time, "03:04:05"); parse(Dates.Date, "01/02/2024"; dateformat="mm/dd/yyyy")
+        # compiles the DateFormat machinery every format type shares
+        parse(Dates.Date, "01/02/2024"; dateformat=Dates.DateFormat("mm/dd/yyyy"))
         parse(Base.UUID, "123e4567-e89b-12d3-a456-426614174000")
         buf = Vector{UInt8}("12,3.5,true")
         parse(Int, buf, 1, 2); parse(Float64, buf, 4, 6); parse(Bool, buf, 8, 11)

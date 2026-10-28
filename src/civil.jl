@@ -579,12 +579,12 @@ const ISO_DATETIME = compilepattern("yyyy-mm-ddTHH:MM:SS.s")
 
 # Pattern cache policy lives with the compiled plan. Readers use an immutable
 # table snapshot without locking. A writer publishes a copied table, so no
-# reader can observe a Dict while it resizes. String keys are copied only when
-# inserted; SubString and other AbstractString lookups remain allocation-free.
+# reader can observe a Dict while it resizes. Keys are converted to `String`
+# only on a miss; a String or SubString{String} lookup does not allocate.
 mutable struct PatternCache
-    @atomic table::Dict{Any, DatePattern}
+    @atomic table::Dict{String, DatePattern}
 end
-const _PATTERNCACHE = PatternCache(Dict{Any, DatePattern}(
+const _PATTERNCACHE = PatternCache(Dict{String, DatePattern}(
     "yyyy-mm-dd" => ISO_DATE, "yyyy-mm-ddTHH:MM:SS.s" => ISO_DATETIME,
     "yyyy-mm-dd\\THH:MM:SS.s" => ISO_DATETIME, "HH:MM:SS.s" => ISO_TIME))
 const _PATTERNLOCK = ReentrantLock()
@@ -592,15 +592,15 @@ const _PATTERNCACHEMAX = 256
 const _PINNED_PATTERN_KEYS = ("yyyy-mm-dd", "yyyy-mm-ddTHH:MM:SS.s",
                               "yyyy-mm-dd\\THH:MM:SS.s", "HH:MM:SS.s")
 
-@inline function _cachedpattern(key)
+@inline function _cachedpattern(key::AbstractString)
     table = @atomic :acquire _PATTERNCACHE.table
-    pattern = get(table, key, nothing)
+    # inlined so the `Union{Nothing, DatePattern}` result is not boxed
+    pattern = @inline get(table, key, nothing)
     pattern === nothing || return pattern
-    return _cachepattern!(key)
+    return _cachepattern!(String(key))
 end
 
-@noinline function _cachepattern!(key)
-    Base.@nospecialize key
+@noinline function _cachepattern!(key::String)
     return lock(_PATTERNLOCK) do
         table = @atomic :acquire _PATTERNCACHE.table
         pattern = get(table, key, nothing)
@@ -616,7 +616,7 @@ end
             end
             victim === nothing || delete!(updated, victim)
         end
-        updated[key isa AbstractString ? String(key) : key] = pattern
+        updated[key] = pattern
         @atomic :release _PATTERNCACHE.table = updated
         return pattern
     end

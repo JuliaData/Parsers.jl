@@ -729,10 +729,10 @@ Base.@constprop :none @noinline function _tryparsedateruntime(
     return _tryparsedate(T, buf, i, j, pattern, Val(false))
 end
 
+# Specialized on the DateFormat type so `repr` resolves statically (trim-safe).
 @noinline function _throwdateformatfailure(::Type{T}, buf::AbstractVector{UInt8},
                                            i::Int, j::Int,
                                            dateformat::Dates.DateFormat) where {T <: Dates.TimeType}
-    Base.@nospecialize dateformat
     throw(ArgumentError("cannot parse \"$(_spanstring(buf, i, j))\" as $T" *
                         " with format $(repr(dateformat))"))
 end
@@ -934,7 +934,6 @@ end
 @noinline function _throwdateformatwhole(::Type{T}, s,
                                          dateformat::Dates.DateFormat) where
                                          {T <: Dates.TimeType}
-    Base.@nospecialize dateformat
     GC.@preserve s begin
         buf = _bytes(s)
         return _throwdateformatfailure(T, buf, 1, length(buf), dateformat)

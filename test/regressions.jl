@@ -348,6 +348,16 @@ end
     @test Parsers.tryparse(Date, "2024-02-29"; dateformat=numeric_source) ==
           expected
 
+    # Delimiters hold a Char or a String, as Dates.DateFormat builds them.
+    # Other hand-built delimiter values are rejected, not dispatched on.
+    substring_tokens = (Dates.DatePart{'y'}(4, false),
+                        Dates.Delim{SubString{String}, 1}(SubString("x/", 2)),
+                        Dates.DatePart{'m'}(2, false))
+    substring_delim = Dates.DateFormat{nothing, typeof(substring_tokens)}(
+        substring_tokens, Dates.ENGLISH)
+    @test_throws ArgumentError Parsers.compilepattern(substring_delim)
+    @test_throws ArgumentError Parsers.parse(Date, "2024/02"; dateformat=substring_delim)
+
     # Dates groups unsupported letters into a delimiter token. Compile the
     # reconstructed DateFormat rather than interpreting its source string with
     # the civil token grammar.
