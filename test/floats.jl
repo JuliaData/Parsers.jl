@@ -633,6 +633,11 @@ parse_allocations(::Type{T}, s) where {T} = @allocated Parsers.parse(T, s)
     parse_allocations(Number, long)
     @test parse_allocations(Number, long) < 10_000
     @test Parsers.parse(Number, "123456789012345678901234567890." * "9"^50) === 1.2345678901234568e29
+    # ...while `Number` integers keep every digit, also next to a delimiter
+    for s in ("922337203685477580", "12345678901234567890", "1" * "0"^50)
+        @test Parsers.xparse(Number, s * ",").val == Base.parse(BigInt, s)
+        @test Parsers.xparse(Number, s * ",").val isa Integer
+    end
     # `scale`, the hook that parsers built on `parsedigits` extend, called with
     # exact digits: the conversion re-reads the decimal `v`e`exp` when it must
     for (v, e, T, x) in ((UInt64(45035996273704975), -1, Float64, 4.503599627370498e15),
