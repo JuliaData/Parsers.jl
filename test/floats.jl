@@ -377,6 +377,22 @@ end
         BigFloat, max(512, 4 * sizeof(str) + 256)) do
         T(Base.parse(BigFloat, str))
     end
+    # Julia 1.6 converts BigFloat to Float16 through Float64, which double-rounds:
+    # pick the nearest Float16 to the high-precision value directly (ties to even).
+    oracle(::Type{Float16}, str) = setprecision(
+        BigFloat, max(512, 4 * sizeof(str) + 256)) do
+        x = Base.parse(BigFloat, str)
+        abs(x) >= 65520 && return x < 0 ? -Inf16 : Inf16  # floatmax + ulp/2 rounds to Inf
+        best = Float16(Float64(x))                         # within one ulp
+        for c in (prevfloat(best), nextfloat(best))
+            isfinite(c) || continue
+            d, dbest = abs(BigFloat(c) - x), abs(BigFloat(best) - x)
+            if d < dbest || (d == dbest && iseven(reinterpret(UInt16, c)))
+                best = c
+            end
+        end
+        return best
+    end
 
     function test_float_apis(::Type{T}, str) where {T}
         expected = oracle(T, str)
