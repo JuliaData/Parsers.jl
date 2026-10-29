@@ -921,6 +921,11 @@ end
     (source, Int(startpos), Int(pos) - 1)
 @inline _tokenspan(source::AbstractString, startpos, pos) =
     (codeunits(source), Int(startpos), Int(pos) - 1)
+# `scale` called directly has exact digits `v` and exponent `e` instead of a token.
+@noinline function _tokenspan(source::Tuple{Integer, Integer}, startpos, pos)
+    buf = Vector{UInt8}(string(source[1], "e", source[2]))
+    return (buf, 1, length(buf))
+end
 @noinline function _tokenspan(source::IO, startpos, pos)
     n = Int(pos - startpos)
     current = position(source)

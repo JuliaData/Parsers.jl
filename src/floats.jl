@@ -1,6 +1,8 @@
 using Base.MPFR, Base.GMP, Base.GMP.MPZ
 
+_widen(x::UInt64) = UInt128(x)
 _widen(x::Int64) = Int128(x)
+_unwiden(x::UInt128) = x % UInt64
 _unwiden(x::Int128) = x % Int64
 _unwiden(x::BigInt) = x % Int128
 
@@ -11,6 +13,10 @@ function _widen(v::T) where {T <: Union{Int128, UInt128}}
         x, 1, 1, 16, 0, 0, v)
     return x
 end
+
+# Parsers that build on `parsedigits` may bound a token's significant digits;
+# the float targets have no limit, since long coefficients cost O(1) per digit.
+maxdigits(T) = typemax(Int64)
 
 ten(::Type{T}) where {T} = T(10)
 const TEN = BigInt(10)
@@ -27,26 +33,36 @@ end
 # A float coefficient too long for UInt64: its leading digits, how many later
 # digits were dropped, and whether any of them was nonzero. Each further digit
 # costs O(1), and the conversion re-reads the token when the dropped digits
-# decide the rounding. `Number` parsing widens to Int128/BigInt instead, since
-# integers need every digit.
+# decide the rounding.
 struct LongMantissa
     mant::UInt64
     dropped::Int
     sticky::Bool
 end
 
-_widen(x::UInt64) = LongMantissa(x, 0, false)
-# Digits after a decimal point make the value a float, so `Number` coefficients
-# also keep only their leading digits from there on.
-_widenfrac(x) = _widen(x)
-function _widenfrac(x::Union{Int64, Int128})
-    mant, dropped, sticky, _ = _mantissa(x)
-    return LongMantissa(mant, dropped, sticky)
-end
 overflows(::Type{LongMantissa}) = false
 ten(::Type{LongMantissa}) = 0x0a
 _muladd(ten, digits::LongMantissa, b) =
     LongMantissa(digits.mant, digits.dropped + 1, digits.sticky | (b != 0))
+
+const FloatConf = DefaultConf{<:Union{Float16, Float32, Float64}}
+
+# Significant digits so far, without leading zeros, for parsers that use the
+# count in `scale`/`noscale`; the built-in targets don't.
+@inline _countdigit(::AbstractConf, ndigits, b) = ndigits + (!iszero(ndigits) || !iszero(b))
+@inline _countdigit(::Union{FloatConf, DefaultConf{Number}}, ndigits, b) = ndigits
+
+# The built-in float targets keep only a long coefficient's leading digits;
+# `Number` integers and other parsers built on `parsedigits` (which receive the
+# digits in their `scale`/`noscale` methods) keep every digit.
+_widen(::AbstractConf, x) = _widen(x)
+_widen(::FloatConf, x::UInt64) = LongMantissa(x, 0, false)
+# Fraction digits make a `Number` result a float, so it keeps leading digits too.
+_widenfrac(conf::AbstractConf, x) = _widen(conf, x)
+function _widenfrac(::DefaultConf{Number}, x::Union{Int64, Int128})
+    mant, dropped, sticky, _ = _mantissa(x)
+    return LongMantissa(mant, dropped, sticky)
+end
 
 @enum FloatType FLOAT16 FLOAT32 FLOAT64 BIGFLOAT
 
@@ -312,17 +328,17 @@ getx(x, f) = f === nothing ? x : nothing
 
 # if we need to _widen the type due to `digits` overflow, we want a non-inlined version so base case compilation doesn't get out of control.
 # NOTE: the widened recursive calls deliberately do NOT use `Base.inferencebarrier` — the
-# widening ladder is bounded in type space (UInt64 → LongMantissa for float targets,
-# Int64 → Int128 → BigInt for `Number`; `overflows` is false for the last step of each),
+# widening ladder is bounded in type space (UInt64 → UInt128 → BigInt, or UInt64 →
+# LongMantissa for the float targets; `overflows` is false for the last step of each),
 # and a barrier makes the widened
 # continuation reachable only through runtime dispatch: fine under the JIT, but in a
 # statically compiled (`juliac --trim`) binary the widened instance doesn't exist, so
 # parsing a wide-digit float would fail at runtime. The `@noinline` wrappers keep each
 # ladder step compiling separately, which is what bounds base-case compilation.
-@noinline _parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool, f::F) where {T, IntType, F} =
-    parsedigits(conf, source, pos, len, b, code, options, digits, neg, startpos, overflow_invalid, f)::Tuple{rettype(T), ReturnCode, Int}
+@noinline _parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool, ndigits::Int, f::F) where {T, IntType, F} =
+    parsedigits(conf, source, pos, len, b, code, options, digits, neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
 
-@inline function parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool=false, f::F=nothing) where {T, IntType, F}
+@inline function parsedigits(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, overflow_invalid::Bool=false, ndigits::Int=0, f::F=nothing) where {T, IntType, F}
     x = zero(T)
     anydigits = false
     has_groupmark = _has_groupmark(options, code)
@@ -336,11 +352,19 @@ getx(x, f) = f === nothing ? x : nothing
         while true
             if b <= 0x09
                 if overflows(IntType) && digits > overflowval(IntType)
-                    return _parsedigits(conf, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos, overflow_invalid, f)::Tuple{rettype(T), ReturnCode, Int}
+                    return _parsedigits(conf, source, pos, len, b + UInt8('0'), code, options, _widen(conf, digits), neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
+                elseif ndigits > maxdigits(T)
+                    # if input is way too big, just bail
+                    fastseek!(source, startpos - 1)
+                    pos = startpos
+                    code |= INVALID
+                    x = getx(x, f)
+                    @goto done
                 end
                 digits = _muladd(ten(IntType), digits, b)
                 pos += 1
                 incr!(source)
+                ndigits = _countdigit(conf, ndigits, b)
                 if eof(source, pos, len)
                     # input is integer, like "1"
                     if T === Number && IntType != Int64 && digits <= _unwiden(digits)
@@ -349,7 +373,7 @@ getx(x, f) = f === nothing ? x : nothing
                         y = _unwiden(digits)
                         x = handlef(ifelse(neg, -y, y), f)
                     else
-                        x, code = noscale(conf, source, startpos, pos, digits, neg, code, f, options)
+                        x, code = _noscaletoken(conf, source, startpos, pos, digits, neg, code, ndigits, f, options)
                     end
                     code |= OK | EOF
                     @goto done
@@ -378,7 +402,7 @@ getx(x, f) = f === nothing ? x : nothing
             if T === Number
                 x = handlef(ifelse(neg, -Float64(digits), Float64(digits)), f)
             else
-                x, code = noscale(conf, source, startpos, pos, digits, neg, code, f, options)
+                x, code = _noscaletoken(conf, source, startpos, pos, digits, neg, code, ndigits, f, options)
             end
             code |= ((startpos + 1) == pos ? INVALID : OK) | EOF
             @goto done
@@ -396,7 +420,7 @@ getx(x, f) = f === nothing ? x : nothing
                 if T === Number
                     x = handlef(ifelse(neg, -Float64(digits), Float64(digits)), f)
                 else
-                    x, code = noscale(conf, source, startpos, pos, digits, neg, code, f, options)
+                    x, code = _noscaletoken(conf, source, startpos, pos, digits, neg, code, ndigits, f, options)
                 end
                 code |= OK
                 @goto done
@@ -409,9 +433,9 @@ getx(x, f) = f === nothing ? x : nothing
     # `digits` still receives any fractional digits, `frac` just keeps track of how many digits
     # were parsed to combine with any "e123" exponent numbers to determine final exponent value
     if overflows(IntType) && digits > overflowval(IntType)
-        x, code, pos = _parsefrac(conf, source, pos, len, b, code, options, _widenfrac(digits), neg, startpos, UInt64(0), overflow_invalid, f)::Tuple{rettype(T), ReturnCode, Int}
+        x, code, pos = _parsefrac(conf, source, pos, len, b, code, options, _widen(conf, digits), neg, startpos, UInt64(0), overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
     else
-        x, code, pos = parsefrac(conf, source, pos, len, b, code, options, digits, neg, startpos, UInt64(0), overflow_invalid, f)
+        x, code, pos = parsefrac(conf, source, pos, len, b, code, options, digits, neg, startpos, UInt64(0), overflow_invalid, ndigits, f)
     end
 
 @label done
@@ -421,10 +445,10 @@ end
 # same as above; if digits overflows, we want a non-inlined version to call with a wider type
 # note that we never expect `frac` to overflow, since it's just keep track of the # of digits
 # we parse post-decimal point
-@noinline _parsefrac(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac, overflow_invalid, f::F) where {T, IntType, F} =
-    parsefrac(conf, source, pos, len, b, code, options, digits, neg, startpos, frac, overflow_invalid, f)::Tuple{rettype(T), ReturnCode, Int}
+@noinline _parsefrac(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac, overflow_invalid, ndigits, f::F) where {T, IntType, F} =
+    parsefrac(conf, source, pos, len, b, code, options, digits, neg, startpos, frac, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
 
-@inline function parsefrac(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac, overflow_invalid, f::F) where {T, IntType, F}
+@inline function parsefrac(conf::AbstractConf{T}, source, pos, len, b, code, options, digits::IntType, neg::Bool, startpos, frac, overflow_invalid, ndigits, f::F) where {T, IntType, F}
     x = zero(T)
     parsedanyfrac = false
     FT = FLOAT64
@@ -435,6 +459,7 @@ end
         # if so, parse fractional digits
         while true
             digits = _muladd(ten(IntType), digits, b)
+            ndigits = _countdigit(conf, ndigits, b)
             pos += 1
             incr!(source)
             frac += UInt64(1)
@@ -444,7 +469,7 @@ end
                     code |= INVALID
                     x = getx(x, f)
                 else
-                    x, code = scale(conf, FT, source, startpos, pos, digits, -signed(frac), neg, code, f, options)
+                    x, code = _scaletoken(conf, FT, source, startpos, pos, digits, -signed(frac), neg, code, ndigits, f, options)
                     code |= OK | EOF
                 end
                 @goto done
@@ -452,7 +477,7 @@ end
             b = peekbyte(source, pos) - UInt8('0')
             b > 0x09 && break
             if overflows(IntType) && digits > overflowval(IntType)
-                return _parsefrac(conf, source, pos, len, b + UInt8('0'), code, options, _widenfrac(digits), neg, startpos, frac, overflow_invalid, f)::Tuple{rettype(T), ReturnCode, Int}
+                return _parsefrac(conf, source, pos, len, b + UInt8('0'), code, options, _widenfrac(conf, digits), neg, startpos, frac, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
             end
         end
         b += UInt8('0')
@@ -494,7 +519,7 @@ end
 
         # at this point, we've parsed X and Y in "X.YeZ", but not Z in a scientific notation exponent number
         # we start our exponent number at UInt64(0)
-        return parseexp(conf, source, pos, len, b, code, options, digits, neg, startpos, frac, UInt64(0), negexp, FT, overflow_invalid, f)
+        return parseexp(conf, source, pos, len, b, code, options, digits, neg, startpos, frac, UInt64(0), negexp, FT, overflow_invalid, ndigits, f)
     else
         # if no scientific notation, we're done, so scale digits + frac and return
         if parsedanyfrac
@@ -503,10 +528,10 @@ end
                 x = getx(x, f)
                 @goto done
             else
-                x, code = scale(conf, FT, source, startpos, pos, digits, -signed(frac), neg, code, f, options)
+                x, code = _scaletoken(conf, FT, source, startpos, pos, digits, -signed(frac), neg, code, ndigits, f, options)
             end
         else
-            x, code = noscale(conf, source, startpos, pos, digits, neg, code, f, options)
+            x, code = _noscaletoken(conf, source, startpos, pos, digits, neg, code, ndigits, f, options)
         end
         code |= OK
     end
@@ -517,7 +542,7 @@ end
 
 # The exponent saturates (see `_decimalexponentdigit`), so any number of exponent
 # digits fits in a UInt64 and the scale exponent is exact up to that bound.
-@inline function parseexp(conf::AbstractConf{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::UInt64, negexp, FT, overflow_invalid, f::F) where {T, F}
+@inline function parseexp(conf::AbstractConf{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::UInt64, negexp, FT, overflow_invalid, ndigits, f::F) where {T, F}
     x = zero(T)
     # note that `b` has already had `b - UInt8('0')` applied to it for parseexp
     while true
@@ -534,30 +559,52 @@ end
         code |= INVALID
         x = getx(x, f)
     else
-        x, code = scale(conf, FT, source, startpos, pos, digits, ee, neg, code, f, options)
+        x, code = _scaletoken(conf, FT, source, startpos, pos, digits, ee, neg, code, ndigits, f, options)
         code |= OK
     end
     return x, code, pos
 end
 
-# No fractional part or exponent: `v` holds every digit, except for a
-# LongMantissa, whose dropped digits scale it.
-function noscale(conf::AbstractConf{T}, source, startpos, pos, v, neg::Bool, code, f::F, options::Options) where {T, F}
-    v isa LongMantissa &&
-        return scale(conf, FLOAT64, source, startpos, pos, v, 0, neg, code, f, options)
+# Parsers built on `parsedigits` (FixedPointDecimals, for one) extend `scale` and
+# `noscale` for their own `AbstractConf`. The built-in float and `Number` targets
+# go through `_scaletoken`/`_noscaletoken`, which also know where the token is,
+# so the conversion can re-read its digits.
+
+# No fractional part or exponent: `v` holds every digit.
+function noscale(::AbstractConf{T}, v::Integer, neg::Bool, code, ndigits, f::F, ::Options) where {T, F}
     return handlef(ifelse(neg, -T(v), T(v)), f), code
 end
 
-# Digits in `v` scaled by 10^exp, correctly rounded. `Number` targets produce
-# Float64 (Float32 for an `f` exponent marker) and are invalid if not finite.
-function scale(::AbstractConf{T}, FT::FloatType, source, startpos, pos, v, exp, neg, code, f::F, options::Options) where {T, F}
+# Digits in `v` scaled by 10^exp, for parsers that don't define their own `scale`.
+scale(::AbstractConf{T}, FT::FloatType, v, exp, neg, code, ndigits, f::F, options::Options) where {T, F} =
+    _scalefloat(T, FT, (v, exp), 0, 0, v, exp, neg, code, f, options)
+
+@inline _noscaletoken(conf::AbstractConf, source, startpos, pos, v, neg, code, ndigits, f, options) =
+    noscale(conf, v, neg, code, ndigits, f, options)
+@inline _noscaletoken(conf::AbstractConf, source, startpos, pos, v::LongMantissa, neg, code, ndigits, f, options) =
+    _scaletoken(conf, FLOAT64, source, startpos, pos, v, 0, neg, code, ndigits, f, options)
+
+# Other parsers' `scale` methods receive the exponent as an Int64, as before.
+@inline _scaletoken(conf::AbstractConf, FT, source, startpos, pos, v, exp, neg, code, ndigits, f, options) =
+    scale(conf, FT, v, Int64(clamp(exp, typemin(Int64), typemax(Int64))), neg, code, ndigits, f, options)
+@inline _scaletoken(::DefaultConf{T}, FT, source, startpos, pos, v, exp, neg, code, ndigits, f, options) where {T <: Union{Float16, Float32, Float64}} =
+    _scalefloat(T, FT, source, startpos, pos, v, exp, neg, code, f, options)
+@inline _scaletoken(::DefaultConf{Number}, FT, source, startpos, pos, v, exp, neg, code, ndigits, f, options) =
+    _scalefloat(Number, FT, source, startpos, pos, v, exp, neg, code, f, options)
+
+# `v` × 10^exp correctly rounded; source[startpos:pos-1] is the token. `Number`
+# targets produce Float64 (Float32 for an `f` exponent marker) and are invalid
+# if not finite.
+@inline function _scalefloat(::Type{T}, FT::FloatType, source, startpos, pos, v, exp, neg, code, f::F, options::Options) where {T, F}
     if T === Float64 || T === Float32 || T === Float16
         return handlef(_tofloat(T, source, startpos, pos, v, exp, neg, options), f), code
+    elseif T === Number
+        x = FT == FLOAT32 ? _tofloat(Float32, source, startpos, pos, v, exp, neg, options) :
+                            _tofloat(Float64, source, startpos, pos, v, exp, neg, options)
+        isfinite(x) || return nothing, code | INVALID
+        return handlef(x, f), code
     end
-    x = FT == FLOAT32 ? _tofloat(Float32, source, startpos, pos, v, exp, neg, options) :
-                        _tofloat(Float64, source, startpos, pos, v, exp, neg, options)
-    isfinite(x) || return nothing, code | INVALID
-    return handlef(x, f), code
+    error("invalid float type for scale: `$T`")
 end
 
 @inline function _tofloat(::Type{T}, source, startpos, pos, v, exp, neg, options) where {T}
@@ -571,8 +618,8 @@ end
 @inline _mantissa(v::UInt64) = (v, 0, false, true)
 @inline _mantissa(v::Int64) = (unsigned(v), 0, false, true)
 @inline _mantissa(v::LongMantissa) = (v.mant, v.dropped, v.sticky, false)
-# `Number` coefficients wider than Int64 keep their first 19 digits.
-function _mantissa(v::Union{Int128, BigInt})
+# Coefficients wider than 64 bits (`Number`, or `scale` called directly) keep their first 19 digits.
+function _mantissa(v::Integer)
     dropped = ndigits(v) - 19
     dropped <= 0 && return (UInt64(v), 0, false, true)
     q, r = divrem(v, big(10)^dropped)

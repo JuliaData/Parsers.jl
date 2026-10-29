@@ -633,6 +633,17 @@ parse_allocations(::Type{T}, s) where {T} = @allocated Parsers.parse(T, s)
     parse_allocations(Number, long)
     @test parse_allocations(Number, long) < 10_000
     @test Parsers.parse(Number, "123456789012345678901234567890." * "9"^50) === 1.2345678901234568e29
+    # `scale`, the hook that parsers built on `parsedigits` extend, called with
+    # exact digits: the conversion re-reads the decimal `v`e`exp` when it must
+    for (v, e, T, x) in ((UInt64(45035996273704975), -1, Float64, 4.503599627370498e15),
+                         (UInt64(65519999999999999), -12, Float16, Float16(65504)),
+                         (big(10)^40 * 3 + 1, -40, Float32, 3.0f0),
+                         (UInt64(1), 9223372036854775807, Float64, Inf))
+        for neg in (false, true)
+            @test Parsers.scale(Parsers.DefaultConf{T}(), Parsers.FLOAT64, v, e, neg,
+                                Int16(0), 0, nothing, Parsers.OPTIONS)[1] === (neg ? -x : x)
+        end
+    end
 end
 
 @testset "groupmark" begin
