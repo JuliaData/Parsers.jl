@@ -1576,13 +1576,15 @@ end
                    parts.truncated, parts.neg) ==
                   (general.mant, clampexp(general.exp10), general.ndig,
                    general.truncated, general.neg)
-            token = String(source[1:nextpos - 1])
+            # MPFR at 2048 bits rounds these tokens (at most ~100 significant
+            # digits) once; Base's Float32 parsing double-rounds on Windows.
+            exact = setprecision(BigFloat, 2048) do
+                Base.parse(BigFloat, String(source[1:nextpos - 1]))
+            end
             for T in (Float32, Float64)
                 value, prefixnext, _ = Parsers.parsenext(T, source, 1, last)
                 @test prefixnext == nextpos
-                # Base rejects exponents past its own integer range.
-                expected = Base.tryparse(T, token)
-                expected === nothing || @test isequal(value, expected)
+                @test isequal(value, T(exact))
             end
         end
     end
