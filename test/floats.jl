@@ -337,8 +337,10 @@ x, code, tlen = res.val, res.code, res.tlen
 @test code == case.code
 @test tlen == 39
 
-# https://github.com/quinnj/JSON3.jl/issues/57
-@test_throws Parsers.Error Parsers.parse(Float64,join(rand(1:9, 2000), ""))
+# https://github.com/quinnj/JSON3.jl/issues/57: a huge integer part overflows
+# like `1e2000` does, and each digit past the first 19 costs O(1)
+@test Parsers.parse(Float64, join(rand(1:9, 2000), "")) === Inf
+@test Parsers.parse(Float64, "1" * "0"^2000 * "e-2000") === 1.0
 @test Parsers.parse(BigFloat, "3.14") == BigFloat("3.14")
 @test Parsers.parse(BigFloat, "3.14 ") == BigFloat("3.14")
 
@@ -368,8 +370,8 @@ end
 # discovered from JSON tests
 @test Parsers.tryparse(Float64, "0e+") === nothing
 
-# Mantissas with more than 19 significant digits widen the digit accumulator to
-# UInt128 and then BigInt. These cases exercise each fallback in `_scale`.
+# Mantissas with more than 19 significant digits keep their leading digits and
+# re-read the token when the dropped digits decide the rounding.
 @testset "long mantissa / negative zero" begin
     oracle(::Type{T}, str) where {T} = setprecision(
         BigFloat, max(512, 4 * sizeof(str) + 256)) do
@@ -459,15 +461,9 @@ end
         end
     end
 
-    # Float16 rejects this case before scaling because its 39 significant
-    # digits exceed `maxdigits(Float16) == 29`.
-    @test_throws Parsers.Error Parsers.parse(Float16, float16_digit_limit_case)
-    @test Parsers.invalid(Parsers.xparse2(
-        Float16, float16_digit_limit_case, 1, sizeof(float16_digit_limit_case)).code)
-    @test Parsers.invalid(Parsers.xparse(
-        Float16, Vector{UInt8}(codeunits(float16_digit_limit_case))).code)
-    @test Parsers.invalid(Parsers.xparse(
-        Float16, float16_digit_limit_case * ",").code)
+    # Float16 has no significant-digit limit (it rejected more than 29 digits).
+    test_float_apis(Float16, float16_digit_limit_case)
+    test_float_apis(Float16, "1" * "0"^30 * "e-30")
 
     # Check exact midpoints and one decimal unit on each side. The longest cases
     # reach each parser's significant-digit limit.
@@ -503,7 +499,9 @@ end
                         BigFloat(Base.denominator(midpoint))
                     floor(Int, log10(value))
                 end
-                unit_exponent = decimal_order - Parsers.maxdigits(T) + 1
+                # the old per-type significant-digit limits
+                digit_count = T === Float16 ? 29 : T === Float32 ? 154 : 1079
+                unit_exponent = decimal_order - digit_count + 1
                 unit = unit_exponent < 0 ?
                     1 // BigInt(10)^(-unit_exponent) :
                     BigInt(10)^unit_exponent // 1
@@ -525,18 +523,17 @@ end
         end
     end
 
+    # Boundaries of the old UInt128 scaling: Clinger's exact range and the
+    # largest products that fit in UInt128.
     @testset "UInt128 scale boundaries" begin
-        scale_oracle(::Type{T}, v, exp, neg) where {T} = setprecision(BigFloat, 512) do
-            x = BigFloat(v)
-            p = BigFloat(10)^abs(exp)
-            y = exp < 0 ? x / p : x * p
-            T(neg ? -y : y)
-        end
+        maxsig(::Type{Float16}) = 2048
+        maxsig(::Type{Float32}) = 16777216
+        maxsig(::Type{Float64}) = 9007199254740992
         for T in (Float16, Float32, Float64)
-            sig = UInt128(Parsers.maxsig(T))
+            sig = UInt128(maxsig(T))
             for v in (sig - 1, sig, sig + 1),
                     exp in (-23, -22, 0, 22, 23), neg in (false, true)
-                @test Parsers._scale(T, v, exp, neg) === scale_oracle(T, v, exp, neg)
+                test_float_apis(T, string(neg ? "-" : "", v, "e", exp))
             end
             for exp in (0, 1, 18, 38)
                 p = UInt128(10)^exp
@@ -545,7 +542,7 @@ end
                     (largest_exact_product,) :
                     (largest_exact_product, largest_exact_product + 1)
                 for v in values, neg in (false, true)
-                    @test Parsers._scale(T, v, exp, neg) === scale_oracle(T, v, exp, neg)
+                    test_float_apis(T, string(neg ? "-" : "", v, "e", exp))
                 end
             end
         end
@@ -570,6 +567,49 @@ end
     end
     for _ = 1:100
         test_float_apis(Float64, random_decimal(rng, 61:300, -500:500))
+    end
+end
+
+# Function barrier: `@allocated` at the top level of a large testset compiles it whole.
+parse_allocations(::Type{T}, s) where {T} = @allocated Parsers.parse(T, s)
+
+@testset "correctly rounded conversion" begin
+    # 17-19 significant digits: Float16/Float32 do not round through Float64 first
+    for (T, s, x) in ((Float16, "65519.999999999999", Float16(65504)),
+                      (Float16, "14580.00000000000001", Float16(14584)),
+                      (Float16, "1035.4999999999999", Float16(1035)),
+                      (Float16, "21.35156250000000001", Float16(21.36)),
+                      (Float32, "2036288832.0000001", 2.0362889f9),
+                      (Float32, "1028510818762751.99", 1.0285108f15))
+        @test Parsers.parse(T, s) === x
+        @test Parsers.parse(T, "-" * s) === -x
+    end
+    # exact halfway values round to even
+    @test Parsers.parse(Float64, "4503599627370497.5") === 4.503599627370498e15
+    @test Parsers.parse(Float64, "-3510816076722765.75") === -3.510816076722766e15
+    @test Parsers.parse(Float64, "604312879473319.4375") === 6.043128794733195e14
+    # the midpoint between 0 and the smallest Float16 subnormal, and just above it
+    @test Parsers.parse(Float16, "2.98023223876953125e-8") === Float16(0)
+    @test Parsers.parse(Float16, "2.98023223876953126e-8") === nextfloat(Float16(0))
+    # 10^-326 came from the 10^-325 table row, so this was 10 times too large
+    @test Parsers.parse(Float64, "5.61951895628169542e-309") === 5.6195189562817e-309
+    @test Parsers.parse(Float64, "513947498307927562e-326") === 5.139474983079273e-309
+    # exponents of 2^63 or more saturate instead of wrapping around
+    @test Parsers.parse(Float64, "1e9223372036854775808") === Inf
+    @test Parsers.parse(Float64, "-1e9223372036854775808") === -Inf
+    @test Parsers.parse(Float64, "1e-9223372036854775809") === 0.0
+    @test Parsers.parse(Float32, "7.4e-9223372036854775808") === 0.0f0
+    @test Parsers.parse(Float16, "1e18446744073709551617") === Inf16
+    # no significant-digit limit (Float16 rejected integer parts past 29 digits)
+    @test Parsers.parse(Float16, "1" * "0"^30 * "e-30") === Float16(1)
+    @test Parsers.parse(Float32, "1" * "0"^160 * "e-160") === 1.0f0
+    # digits past the first 19 cost O(1) each and allocate nothing (a BigInt
+    # accumulator allocated about 1 MB for this token and took quadratic time)
+    for T in (Float16, Float32, Float64)
+        long = "0." * "1"^100_000
+        @test Parsers.parse(T, long) === T(0.1111111111111111)
+        parse_allocations(T, long)
+        @test parse_allocations(T, long) < 10_000
     end
 end
 
