@@ -36,6 +36,13 @@ struct LongMantissa
 end
 
 _widen(x::UInt64) = LongMantissa(x, 0, false)
+# Digits after a decimal point make the value a float, so `Number` coefficients
+# also keep only their leading digits from there on.
+_widenfrac(x) = _widen(x)
+function _widenfrac(x::Union{Int64, Int128})
+    mant, dropped, sticky, _ = _mantissa(x)
+    return LongMantissa(mant, dropped, sticky)
+end
 overflows(::Type{LongMantissa}) = false
 ten(::Type{LongMantissa}) = 0x0a
 _muladd(ten, digits::LongMantissa, b) =
@@ -402,7 +409,7 @@ getx(x, f) = f === nothing ? x : nothing
     # `digits` still receives any fractional digits, `frac` just keeps track of how many digits
     # were parsed to combine with any "e123" exponent numbers to determine final exponent value
     if overflows(IntType) && digits > overflowval(IntType)
-        x, code, pos = _parsefrac(conf, source, pos, len, b, code, options, _widen(digits), neg, startpos, UInt64(0), overflow_invalid, f)::Tuple{rettype(T), ReturnCode, Int}
+        x, code, pos = _parsefrac(conf, source, pos, len, b, code, options, _widenfrac(digits), neg, startpos, UInt64(0), overflow_invalid, f)::Tuple{rettype(T), ReturnCode, Int}
     else
         x, code, pos = parsefrac(conf, source, pos, len, b, code, options, digits, neg, startpos, UInt64(0), overflow_invalid, f)
     end
@@ -445,7 +452,7 @@ end
             b = peekbyte(source, pos) - UInt8('0')
             b > 0x09 && break
             if overflows(IntType) && digits > overflowval(IntType)
-                return _parsefrac(conf, source, pos, len, b + UInt8('0'), code, options, _widen(digits), neg, startpos, frac, overflow_invalid, f)::Tuple{rettype(T), ReturnCode, Int}
+                return _parsefrac(conf, source, pos, len, b + UInt8('0'), code, options, _widenfrac(digits), neg, startpos, frac, overflow_invalid, f)::Tuple{rettype(T), ReturnCode, Int}
             end
         end
         b += UInt8('0')

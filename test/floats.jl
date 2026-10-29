@@ -611,6 +611,12 @@ parse_allocations(::Type{T}, s) where {T} = @allocated Parsers.parse(T, s)
         parse_allocations(T, long)
         @test parse_allocations(T, long) < 10_000
     end
+    # `Number` floats too, once their digits follow a decimal point
+    long = "0." * "1"^100_000
+    @test Parsers.parse(Number, long) === 0.1111111111111111
+    parse_allocations(Number, long)
+    @test parse_allocations(Number, long) < 10_000
+    @test Parsers.parse(Number, "123456789012345678901234567890." * "9"^50) === 1.2345678901234568e29
 end
 
 @testset "groupmark" begin
