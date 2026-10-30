@@ -590,6 +590,11 @@ scale(::AbstractConf{T}, FT::FloatType, v, exp, neg, code, ndigits, f::F, option
     noscale(conf, v, neg, code, ndigits, f, options)
 @inline _noscaletoken(conf::AbstractConf, source, startpos, pos, v::LongMantissa, neg, code, ndigits, f, options) =
     _scaletoken(conf, FLOAT64, source, startpos, pos, v, 0, neg, code, ndigits, f, options)
+# A `Number` integer too wide for Int128 accumulates in the shared BigInt that
+# `_widen` returns; the result is a new BigInt (`copy` of a BigInt returns the
+# same object).
+@inline _noscaletoken(conf::DefaultConf{Number}, source, startpos, pos, v::BigInt, neg, code, ndigits, f, options) =
+    noscale(conf, MPZ.set(v), neg, code, ndigits, f, options)
 
 # Other parsers' `scale` methods receive the exponent as an Int64, as before.
 @inline _scaletoken(conf::AbstractConf, FT, source, startpos, pos, v, exp, neg, code, ndigits, f, options) =

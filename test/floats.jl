@@ -762,6 +762,14 @@ end
     @test exponentcode("1.5e-5") == OK | EOF
 end
 
+@testset "Number integers wider than Int128 are new BigInts" begin
+    a = Parsers.parse(Number, "1" * "0"^50)
+    b = Parsers.parse(Number, "2" * "0"^50)
+    c = Parsers.xparse(Number, "-3" * "0"^50 * ",").val
+    @test a !== b
+    @test (a, b, c) == (big(10)^50, 2 * big(10)^50, -3 * big(10)^50)
+end
+
 @testset "groupmark" begin
     # `parse` is used for parsing inputs with a single value in them,
     # so when delims==groupmarks, we assume what we see are groupmarks
