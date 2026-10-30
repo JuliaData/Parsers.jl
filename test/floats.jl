@@ -665,21 +665,22 @@ end
 sdc_decimal(n::BigInt, f::Int) =
     (s = lpad(string(n), f + 1, '0'); s[1:end-f] * "." * s[end-f+1:end])
 
-# Cost of the simple-decimal-conversion tier relative to MPFR's correctly
-# rounded parse of the same tokens, which calibrates the bound to the machine.
-# The tokens have 22 digits and sit next to a Float64 rounding boundary at
-# large exponents; scaling them one bit per pass cost about 2800x MPFR.
+# Cost of the simple-decimal-conversion tier against the fast path on the same
+# digits, measured in one process, so code coverage and the machine slow both
+# sides alike. The slow tokens have 22 digits next to a Float64 rounding
+# boundary at large exponents; at these smaller exponents Eisel-Lemire decides
+# the same digits. Scaling by many bits per pass keeps the ratio in the
+# hundreds; one bit per pass puts it above 10,000.
 function sdc_cost_ratio()
-    toks = ("1.000000000000000126855e300", "1.000000000000000107949e-300",
+    slow = ("1.000000000000000126855e300", "1.000000000000000107949e-300",
             "2.500000000000000100292e-200")
-    runparsers() = for _ in 1:100, t in toks; Parsers.parse(Float64, t); end
-    runmpfr() = setprecision(BigFloat, 256) do
-        for _ in 1:1000, t in toks; BigFloat(t); end
-    end
-    runparsers(); runmpfr()
-    tparsers = minimum(@elapsed(runparsers()) for _ in 1:3) / 100
-    tmpfr = minimum(@elapsed(runmpfr()) for _ in 1:3) / 1000
-    return tparsers / tmpfr
+    fast = ("1.000000000000000126855e30", "1.000000000000000107949e-30",
+            "2.500000000000000100292e-20")
+    run(toks, n) = for _ in 1:n, t in toks; Parsers.parse(Float64, t); end
+    run(slow, 1); run(fast, 1)
+    tslow = minimum(@elapsed(run(slow, 100)) for _ in 1:3) / 100
+    tfast = minimum(@elapsed(run(fast, 10_000)) for _ in 1:3) / 10_000
+    return tslow / tfast
 end
 
 # HPD digits d₁…dₙ and point dp hold 0.d₁…dₙ × 10^dp.
@@ -751,12 +752,12 @@ end
         end
     end
     # The bound is calibrated on 64-bit hosts.
-    Sys.WORD_SIZE == 64 && @test sdc_cost_ratio() < 300
+    Sys.WORD_SIZE == 64 && @test sdc_cost_ratio() < 1000
 end
 
 @testset "non-seekable IO sources" begin
-    # These need the exact tier, which can't read an IO twice: the parser keeps
-    # the digits of an IO token instead.
+    # These need the exact tier. An IO can't be read twice, so the parser keeps
+    # the digits of an IO token.
     toks = ("1.00000000000000011102230246251565404236316680908203125",
             "1.00000000000000011102230246251565404236316680908203126",
             "1.000000000000000126855e300", "65519.999999999999",
