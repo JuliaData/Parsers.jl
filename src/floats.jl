@@ -1778,7 +1778,8 @@ end
     start = i
     mant = zero(UInt64)
     ndig = 0
-    point = 0
+    sawpoint = false
+    point = 0          # index of the decimal point, once `sawpoint`
     while i <= j
         w = _spanword(buf, i, j)
         n = _firstnondigit8(w)
@@ -1789,9 +1790,9 @@ end
             keep = z == 8 ? 0 : 19 - ndig
             mant = mant * @inbounds(_POW10U64[keep + 1]) + _rundigits(w, keep)[1]
             i += keep
-            fraction = point == 0 ? 0 : i - point - 1
+            fraction = sawpoint ? i - point - 1 : 0
             return _continuelongdecimalparts(buf, orig, i, j, decimal, mant,
-                                             ndig + keep, fraction, point != 0,
+                                             ndig + keep, fraction, sawpoint,
                                              neg)
         end
         ndig += n - z
@@ -1802,14 +1803,15 @@ end
         end
         mant = mant * @inbounds(_POW10U64[n + 1]) + _rundigits(w, n)[1]
         i += n
-        (point == 0 && i <= j && @inbounds(buf[i]) == decimal) || break
+        (!sawpoint && i <= j && @inbounds(buf[i]) == decimal) || break
+        sawpoint = true
         point = i
         i += 1
     end
-    i - start > (point != 0) ||
+    i - start > sawpoint ||
         return (DecParts(0, 0, 0, false, neg, 0), orig, RC_INVALID)
     commit = i
-    q = point == 0 ? 0 : point - i + 1
+    q = sawpoint ? point - i + 1 : 0
     @inbounds if i < j && _lower(buf[i]) == UInt8('e')
         # a branch on the sign would resolve only after the coefficient scan
         byte = buf[i + 1]

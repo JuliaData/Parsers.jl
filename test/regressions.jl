@@ -546,6 +546,21 @@ end
           (1_234_567, Parsers.RC_OK)
 end
 
+@testset "low-level float kernels accept a decimal point at index 0" begin
+    # Spans of at least seventeen bytes take the word-at-a-time scanner.
+    for text in ("1234.5678901234567", "-123.45678901234567", "12345678.901234567890123",
+                 "1.5", "-0.00000000000000000000001234", ".12345678901234567890123",
+                 "1234567890123456789.5e-3")
+        bytes = b(text)
+        source = OffsetBytes(bytes, 1 - findfirst(==(UInt8('.')), bytes))
+        @test source[0] == UInt8('.')
+        for T in (Float16, Float32, Float64)
+            @test Parsers.parsefloat(T, source, firstindex(source), lastindex(source)) ===
+                  Parsers.parsefloat(T, bytes, 1, length(bytes))
+        end
+    end
+end
+
 @testset "groupmark for every documented numeric type" begin
     numeric_types = (
         Int8, Int16, Int32, Int64, Int128,
