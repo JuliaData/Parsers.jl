@@ -3,9 +3,10 @@
 # trim fix makes statically reachable — under the old Base.inferencebarrier
 # form these calls were verifier errors AND the widened instances were absent
 # from trimmed binaries (wide-mantissa parses would fail at runtime). It also
-# compiles date format strings at run time with `compilepattern`. Compiled
-# by test/trim_compile_tests.jl with `juliac --trim=safe` (error budget zero),
-# then executed so the value assertions prove runtime rounding too.
+# compiles date formats at run time: `compilepattern`, format strings, and
+# `DateFormat` values, including ones that reach the run-time format caches.
+# Compiled by test/trim_compile_tests.jl with `juliac --trim=safe` (error
+# budget zero), then executed so the value assertions prove runtime rounding too.
 using Dates
 using Parsers
 
@@ -84,12 +85,57 @@ function _assert_date_patterns()::Nothing
     return nothing
 end
 
+# Building a DateFormat from a string at run time is not trim-safe inside
+# Dates, so these formats are built while the program compiles. Behind a Ref,
+# their values stay opaque to inference: a hand-built format whose tokens
+# differ from its type's source string takes the run-time fallback, and a
+# non-English named format takes the per-locale cache.
+const _SLASH = dateformat"yyyy/mm/dd"
+const _SAME_TYPE_SLASH = Ref(Dates.DateFormat{Symbol("yyyy-mm-dd"), typeof(_SLASH.tokens)}(
+    _SLASH.tokens, Dates.ENGLISH))
+const _LOCALIZED = Ref(Dates.DateFormat("U dd yyyy", Dates.DateLocale(
+    ["Alfa", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot",
+     "Golf", "Hotel", "India", "Juliett", "Kilo", "Lima"],
+    ["Ab", "Bc", "Cd", "De", "Ef", "Fg", "Gh", "Hi", "Ij", "Jk", "Kl", "Lm"],
+    ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+    ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"])))
+
+function _assert_date_formats()::Nothing
+    expected = Date(2024, 3, 15)
+    # the first call compiles and caches the format; the second reuses it
+    for _ in 1:2
+        Parsers.parse(Date, "2024/03/15"; dateformat="yyyy/mm/dd") === expected ||
+            error("format string")
+    end
+    Parsers.parse(Date, "2024/03/15"; dateformat=SubString("xyyyy/mm/dd", 2)) ===
+        expected || error("format substring")
+    Parsers.parse(Date, "2024/03/15"; dateformat=dateformat"yyyy/mm/dd") === expected ||
+        error("DateFormat literal")
+    p = Parsers.compilepattern(dateformat"yyyy/mm/dd")
+    Parsers.parse(Date, "2024/03/15"; dateformat=p) === expected ||
+        error("compiled DateFormat")
+    Parsers.parse(Date, "2024/03/15"; dateformat=_SAME_TYPE_SLASH[]) === expected ||
+        error("run-time DateFormat")
+    Parsers.tryparse(Date, "2024-03-15"; dateformat=_SAME_TYPE_SLASH[]) === nothing ||
+        error("run-time DateFormat mismatch")
+    Parsers.parse(Date, "Charlie 15 2024"; dateformat=_LOCALIZED[]) === expected ||
+        error("localized DateFormat")
+    try
+        Parsers.parse(Date, "2024-03-15"; dateformat=_SAME_TYPE_SLASH[])
+        error("DateFormat mismatch accepted")
+    catch err
+        err isa ArgumentError || rethrow()
+    end
+    return nothing
+end
+
 function run_parsers_trim_workload()::Nothing
     _assert_float_basics()
     _assert_widening_ladder()
     _assert_float_edges()
     _assert_non_floats()
     _assert_date_patterns()
+    _assert_date_formats()
     return nothing
 end
 
