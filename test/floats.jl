@@ -682,6 +682,46 @@ function sdc_cost_ratio()
     return tparsers / tmpfr
 end
 
+# HPD digits d₁…dₙ and point dp hold 0.d₁…dₙ × 10^dp.
+function sdc_hpd(digits::AbstractString, dp::Int)
+    d = zeros(UInt8, Parsers.SDC_MAXDIG)
+    for (k, c) in enumerate(digits)
+        d[k] = UInt8(c - '0')
+    end
+    return Parsers.HPD(d, length(digits), dp, false)
+end
+sdc_value(h) = h.n == 0 ? big(0) // 1 :
+    parse(BigInt, String(h.d[1:h.n] .+ UInt8('0'))) * (big(10)^max(h.dp, 0) // big(10)^(h.n - min(h.dp, 0)))
+
+@testset "simple decimal conversion: binary shifts" begin
+    rng = Random.MersenneTwister(0x5dc)
+    for k in 1:Parsers._SDC_MAXSHIFT
+        @test Parsers._pow5decimal(k) == reverse(digits(UInt8, big(5)^k))
+        # digits equal to, just below and just above those of 5^k decide how many
+        # digits a left shift adds
+        p = big(5)^k
+        for s in (string(p), string(p - 1), string(p + 1), "1", "9",
+                  string(rand(rng, 1:9)) * String(rand(rng, '0':'9', rand(rng, 0:60))))
+            s = rstrip(s, '0')
+            for dp in (-3, 0, 2)
+                h = sdc_hpd(s, dp)
+                v = sdc_value(h)
+                Parsers._hpdleftshift!(h, k)
+                @test sdc_value(h) == v * big(2)^k
+                @test h.d[1] != 0 && h.d[h.n] != 0 && !h.sticky
+                h = sdc_hpd(s, dp)
+                Parsers._hpdrightshift!(h, k)
+                @test sdc_value(h) == v / big(2)^k
+                @test h.d[1] != 0 && h.d[h.n] != 0 && !h.sticky
+            end
+        end
+    end
+    # zero stays zero
+    h = sdc_hpd("", 0)
+    Parsers._hpdrightshift!(h, 7)
+    @test h.n == 0 && h.dp == 0
+end
+
 @testset "simple decimal conversion tier" begin
     # Midpoints between neighbours that only the exact tier can separate: long
     # tokens (past the 256-bit comparison) and short ones at large exponents.
@@ -710,7 +750,8 @@ end
             end
         end
     end
-    @test sdc_cost_ratio() < 300
+    # The bound is calibrated on 64-bit hosts.
+    Sys.WORD_SIZE == 64 && @test sdc_cost_ratio() < 300
 end
 
 @testset "non-seekable IO sources" begin

@@ -605,9 +605,10 @@ end
     return h
 end
 
-# A shift moves at most 60 bits per pass: a digit times 2^60 plus a carry below
-# 2^60 stays below 10 · 2^60 < 2^64.
-const _SDC_MAXSHIFT = 60
+# A shift moves at most _SDC_MAXSHIFT bits per pass, in machine words: a digit
+# times 2^k plus a carry below 2^k stays below 10 · 2^k, which fits a word for
+# k up to the word size minus 4 (60 bits on 64-bit hosts, 28 on 32-bit ones).
+const _SDC_MAXSHIFT = Sys.WORD_SIZE - 4
 
 # 5^k as decimal digits, most significant first
 function _pow5decimal(k::Int)
@@ -637,16 +638,16 @@ const _LSHIFTCUTOFF = [_pow5decimal(k) for k in 1:_SDC_MAXSHIFT]
     return false
 end
 
-# value *= 2^k for 1 ≤ k ≤ 60
+# value *= 2^k for 1 ≤ k ≤ _SDC_MAXSHIFT
 function _hpdleftshift!(h::HPD, k::Int)
     delta = @inbounds _LSHIFTDIGITS[k]
     _hpdbelow(h, @inbounds _LSHIFTCUTOFF[k]) && (delta -= 1)
     r = h.n            # next digit to read, from the right
     w = h.n + delta    # next digit to write
-    n = zero(UInt64)
+    n = zero(UInt)
     while r > 0 || n > 0
         if r > 0
-            n += UInt64(@inbounds(h.d[r])) << k
+            n += UInt(@inbounds(h.d[r])) << k
             r -= 1
         end
         q = n ÷ 10
@@ -663,10 +664,10 @@ function _hpdleftshift!(h::HPD, k::Int)
     return _hpdtrim!(h)
 end
 
-# value /= 2^k for 1 ≤ k ≤ 60
+# value /= 2^k for 1 ≤ k ≤ _SDC_MAXSHIFT
 function _hpdrightshift!(h::HPD, k::Int)
     r = 0
-    n = zero(UInt64)
+    n = zero(UInt)
     while n >> k == 0  # read until the first quotient digit is nonzero
         if r < h.n
             r += 1
@@ -681,7 +682,7 @@ function _hpdrightshift!(h::HPD, k::Int)
         end
     end
     h.dp -= r - 1
-    mask = (one(UInt64) << k) - one(UInt64)
+    mask = (one(UInt) << k) - one(UInt)
     w = 0
     while r < h.n
         r += 1
@@ -701,6 +702,21 @@ function _hpdrightshift!(h::HPD, k::Int)
     end
     h.n = w
     return _hpdtrim!(h)
+end
+
+# value *= 2^k for any k, in passes of at most _SDC_MAXSHIFT bits
+function _hpdshift!(h::HPD, k::Int)
+    while k > 0
+        s = min(k, _SDC_MAXSHIFT)
+        _hpdleftshift!(h, s)
+        k -= s
+    end
+    while k < 0
+        s = min(-k, _SDC_MAXSHIFT)
+        _hpdrightshift!(h, s)
+        k += s
+    end
+    return h
 end
 
 # The integer nearest the value, ties to even; a sticky tail breaks a tie upward.
@@ -725,10 +741,10 @@ end
 # so a left shift from below 1 stays below 1.
 const _SDC_POWERS = (3, 6, 9, 13, 16, 19, 23, 26, 29, 33, 36, 39, 43, 46, 49, 53, 56, 59)
 @inline _sdcshift(n::Int) =
-    n <= length(_SDC_POWERS) ? @inbounds(_SDC_POWERS[n]) : _SDC_MAXSHIFT
+    n <= length(_SDC_POWERS) ? min(@inbounds(_SDC_POWERS[n]), _SDC_MAXSHIFT) : _SDC_MAXSHIFT
 
 # Simple decimal conversion: scale the exact decimal into [1/2, 1) by binary
-# shifts of up to 60 bits, then round the top MB + 1 bits half to even.
+# shifts of up to _SDC_MAXSHIFT bits, then round the top MB + 1 bits half to even.
 @noinline function _sdc(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int, neg::Bool,
                         decimal::UInt8, groupmark=nothing) where
                         {T <: Union{Float64, Float32, Float16}}
@@ -755,11 +771,11 @@ const _SDC_POWERS = (3, 6, 9, 13, 16, 19, 23, 26, 29, 33, 36, 39, 43, 46, 49, 53
         # subnormal: shift the value down to the smallest normal exponent; below
         # half the smallest subnormal it rounds to zero
         emin - e2 >= MB + 2 && return _sign(T, zero(UInt64), neg)
-        _hpdrightshift!(h, emin - e2)
+        _hpdshift!(h, e2 - emin)
         e2 = emin
     end
     e2 + _bias(T) >= _maxexp(T) && return _sign(T, _infbits(T), neg)
-    _hpdleftshift!(h, MB + 1)                # the implicit bit and MB stored bits
+    _hpdshift!(h, MB + 1)                    # the implicit bit and MB stored bits
     mant = _hpdroundedinteger(h)
     if mant == UInt64(2) << MB               # rounding carried into a new bit
         mant >>= 1
