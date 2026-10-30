@@ -556,6 +556,21 @@ end
           (1_234_567, Parsers.RC_OK)
 end
 
+@testset "low-level float kernels accept a decimal point at index 0" begin
+    # Spans of at least seventeen bytes take the word-at-a-time scanner.
+    for text in ("1234.5678901234567", "-123.45678901234567", "12345678.901234567890123",
+                 "1.5", "-0.00000000000000000000001234", ".12345678901234567890123",
+                 "1234567890123456789.5e-3")
+        bytes = b(text)
+        source = OffsetBytes(bytes, 1 - findfirst(==(UInt8('.')), bytes))
+        @test source[0] == UInt8('.')
+        for T in (Float16, Float32, Float64)
+            @test Parsers.parsefloat(T, source, firstindex(source), lastindex(source)) ===
+                  Parsers.parsefloat(T, bytes, 1, length(bytes))
+        end
+    end
+end
+
 @testset "groupmark for every documented numeric type" begin
     numeric_types = (
         Int8, Int16, Int32, Int64, Int128,
@@ -1546,10 +1561,11 @@ end
         @test code == expectedcode
     end
 
-    # The twentieth coefficient byte returns an explicit continuation result.
-    # Resuming it must produce the same conversion fields and token boundary as
-    # the general decomposer, including leading zeros and exponent commit.
-    carrytexts = (
+    # Spans of at least seventeen bytes use the word-at-a-time scanner; a
+    # twentieth significant digit or a word of leading zeros continues in the
+    # long scanner. Both must match the general decomposer's conversion fields
+    # and token boundary, with every token end at every offset from the span end.
+    longtexts = (
         "12345678901234567890;",
         "1234567890123456789.0;",
         "000000000000000000001.5;",
@@ -1557,24 +1573,49 @@ end
         "1." * repeat("2345678901", 6) * "e-17;",
         "12345678901234567890e+;",
     )
-    for text in carrytexts
-        source = b(text)
-        scan = Parsers._shortdecimalparts(source, 1, length(source), UInt8('.'))
-        @test Parsers._shortcarry(scan)
-        parts, continuednext, continuedcode =
-            Parsers._continuelongdecimalparts(source, 1, scan.nextpos,
-                                              length(source), UInt8('.'), scan)
-        general, generalnext, generalcode =
-            Parsers._decomposeplainprefix(source, 1, length(source), UInt8('.'))
-        @test (parts.mant, parts.exp10, parts.ndig, parts.truncated, parts.neg,
-               continuednext, continuedcode) ==
-              (general.mant, general.exp10, general.ndig, general.truncated,
-               general.neg, generalnext, generalcode)
+    rng = MersenneTwister(0x5ca9)
+    digitstring(n) = String(rand(rng, '0':'9', n))
+    randomtexts = map(1:3000) do _
+        lead = rand(rng, ("", "0", "00000000", "0000000"))
+        whole = digitstring(rand(rng, (0, 1, 2, 7, 8, 9, 16, 19, 20, 25)))
+        frac = rand(rng, Bool) ?
+            "." * rand(rng, ("", "0000000", "00000000")) *
+            digitstring(rand(rng, (0, 1, 7, 8, 15, 16, 17, 19, 30))) : ""
+        exp = rand(rng, ("", "e", "e+", "e-", "E7", "e-08", "e+123",
+                         "e" * digitstring(9), "e-" * digitstring(12)))
+        return rand(rng, ("", "-", "+")) * lead * whole * frac * exp
+    end
+    for text in (longtexts..., randomtexts...), pad in 0:10
+        source = b(text * ";" * repeat("9", pad))
+        for last in (length(source) - pad - 1, length(source))
+            last - 1 >= 16 || continue
+            general, generalnext, generalcode =
+                Parsers._decomposeplainprefix(source, 1, last, UInt8('.'))
+            parts, nextpos, code =
+                Parsers._swardecimalparts(source, 1, last, UInt8('.'))
+            @test (nextpos, code) == (generalnext, generalcode)
+            code == Parsers.RC_OK || continue
+            # Exponents past any float's range saturate at different bounds.
+            clampexp(e) = clamp(Int(e), -1_000_000, 1_000_000)
+            @test (parts.mant, clampexp(parts.exp10), parts.ndig,
+                   parts.truncated, parts.neg) ==
+                  (general.mant, clampexp(general.exp10), general.ndig,
+                   general.truncated, general.neg)
+            # MPFR at 2048 bits rounds these tokens (at most ~100 significant
+            # digits) once; Base's Float32 parsing double-rounds on Windows.
+            exact = setprecision(BigFloat, 2048) do
+                Base.parse(BigFloat, String(source[1:nextpos - 1]))
+            end
+            for T in (Float32, Float64)
+                value, prefixnext, _ = Parsers.parsenext(T, source, 1, last)
+                @test prefixnext == nextpos
+                @test isequal(value, T(exact))
+            end
+        end
     end
 
-    # A complete short coefficient with an enormous exponent is not a carry.
-    # Both that path and the carried twentieth-digit path must consume the
-    # exponent and report the target range without reading absent carry state.
+    # Short and twenty-digit coefficients with an enormous exponent consume the
+    # exponent and report the target range.
     hugeexp = repeat("9", 80)
     for T in (Float16, Float32, Float64),
         coefficient in ("1234567890123456789", "12345678901234567890"),

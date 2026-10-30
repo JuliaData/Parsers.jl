@@ -1206,134 +1206,13 @@ const _P10U = (UInt64(1), UInt64(10), UInt64(100), UInt64(1000), UInt64(10_000),
 struct _ShortDecimalResult
     parts::DecParts
     nextpos::Int
-    fraction::Int32
     rc::UInt8
-    flags::UInt8
+    fit::Bool
 end
 
-const _SHORT_FIT = UInt8(0x01)
-const _SHORT_CARRY = UInt8(0x02)
-const _SHORT_POINT = UInt8(0x04)
-
-@inline _shortfit(result::_ShortDecimalResult) =
-    !iszero(result.flags & _SHORT_FIT)
-@inline _shortcarry(result::_ShortDecimalResult) =
-    !iszero(result.flags & _SHORT_CARRY)
-@inline _shortpoint(result::_ShortDecimalResult) =
-    !iszero(result.flags & _SHORT_POINT)
-
-@inline function _shortresult(parts::DecParts, nextpos::Int, rc::UInt8,
-                              fit::Bool)
-    flags = fit ? _SHORT_FIT : UInt8(0)
-    return _ShortDecimalResult(parts, nextpos, Int32(0), rc, flags)
-end
-
-@inline function _shortcarryresult(mant::UInt64, fraction::Int,
-                                   sawpoint::Bool, neg::Bool, nextpos::Int)
-    flags = _SHORT_CARRY | (sawpoint ? _SHORT_POINT : UInt8(0))
-    parts = DecParts(mant, 0, 0, false, neg, 0)
-    return _ShortDecimalResult(parts, nextpos, Int32(fraction),
-                               RC_INVALID, flags)
-end
-
-# Prefix parsing calls this only after the scalar scanner returns the first
-# unconsumed coefficient byte with its nineteen-digit state. The scanner stays
-# unchanged for successful short values; only its overflow result carries the
-# state needed to avoid restarting the grammar engine at the original byte.
-@noinline function _continuelongdecimalparts(buf::AbstractVector{UInt8},
-                                             orig::Int, k::Int, j::Int,
-                                             decimal::UInt8,
-                                             carry::_ShortDecimalResult)
-    mant = carry.parts.mant
-    fraction = Int(carry.fraction)
-    sawpoint = _shortpoint(carry)
-    neg = carry.parts.neg
-    ndig = mant >= 1_000_000_000_000_000_000 ? 19 :
-           mant == 0 ? 0 : ndigits(mant)
-    dropped = 0
-    truncated = false
-
-    @inbounds while k <= j
-        # Once the nineteen significant coefficient digits are full, gather
-        # complete eight-byte runs. A partial run stays scalar so the first
-        # delimiter remains unconsumed.
-        if ndig >= 19 && j - k >= 7
-            word = _load8(buf, k)
-            if _alldigits8(word)
-                truncated |= word != 0x3030303030303030
-                ndig += 8
-                dropped += 8
-                sawpoint && (fraction += 8)
-                k += 8
-                continue
-            end
-        end
-
-        byte = buf[k]
-        digit = byte - UInt8('0')
-        if digit <= 0x09
-            sawpoint && (fraction += 1)
-            if ndig == 0
-                if digit != 0
-                    mant = UInt64(digit)
-                    ndig = 1
-                end
-            elseif ndig < 19
-                mant = 10mant + digit
-                ndig += 1
-            else
-                truncated |= digit != 0
-                ndig += 1
-                dropped += 1
-            end
-            k += 1
-        elseif byte == decimal && !sawpoint
-            sawpoint = true
-            k += 1
-        else
-            break
-        end
-    end
-
-    commit = k
-    exponent = Int128(0)
-    @inbounds if k <= j && _lower(buf[k]) == UInt8('e')
-        marker = k
-        k += 1
-        eneg = false
-        if k <= j
-            byte = buf[k]
-            eneg = byte == UInt8('-')
-            (eneg || byte == UInt8('+')) && (k += 1)
-        end
-        estart = k
-        e = zero(UInt64)
-        while k <= j
-            digit = buf[k] - UInt8('0')
-            digit <= 0x09 || break
-            e = _decimalexponentdigit(e, digit)
-            k += 1
-        end
-        if k > estart
-            exponent = _signeddecimalexponent(e, eneg)
-            commit = k
-        else
-            commit = marker
-        end
-    end
-
-    q = exponent - Int128(fraction) + Int128(dropped)
-    parts = _decparts(mant, q, ndig, truncated, neg,
-                      _DECPARTS_NO_DIGIT, orig)
-    return (parts, commit, RC_OK)
-end
-
-# One scalar grammar engine owns every short decimal path. It returns the
-# first unconsumed byte, so prefix callers can use it directly and exact-span
-# callers need only require `nextpos > j`. Its concrete result carries the
-# live scalar state only on the twentieth coefficient digit; callers that need
-# a bounded short decision can decline that result, while prefix parsing can
-# resume at `nextpos` without reading the first nineteen digits again.
+# One scalar grammar engine owns the short exact-span decimal paths. It returns
+# the first unconsumed byte, so callers need only require `nextpos > j`. A
+# twentieth coefficient digit declines the short decision (`fit` is false).
 @inline function _shortdecimalparts(buf::AbstractVector{UInt8}, i::Int, j::Int,
                                     decimal::UInt8, groupmark=nothing)
     orig = i
@@ -1343,8 +1222,8 @@ end
         neg = byte == UInt8('-')
         (neg || byte == UInt8('+')) && (i += 1)
     end
-    i <= j || return _shortresult(DecParts(0, 0, 0, false, neg, 0),
-                                  orig, RC_INVALID, true)
+    i <= j || return _ShortDecimalResult(DecParts(0, 0, 0, false, neg, 0),
+                                         orig, RC_INVALID, true)
 
     intstart = i
     mant = zero(UInt64)
@@ -1359,14 +1238,9 @@ end
         digit = byte - UInt8('0')
         if digit <= 0x09
             ndig += 1
-            if ndig > 19
-                if groupmark === nothing
-                    return _shortcarryresult(mant, fraction, sawpoint,
-                                             neg, k)
-                end
-                return _shortresult(DecParts(0, 0, 0, false, neg, 0),
-                                    orig, RC_INVALID, false)
-            end
+            ndig > 19 &&
+                return _ShortDecimalResult(DecParts(0, 0, 0, false, neg, 0),
+                                           orig, RC_INVALID, false)
             mant = 10mant + digit
             sawdigit = true
             sawpoint && (fraction += 1)
@@ -1406,14 +1280,22 @@ end
             break
         end
     end
-    sawdigit || return _shortresult(DecParts(0, 0, 0, false, neg, 0),
-                                    orig, RC_INVALID, true)
+    sawdigit || return _ShortDecimalResult(DecParts(0, 0, 0, false, neg, 0),
+                                           orig, RC_INVALID, true)
     q = exponent - fraction
     typemin(Int32) <= q <= typemax(Int32) ||
-        return _shortresult(DecParts(0, 0, 0, false, neg, 0),
-                            orig, RC_INVALID, false)
-    return _shortresult(DecParts(mant, Int32(q), Int32(ndig), false, neg, 0),
-                        k, RC_OK, true)
+        return _ShortDecimalResult(DecParts(0, 0, 0, false, neg, 0),
+                                   orig, RC_INVALID, false)
+    return _ShortDecimalResult(DecParts(mant, Int32(q), Int32(ndig), false, neg, 0),
+                               k, RC_OK, true)
+end
+
+# Clinger's exact case: one correctly rounded multiply or divide by an exactly
+# representable power of ten. Both are computed and one is selected; a branch
+# on the exponent's sign would resolve only after the whole token is scanned.
+@inline function _clinger(f::T, q::Int, powers::Vector{T}) where {T}
+    p = @inbounds powers[abs(q) + 1]
+    return ifelse(q >= 0, f * p, f / p)
 end
 
 @inline function _shortclinger(::Type{T}, parts::DecParts) where
@@ -1424,14 +1306,7 @@ end
         (-22 <= q <= 22 && mant <= UInt64(1) << 53) :
         (-10 <= q <= 10 && mant <= UInt64(1) << 24)
     clinger || return (zero(T), false)
-    value = T(mant)
-    if q != 0
-        value = T === Float64 ?
-            (q > 0 ? value * @inbounds(_POW10[q + 1]) :
-                     value / @inbounds(_POW10[-q + 1])) :
-            (q > 0 ? value * @inbounds(_POW10F32[q + 1]) :
-                     value / @inbounds(_POW10F32[-q + 1]))
-    end
+    value = _clinger(T(mant), q, T === Float64 ? _POW10 : _POW10F32)
     return (parts.neg ? -value : value, true)
 end
 
@@ -1446,7 +1321,7 @@ end
     start <= j || return (zero(T), RC_INVALID, true)
     j - start + 1 <= 15 || return (zero(T), RC_INVALID, false)
     scan = _shortdecimalparts(buf, i, j, decimal)
-    _shortfit(scan) || return (zero(T), RC_INVALID, false)
+    scan.fit || return (zero(T), RC_INVALID, false)
     parts, nextpos, rc = scan.parts, scan.nextpos, scan.rc
     rc == RC_OK || return (zero(T), rc, true)
     nextpos > j || return (zero(T), RC_INVALID, true)
@@ -1466,7 +1341,7 @@ end
     start <= j || return (zero(T), RC_INVALID, true)
     j - start + 1 <= 15 || return (zero(T), RC_INVALID, false)
     scan = _shortdecimalparts(buf, i, j, decimal, groupmark)
-    _shortfit(scan) || return (zero(T), RC_INVALID, false)
+    scan.fit || return (zero(T), RC_INVALID, false)
     parts, nextpos, rc = scan.parts, scan.nextpos, scan.rc
     rc == RC_OK || return (zero(T), rc, true)
     nextpos > j || return (zero(T), RC_INVALID, true)
@@ -1510,14 +1385,12 @@ end
     # tier 1 (Clinger): mant and 10^|q| both exactly representable → one rounding
     if T === Float64
         if untrunc && -22 <= q <= 22 && mant <= 9007199254740992   # 2^53
-            f = Float64(mant)
-            f = q >= 0 ? f * @inbounds(_POW10[q + 1]) : f / @inbounds(_POW10[-q + 1])
+            f = _clinger(Float64(mant), q, _POW10)
             return (parts.neg ? -f : f, RC_OK, true)
         end
     else
         if untrunc && -10 <= q <= 10 && mant <= 16777216             # 2^24
-            f = Float32(mant)
-            f = q >= 0 ? f * @inbounds(_POW10F32[q + 1]) : f / @inbounds(_POW10F32[-q + 1])
+            f = _clinger(Float32(mant), q, _POW10F32)
             return (parts.neg ? -f : f, RC_OK, true)
         end
     end
@@ -1549,6 +1422,15 @@ end
                                   decimal::UInt8) where {T <: Union{Float64, Float32}}
     v, rc, handled = _float_fast(T, buf, i, j, decimal) # dominant [sign]digits[.digits] shape
     handled && return (v, rc, true)
+    if j - i >= 16 # long decimal spans: the word-at-a-time scanner
+        @inbounds b = buf[i]
+        @inbounds first = buf[i + ((b == UInt8('-')) | (b == UInt8('+')))]
+        if first - UInt8('0') <= 0x09 || first == decimal
+            parts, nextpos, rc = _swardecimalparts(buf, i, j, decimal)
+            (rc == RC_OK && nextpos > j) || return (zero(T), RC_INVALID, true)
+            return _convertparts(T, parts)
+        end
+    end
     parts, rc = _decompose(buf, i, j, decimal)
     rc == RC_OK || return (zero(T), rc, true)
     return _convertparts(T, parts)
@@ -1652,11 +1534,7 @@ end
     (!parts.truncated && mant <= UInt64(1) << 53 && -22 <= q <= 22) ||
         return (zero(Float16), RC_INVALID, false)
 
-    value64 = Float64(mant)
-    if q != 0
-        value64 = q > 0 ? value64 * @inbounds(_POW10[q + 1]) :
-                          value64 / @inbounds(_POW10[-q + 1])
-    end
+    value64 = _clinger(Float64(mant), q, _POW10)
     parts.neg && (value64 = -value64)
     value16, rc, exact, lowerbits = _float16stage(value64, RC_OK)
     exact || return (value16, rc, true)
@@ -1777,7 +1655,7 @@ end
     end
 
     scan = _shortdecimalparts(buf, i, j, decimal)
-    _shortfit(scan) || return (zero(Float16), RC_INVALID, false)
+    scan.fit || return (zero(Float16), RC_INVALID, false)
     parts, nextpos, rc = scan.parts, scan.nextpos, scan.rc
     rc == RC_OK && nextpos > j || return (zero(Float16), RC_INVALID, true)
 
@@ -1795,31 +1673,203 @@ end
     return (value16, rc, true)
 end
 
-# Ungrouped float prefixes start in the scalar decimal scanner. Short values
-# finish from its result. A twentieth coefficient digit resumes in the wide
-# gatherer from the first unconsumed byte, so long values do not replay the
-# sign or their first nineteen coefficient digits.
-@noinline function _tryshortfloatprefix(::Type{T},
-                                        buf::AbstractVector{UInt8},
+# Eight bytes at buf[k] for a span that ends at j and holds at least eight
+# bytes before k. Near the end, the span's last eight bytes are loaded and
+# shifted so that bytes past j read as 0x00, which is not a digit.
+@inline function _spanword(buf::AbstractVector{UInt8}, k::Int, j::Int)
+    j - k >= 7 && return _load8(buf, k)
+    return _load8(buf, j - 7) >> ((k + 7 - j) << 3)
+end
+
+# Exponent digits at buf[k], for a span ending at j: the saturated value and
+# the first byte after the digits. Away from the span end one word holds up to
+# seven digits with no per-digit branch; near it the loop ends at j.
+@inline function _exponentdigits(buf::AbstractVector{UInt8}, k::Int, j::Int)
+    e = 0
+    if j - k >= 7
+        w = _load8(buf, k)
+        n = _firstnondigit8(w)
+        e = Int(_rundigits(w, n)[1])
+        k += n
+        n == 8 || return (e, k)
+    end
+    @inbounds while k <= j # nine or more digits, or the span end
+        digit = buf[k] - UInt8('0')
+        digit <= 0x09 || break
+        e < 100_000_000 && (e = 10e + Int(digit))
+        k += 1
+    end
+    return (e, k)
+end
+
+# Prefix parsing continues here when a coefficient has a twentieth significant
+# digit or eight leading zeros. `k` is the first unconsumed coefficient byte;
+# `mant` holds the exact value of the `ndig` significant digits before it.
+@noinline function _continuelongdecimalparts(buf::AbstractVector{UInt8},
+                                             orig::Int, k::Int, j::Int,
+                                             decimal::UInt8, mant::UInt64,
+                                             ndig::Int, fraction::Int,
+                                             sawpoint::Bool, neg::Bool)
+    dropped = 0
+    truncated = false
+
+    @inbounds while k <= j
+        # Once the nineteen significant coefficient digits are full, gather
+        # complete eight-byte runs. A partial run stays scalar so the first
+        # delimiter remains unconsumed.
+        if ndig >= 19 && j - k >= 7
+            word = _load8(buf, k)
+            if _alldigits8(word)
+                truncated |= word != 0x3030303030303030
+                ndig += 8
+                dropped += 8
+                sawpoint && (fraction += 8)
+                k += 8
+                continue
+            end
+        end
+
+        byte = buf[k]
+        digit = byte - UInt8('0')
+        if digit <= 0x09
+            sawpoint && (fraction += 1)
+            if ndig == 0
+                if digit != 0
+                    mant = UInt64(digit)
+                    ndig = 1
+                end
+            elseif ndig < 19
+                mant = 10mant + digit
+                ndig += 1
+            else
+                truncated |= digit != 0
+                ndig += 1
+                dropped += 1
+            end
+            k += 1
+        elseif byte == decimal && !sawpoint
+            sawpoint = true
+            k += 1
+        else
+            break
+        end
+    end
+
+    commit = k
+    exponent = Int128(0)
+    @inbounds if k <= j && _lower(buf[k]) == UInt8('e')
+        marker = k
+        k += 1
+        eneg = false
+        if k <= j
+            byte = buf[k]
+            eneg = byte == UInt8('-')
+            (eneg || byte == UInt8('+')) && (k += 1)
+        end
+        estart = k
+        e = zero(UInt64)
+        while k <= j
+            digit = buf[k] - UInt8('0')
+            digit <= 0x09 || break
+            e = _decimalexponentdigit(e, digit)
+            k += 1
+        end
+        if k > estart
+            exponent = _signeddecimalexponent(e, eneg)
+            commit = k
+        else
+            commit = marker
+        end
+    end
+
+    q = exponent - Int128(fraction) + Int128(dropped)
+    parts = _decparts(mant, q, ndig, truncated, neg,
+                      _DECPARTS_NO_DIGIT, orig)
+    return (parts, commit, RC_OK)
+end
+
+# Ungrouped decimal prefix of at most sixteen bytes: the scalar scanner, whose
+# loop ends at the known span end.
+@noinline function _tryshortfloatprefix(::Type{T}, buf::AbstractVector{UInt8},
                                         i::Int, j::Int,
                                         decimal::UInt8) where
                                         {T <: Union{Float64, Float32, Float16}}
     scan = _shortdecimalparts(buf, i, j, decimal)
-    if _shortcarry(scan)
-        parts, nextpos, rc = _continuelongdecimalparts(
-            buf, i, scan.nextpos, j, decimal, scan)
-    else
-        _shortfit(scan) || return (zero(T), i, RC_INVALID, false)
-        parts, nextpos, rc = scan.parts, scan.nextpos, scan.rc
-    end
+    scan.fit || return (zero(T), i, RC_INVALID, false)
+    parts, nextpos, rc = scan.parts, scan.nextpos, scan.rc
     rc == RC_OK || return (zero(T), i, rc, true)
-    if T === Float16
-        value16, rc, handled = _smallfloat16fromparts(parts)
-        handled && return (value16, nextpos, rc, true)
-    end
-    value, rc = _finishfloatprefix(T, parts, buf, i, nextpos - 1,
-                                   decimal, nothing)
+    value, rc = _finishfloatprefix(T, parts, buf, i, nextpos - 1, decimal, nothing)
     return (value, nextpos, rc, true)
+end
+
+# A longer ungrouped prefix gathers up to eight digit bytes per step, so a
+# token costs no per-digit branch.
+@noinline function _trywidefloatprefix(::Type{T}, buf::AbstractVector{UInt8},
+                                       i::Int, j::Int,
+                                       decimal::UInt8) where
+                                       {T <: Union{Float64, Float32, Float16}}
+    parts, nextpos, rc = _swardecimalparts(buf, i, j, decimal)
+    rc == RC_OK || return (zero(T), i, rc, true)
+    value, rc = _finishfloatprefix(T, parts, buf, i, nextpos - 1, decimal, nothing)
+    return (value, nextpos, rc, true)
+end
+
+# `j - i >= 16`, so every `_spanword` load stays inside buf[i:j].
+@inline function _swardecimalparts(buf::AbstractVector{UInt8}, i::Int, j::Int,
+                                   decimal::UInt8)
+    orig = i
+    @inbounds byte = buf[i]
+    neg = byte == UInt8('-')
+    (neg | (byte == UInt8('+'))) && (i += 1)
+    start = i
+    mant = zero(UInt64)
+    ndig = 0
+    sawpoint = false
+    point = 0          # index of the decimal point, once `sawpoint`
+    while i <= j
+        w = _spanword(buf, i, j)
+        n = _firstnondigit8(w)
+        # leading zeros are not significant digits
+        z = mant == 0 ? trailing_zeros(w ⊻ 0x3030303030303030) >> 3 : 0
+        if (ndig + n - z > 19) | (z == 8)
+            # keep the significant digits that fit (a zero word has none)
+            keep = z == 8 ? 0 : 19 - ndig
+            mant = mant * @inbounds(_POW10U64[keep + 1]) + _rundigits(w, keep)[1]
+            i += keep
+            fraction = sawpoint ? i - point - 1 : 0
+            return _continuelongdecimalparts(buf, orig, i, j, decimal, mant,
+                                             ndig + keep, fraction, sawpoint,
+                                             neg)
+        end
+        ndig += n - z
+        if n == 8 # a full word: the next address does not wait on `n`
+            mant = mant * 100_000_000 + _digits8(w)
+            i += 8
+            continue
+        end
+        mant = mant * @inbounds(_POW10U64[n + 1]) + _rundigits(w, n)[1]
+        i += n
+        (!sawpoint && i <= j && @inbounds(buf[i]) == decimal) || break
+        sawpoint = true
+        point = i
+        i += 1
+    end
+    i - start > sawpoint ||
+        return (DecParts(0, 0, 0, false, neg, 0), orig, RC_INVALID)
+    commit = i
+    q = sawpoint ? point - i + 1 : 0
+    @inbounds if i < j && _lower(buf[i]) == UInt8('e')
+        # a branch on the sign would resolve only after the coefficient scan
+        byte = buf[i + 1]
+        eneg = byte == UInt8('-')
+        k = i + 1 + Int(eneg | (byte == UInt8('+')))
+        e, stop = _exponentdigits(buf, k, j)
+        if stop > k
+            q += ifelse(eneg, -e, e)
+            commit = stop
+        end
+    end
+    return (DecParts(mant, Int32(q), Int32(ndig), false, neg, Int32(0)), commit, RC_OK)
 end
 
 @inline function parsefloat(::Type{Float16}, buf::AbstractVector{UInt8}, i::Int, j::Int,
@@ -1933,8 +1983,9 @@ end
         return (zero(T), i, RC_INVALID)
     _startshexprefix(buf, k, j) && return _parsehexfloatprefix(T, buf, i, j)
     if gm === nothing
-        value, nextpos, rc, handled =
-            _tryshortfloatprefix(T, buf, i, j, decimal)
+        value, nextpos, rc, handled = j - i < 16 ?
+            _tryshortfloatprefix(T, buf, i, j, decimal) :
+            _trywidefloatprefix(T, buf, i, j, decimal)
         handled && return (value, nextpos, rc)
     end
     return _parsefloatprefixgeneral(T, buf, i, j, decimal, gm)
