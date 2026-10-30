@@ -549,22 +549,25 @@ end
 @inline function parseexp(conf::AbstractConf{T}, source, pos, len, b, code, options, digits, neg::Bool, startpos, frac, exp::UInt64, negexp, FT, overflow_invalid, ndigits, f::F) where {T, F}
     x = zero(T)
     # note that `b` has already had `b - UInt8('0')` applied to it for parseexp
+    ateof = false
     while true
         exp = _decimalexponentdigit(exp, b)
         pos += 1
         incr!(source)
-        eof(source, pos, len) && (code |= EOF; break)
+        ateof = eof(source, pos, len)
+        ateof && break
         b = peekbyte(source, pos) - UInt8('0')
         # if we encounter a non-digit, that must mean we're done
         b > 0x09 && break
     end
     ee = _signeddecimalexponent(exp, negexp) - Int128(frac)
     if overflow_invalid && ee > 308
+        # an exponent past 308 is invalid for these parsers; EOF marks only valid input
         code |= INVALID
         x = getx(x, f)
     else
         x, code = _scaletoken(conf, FT, source, startpos, pos, digits, ee, neg, code, ndigits, f, options)
-        code |= OK
+        code |= ateof ? (OK | EOF) : OK
     end
     return x, code, pos
 end

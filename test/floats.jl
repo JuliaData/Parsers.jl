@@ -740,6 +740,28 @@ end
     @test eof(io)
 end
 
+# A parser built on `parsedigits` that treats an exponent past 308 as invalid,
+# as FixedPointDecimals does. Its value is the scale exponent.
+struct ExponentConf <: Parsers.AbstractConf{Int64} end
+Parsers.scale(::ExponentConf, FT::Parsers.FloatType, v, exp, neg, code, ndigits,
+              f::F, options::Parsers.Options) where {F} = (Int64(exp), code)
+Parsers.noscale(::ExponentConf, v::Integer, neg::Bool, code, ndigits, f::F,
+                options::Parsers.Options) where {F} = (Int64(0), code)
+function exponentcode(s)
+    source = codeunits(s)
+    return Parsers.parsedigits(ExponentConf(), source, 1, length(source), source[1],
+                               Parsers.SUCCESS, Parsers.OPTIONS, UInt64(0), false, 1,
+                               true, 0, nothing)[2]
+end
+
+@testset "parsedigits return codes for an exponent past 308" begin
+    @test exponentcode("1e400") == INVALID      # no EOF, even at the end of input
+    @test exponentcode("1e400,") == INVALID
+    @test exponentcode("1e5") == OK | EOF
+    @test exponentcode("1e5,") == OK
+    @test exponentcode("1.5e-5") == OK | EOF
+end
+
 @testset "groupmark" begin
     # `parse` is used for parsing inputs with a single value in them,
     # so when delims==groupmarks, we assume what we see are groupmarks
