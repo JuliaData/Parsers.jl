@@ -531,9 +531,10 @@ end
 
 const SDC_MAXDIG = 800   # 768-digit worst case + slack
 
-# Fixed-size decimal 0.d₁d₂…dₙ × 10^dp with sticky truncation. All operations
-# are exact except the documented truncate-at-800 (which sets `sticky` and is
-# beyond the decision bound for Float64).
+# Fixed-size decimal 0.d₁d₂…dₙ × 10^dp: d₁ is nonzero and dₙ is the last
+# nonzero digit. Binary shifts are exact except that digits past the 800th are
+# dropped; `sticky` records a dropped nonzero digit, which matters only when the
+# kept digits sit exactly halfway between two results.
 mutable struct HPD
     d::Vector{UInt8}
     n::Int
@@ -596,151 +597,177 @@ function _hpd(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8,
     return HPD(d, n, dp, sticky)
 end
 
-# value ≥ 1?
-_hpdge1(h::HPD) = h.n > 0 && h.dp > 0
-
-# double in place: value *= 2  (value < 1 before call keeps digits bounded)
-function _double!(h::HPD)
-    carry = 0
-    @inbounds for k in h.n:-1:1
-        v = Int(h.d[k]) * 2 + carry
-        h.d[k] = UInt8(v % 10)
-        carry = v ÷ 10
-    end
-    if carry != 0
-        # shift right one digit to prepend the carry
-        n = min(h.n + 1, SDC_MAXDIG)
-        h.sticky |= h.n + 1 > SDC_MAXDIG && h.d[SDC_MAXDIG] != 0
-        @inbounds for k in n:-1:2
-            h.d[k] = h.d[k - 1]
-        end
-        h.d[1] = UInt8(carry)
-        h.n = n
-        h.dp += 1
-    end
-    while h.n > 0 && h.d[h.n] == 0
+@inline function _hpdtrim!(h::HPD)
+    @inbounds while h.n > 0 && h.d[h.n] == 0
         h.n -= 1
     end
+    h.n == 0 && (h.dp = 0)
     return h
 end
 
-# halve in place: value /= 2 == value*5, dp -= 1
-function _halve!(h::HPD)
-    carry = 0
-    # multiply by 5 processing from the right
-    @inbounds for k in h.n:-1:1
-        v = Int(h.d[k]) * 5 + carry
-        h.d[k] = UInt8(v % 10)
-        carry = v ÷ 10
-    end
-    while carry != 0
-        n = min(h.n + 1, SDC_MAXDIG)
-        h.sticky |= h.n + 1 > SDC_MAXDIG && h.d[SDC_MAXDIG] != 0
-        @inbounds for k in n:-1:2
-            h.d[k] = h.d[k - 1]
+# A shift moves at most 60 bits per pass: a digit times 2^60 plus a carry below
+# 2^60 stays below 10 · 2^60 < 2^64.
+const _SDC_MAXSHIFT = 60
+
+# 5^k as decimal digits, most significant first
+function _pow5decimal(k::Int)
+    d = UInt8[1]
+    for _ in 1:k
+        carry = 0
+        for idx in length(d):-1:1
+            v = 5 * Int(d[idx]) + carry
+            d[idx] = UInt8(v % 10)
+            carry = v ÷ 10
         end
-        h.d[1] = UInt8(carry % 10)
-        carry ÷= 10
-        h.n = n
-        h.dp += 1
+        carry == 0 || pushfirst!(d, UInt8(carry))
     end
-    h.dp -= 1
-    while h.n > 0 && h.d[h.n] == 0
-        h.n -= 1
-    end
-    return h
+    return d
 end
 
-# subtract 1 (requires 1 ≤ value < 2, i.e. dp == 1 and d1 ≥ 1... value<2 ⇒ d1 ∈ 1)
-function _sub1!(h::HPD)
-    # value = d1.d2d3… with dp == 1; subtracting 1 zeroes the integer digit
-    @inbounds h.d[1] -= 1
-    while h.n > 0 && h.d[h.n] == 0
-        h.n -= 1
+# Multiplying by 2^k adds ndigits(2^k) leading digits, or one fewer when the
+# digits compare below those of 5^k (because 2^k · 5^k = 10^k).
+const _LSHIFTDIGITS = ntuple(k -> ndigits(UInt64(1) << k), _SDC_MAXSHIFT)
+const _LSHIFTCUTOFF = [_pow5decimal(k) for k in 1:_SDC_MAXSHIFT]
+
+@inline function _hpdbelow(h::HPD, cutoff::Vector{UInt8})
+    @inbounds for k in eachindex(cutoff)
+        k > h.n && return true
+        h.d[k] == cutoff[k] || return h.d[k] < cutoff[k]
     end
-    if h.n > 0 && h.d[1] == 0
-        # renormalize: drop leading zeros
-        lead = 0
-        @inbounds while lead < h.n && h.d[lead + 1] == 0
-            lead += 1
-        end
-        @inbounds for k in 1:(h.n - lead)
-            h.d[k] = h.d[k + lead]
-        end
-        h.n -= lead
-        h.dp -= lead
-    elseif h.n == 0
-        h.dp = 0
-    end
-    return h
+    return false
 end
 
+# value *= 2^k for 1 ≤ k ≤ 60
+function _hpdleftshift!(h::HPD, k::Int)
+    delta = @inbounds _LSHIFTDIGITS[k]
+    _hpdbelow(h, @inbounds _LSHIFTCUTOFF[k]) && (delta -= 1)
+    r = h.n            # next digit to read, from the right
+    w = h.n + delta    # next digit to write
+    n = zero(UInt64)
+    while r > 0 || n > 0
+        if r > 0
+            n += UInt64(@inbounds(h.d[r])) << k
+            r -= 1
+        end
+        q = n ÷ 10
+        if w <= SDC_MAXDIG
+            h.d[w] = UInt8(n - 10q)
+        else
+            h.sticky |= n != 10q
+        end
+        w -= 1
+        n = q
+    end
+    h.n = min(h.n + delta, SDC_MAXDIG)
+    h.dp += delta
+    return _hpdtrim!(h)
+end
+
+# value /= 2^k for 1 ≤ k ≤ 60
+function _hpdrightshift!(h::HPD, k::Int)
+    r = 0
+    n = zero(UInt64)
+    while n >> k == 0  # read until the first quotient digit is nonzero
+        if r < h.n
+            r += 1
+            n = 10n + @inbounds(h.d[r])
+        elseif n == 0
+            h.n = 0
+            h.dp = 0
+            return h
+        else
+            n *= 10    # past the last digit, read zeros
+            r += 1
+        end
+    end
+    h.dp -= r - 1
+    mask = (one(UInt64) << k) - one(UInt64)
+    w = 0
+    while r < h.n
+        r += 1
+        c = @inbounds h.d[r]
+        w += 1
+        h.d[w] = UInt8(n >> k)
+        n = 10 * (n & mask) + c
+    end
+    while n > 0
+        if w < SDC_MAXDIG
+            w += 1
+            h.d[w] = UInt8(n >> k)
+        else
+            h.sticky |= n >> k != 0
+        end
+        n = 10 * (n & mask)
+    end
+    h.n = w
+    return _hpdtrim!(h)
+end
+
+# The integer nearest the value, ties to even; a sticky tail breaks a tie upward.
+function _hpdroundedinteger(h::HPD)
+    n = zero(UInt64)
+    k = 0
+    while k < h.dp
+        k += 1
+        n = 10n + (k <= h.n ? @inbounds(h.d[k]) : 0x00)
+    end
+    nd = h.dp
+    roundup = false
+    if 0 <= nd < h.n
+        d = @inbounds h.d[nd + 1]
+        roundup = d > 5 || (d == 5 && (nd + 1 < h.n || h.sticky ||
+                                       (nd > 0 && isodd(@inbounds h.d[nd]))))
+    end
+    return n + roundup
+end
+
+# Scaling a decimal with dp = ±n shifts by _sdcshift(n) bits; 2^shift < 10^n,
+# so a left shift from below 1 stays below 1.
+const _SDC_POWERS = (3, 6, 9, 13, 16, 19, 23, 26, 29, 33, 36, 39, 43, 46, 49, 53, 56, 59)
+@inline _sdcshift(n::Int) =
+    n <= length(_SDC_POWERS) ? @inbounds(_SDC_POWERS[n]) : _SDC_MAXSHIFT
+
+# Simple decimal conversion: scale the exact decimal into [1/2, 1) by binary
+# shifts of up to 60 bits, then round the top MB + 1 bits half to even.
 @noinline function _sdc(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int, neg::Bool,
                         decimal::UInt8, groupmark=nothing) where
                         {T <: Union{Float64, Float32, Float16}}
     MB = _mantbits(T)
     h = _hpd(buf, i, j, decimal, groupmark)
     h.n == 0 && return _sign(T, zero(UInt64), neg)
-    # scale into [1, 2): binary exponent accumulates in e2
-    e2 = 0
-    while !_hpdge1(h)                       # value < 1: double
-        _double!(h)
-        e2 -= 1
-        e2 < -1200 && return _sign(T, zero(UInt64), neg)     # certain underflow to 0
+    # every target rounds a value below 10^-330 to zero and overflows from 10^310
+    h.dp < -330 && return _sign(T, zero(UInt64), neg)
+    h.dp > 310 && return _sign(T, _infbits(T), neg)
+    e2 = 0                                   # value = h × 2^e2
+    while h.dp > 0
+        s = _sdcshift(h.dp)
+        _hpdrightshift!(h, s)
+        e2 += s
     end
-    while h.dp > 1 || (h.dp == 1 && h.d[1] >= 2)   # value ≥ 2: halve
-        _halve!(h)
+    while h.dp < 0 || (h.dp == 0 && @inbounds(h.d[1]) < 5)
+        s = h.dp < 0 ? _sdcshift(-h.dp) : @inbounds(h.d[1]) < 2 ? 2 : 1
+        _hpdleftshift!(h, s)
+        e2 -= s
+    end
+    e2 -= 1                                  # h in [1/2, 1), so value = 2h × 2^e2
+    emin = 1 - _bias(T)
+    if e2 < emin
+        # subnormal: shift the value down to the smallest normal exponent; below
+        # half the smallest subnormal it rounds to zero
+        emin - e2 >= MB + 2 && return _sign(T, zero(UInt64), neg)
+        _hpdrightshift!(h, emin - e2)
+        e2 = emin
+    end
+    e2 + _bias(T) >= _maxexp(T) && return _sign(T, _infbits(T), neg)
+    _hpdleftshift!(h, MB + 1)                # the implicit bit and MB stored bits
+    mant = _hpdroundedinteger(h)
+    if mant == UInt64(2) << MB               # rounding carried into a new bit
+        mant >>= 1
         e2 += 1
-        e2 > 1100 && return _sign(T, _infbits(T), neg)       # certain overflow
+        e2 + _bias(T) >= _maxexp(T) && return _sign(T, _infbits(T), neg)
     end
-    # now 1 ≤ value < 2, msb bit is the leading 1
-    e2biased = e2 + _bias(T)
-    nbits = MB
-    subnormal = e2biased <= 0
-    if subnormal
-        # subnormals have NO implicit bit: the leading 1 is stored, followed by
-        # nbits generated bits (nbits == -1 ⇒ even the leading 1 is below bit 0
-        # and becomes the rounding bit for the min-subnormal decision)
-        nbits = MB + e2biased - 1
-        nbits < -1 && return _sign(T, zero(UInt64), neg)
-        e2biased = 0
-    end
-    _sub1!(h)                                # consume the leading 1
-    local mant::UInt64
-    local roundbit::Bool
-    if subnormal && nbits == -1
-        mant = zero(UInt64)
-        roundbit = true                      # the leading 1 itself
-    else
-        mant = subnormal ? one(UInt64) : zero(UInt64)
-        for _ in 1:nbits
-            _double!(h)
-            bit = _hpdge1(h)
-            mant = (mant << 1) | UInt64(bit)
-            bit && _sub1!(h)
-        end
-        _double!(h)
-        roundbit = _hpdge1(h)
-        roundbit && _sub1!(h)
-    end
-    stickyrest = h.n > 0 || h.sticky
-    if roundbit && (stickyrest || (mant & 1) == 1)
-        mant += 1
-        if e2biased == 0 && mant == (UInt64(1) << MB)
-            e2biased = 1                     # subnormal rounded up to normal
-            mant = 0
-        elseif mant == (UInt64(1) << MB)
-            mant = 0
-            e2biased += 1
-        end
-    end
-    if e2biased == 0 && nbits < MB
-        # subnormal: mantissa currently has `nbits+?` bits — it is already in
-        # low-bit position because we generated exactly nbits of them
-        return _sign(T, mant, neg)
-    end
-    e2biased >= _maxexp(T) && return _sign(T, _infbits(T), neg)
-    return _sign(T, (UInt64(e2biased) << MB) | (mant & ((UInt64(1) << MB) - 1)), neg)
+    biased = iszero(mant & (UInt64(1) << MB)) ? 0 : e2 + _bias(T)  # subnormal: biased 0
+    return _sign(T, (UInt64(biased) << MB) | (mant & ((UInt64(1) << MB) - 1)), neg)
 end
 
 @inline _sign(::Type{Float64}, bits::UInt64, neg::Bool) =
