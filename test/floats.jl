@@ -804,6 +804,21 @@ end
     @test exponentcode("1.5e-5") == OK | EOF
 end
 
+@testset "IO tokens keep their digits while the read waits" begin
+    # A read from a pipe can wait for more bytes; another parse on the same
+    # thread must not change the digits kept so far.
+    for (T, head, tail, want) in ((Float64, "1" * "0"^45, "0"^14 * "1", 1.0e60),
+                                  (Number, "1." * "0"^45, "0"^14 * "1", 1.0))
+        p = Pipe(); Base.link_pipe!(p)
+        write(p, head)
+        t = @async Parsers.parse(T, p)
+        yield(); sleep(0.1)
+        Parsers.parse(Number, "7" * "0"^49)
+        write(p, tail); close(p.in)
+        @test fetch(t) == want
+    end
+end
+
 @testset "Number integers wider than Int128 are new BigInts" begin
     a = Parsers.parse(Number, "1" * "0"^50)
     b = Parsers.parse(Number, "2" * "0"^50)

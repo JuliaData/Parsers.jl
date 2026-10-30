@@ -60,13 +60,16 @@ const FloatConf = DefaultConf{<:Union{Float16, Float32, Float64}}
 _widen(::AbstractConf, source, x) = _widen(x)
 _widen(::FloatConf, source, x::UInt64) = LongMantissa(x, 0, false)
 _widen(::FloatConf, source::IO, x::UInt64) = _widen(x)
+# An IO read can block and yield mid-token, so its wide digits never use the
+# task-shared scratch BigInt.
+_widen(::AbstractConf, source::IO, x::Union{Int128, UInt128}) = BigInt(x)
 # Fraction digits make a `Number` result a float, so it keeps leading digits too.
 _widenfrac(conf::AbstractConf, source, x) = _widen(conf, source, x)
 function _widenfrac(::DefaultConf{Number}, source, x::Union{Int64, Int128})
     mant, dropped, sticky, _ = _mantissa(x)
     return LongMantissa(mant, dropped, sticky)
 end
-_widenfrac(::DefaultConf{Number}, source::IO, x::Union{Int64, Int128}) = _widen(x)
+_widenfrac(conf::DefaultConf{Number}, source::IO, x::Union{Int64, Int128}) = _widen(conf, source, x)
 
 @enum FloatType FLOAT16 FLOAT32 FLOAT64 BIGFLOAT
 
