@@ -139,6 +139,110 @@ end
     end
 end
 
+# The midpoint between `x` and the next value up, as an integer `n` scaled by
+# 10^-f. Above floatmax the next value is floatmax plus one ulp, the overflow
+# threshold.
+function sdc_midpoint(x::T) where {T <: AbstractFloat}
+    lo = Rational{BigInt}(x)
+    hi = isfinite(nextfloat(x)) ? Rational{BigInt}(nextfloat(x)) :
+                                  2lo - Rational{BigInt}(prevfloat(x))
+    q = (lo + hi) // 2
+    f = trailing_zeros(denominator(q))     # q = n / 2^f = n * 5^f / 10^f
+    return numerator(q) * big(5)^f, f
+end
+sdc_decimal(n::BigInt, f::Int) =
+    (s = lpad(string(n), f + 1, '0'); s[1:end-f] * "." * s[end-f+1:end])
+
+# Cost of the simple-decimal-conversion tier against the fast path on the same
+# digits, measured in one process, so code coverage and the machine slow both
+# sides alike. The slow tokens have 22 digits next to a Float64 rounding
+# boundary at large exponents; at these smaller exponents Eisel-Lemire decides
+# the same digits. Scaling by many bits per pass keeps the ratio in the
+# hundreds; one bit per pass puts it above 10,000.
+function sdc_cost_ratio()
+    slow = ("1.000000000000000126855e300", "1.000000000000000107949e-300",
+            "2.500000000000000100292e-200")
+    fast = ("1.000000000000000126855e30", "1.000000000000000107949e-30",
+            "2.500000000000000100292e-20")
+    run(toks, n) = for _ in 1:n, t in toks; Parsers.parse(Float64, t); end
+    run(slow, 1); run(fast, 1)
+    tslow = minimum(@elapsed(run(slow, 100)) for _ in 1:3) / 100
+    tfast = minimum(@elapsed(run(fast, 10_000)) for _ in 1:3) / 10_000
+    return tslow / tfast
+end
+
+# HPD digits d₁…dₙ and point dp hold 0.d₁…dₙ × 10^dp.
+function sdc_hpd(digits::AbstractString, dp::Int)
+    d = zeros(UInt8, Parsers.SDC_MAXDIG)
+    for (k, c) in enumerate(digits)
+        d[k] = UInt8(c - '0')
+    end
+    return Parsers.HPD(d, length(digits), dp, false)
+end
+sdc_value(h) = h.n == 0 ? big(0) // 1 :
+    parse(BigInt, String(h.d[1:h.n] .+ UInt8('0'))) * (big(10)^max(h.dp, 0) // big(10)^(h.n - min(h.dp, 0)))
+
+@testset "simple decimal conversion: binary shifts" begin
+    rng = Random.MersenneTwister(0x5dc)
+    for k in 1:Parsers._SDC_MAXSHIFT
+        @test Parsers._pow5decimal(k) == reverse(digits(UInt8, big(5)^k))
+        # digits equal to, just below and just above those of 5^k decide how many
+        # digits a left shift adds
+        p = big(5)^k
+        for s in (string(p), string(p - 1), string(p + 1), "1", "9",
+                  string(rand(rng, 1:9)) * String(rand(rng, '0':'9', rand(rng, 0:60))))
+            s = rstrip(s, '0')
+            for dp in (-3, 0, 2)
+                h = sdc_hpd(s, dp)
+                v = sdc_value(h)
+                Parsers._hpdleftshift!(h, k)
+                @test sdc_value(h) == v * big(2)^k
+                @test h.d[1] != 0 && h.d[h.n] != 0 && !h.sticky
+                h = sdc_hpd(s, dp)
+                Parsers._hpdrightshift!(h, k)
+                @test sdc_value(h) == v / big(2)^k
+                @test h.d[1] != 0 && h.d[h.n] != 0 && !h.sticky
+            end
+        end
+    end
+    # zero stays zero
+    h = sdc_hpd("", 0)
+    Parsers._hpdrightshift!(h, 7)
+    @test h.n == 0 && h.dp == 0
+end
+
+@testset "simple decimal conversion tier" begin
+    # Midpoints between neighbours that only the exact tier can separate: long
+    # tokens (past the 256-bit comparison) and short ones at large exponents.
+    for T in (Float16, Float32, Float64)
+        for x in (zero(T), nextfloat(zero(T)), prevfloat(floatmin(T)), floatmin(T),
+                  T(3) * floatmin(T), floatmax(T) / T(3), prevfloat(floatmax(T)), floatmax(T))
+            next = isfinite(nextfloat(x)) ? nextfloat(x) : T(Inf)
+            tie = iseven(reinterpret(Unsigned, x)) ? x : next
+            n, f = sdc_midpoint(x)
+            p = big(10)^100
+            cases = [sdc_decimal(n, f) => tie,
+                     sdc_decimal(n * p + 1, f + 100) => next,
+                     sdc_decimal(n * p - 1, f + 100) => x]
+            if T === Float64 && !iszero(x)
+                # 22 significant digits, truncated below the midpoint and one unit above it
+                digits = string(n)
+                cut = parse(BigInt, digits[1:22])
+                e = length(digits) - 22 - f
+                push!(cases, string(cut, "e", e) => x, string(cut + 1, "e", e) => next)
+            end
+            for (tok, want) in cases
+                buf = b(tok)
+                @test Parsers.parsefloat(T, buf, 1, length(buf))[1] === want
+                @test Parsers._sdc(T, buf, 1, length(buf), false, UInt8('.')) === want
+                @test Parsers._sdc(T, buf, 1, length(buf), true, UInt8('.')) === -want
+            end
+        end
+    end
+    # The bound is calibrated on 64-bit hosts.
+    Sys.WORD_SIZE == 64 && @test sdc_cost_ratio() < 1000
+end
+
 @testset "parsefloat64: exact-halfway band stays in Eisel-Lemire (round-half-even in-line)" begin
     # odd 16-digit integers just above 2^53 are exact ties between doubles;
     # they used to trip to the 800-digit tier (2.4 µs each). Bit-exact vs Base
