@@ -713,6 +713,33 @@ end
     @test sdc_cost_ratio() < 300
 end
 
+@testset "non-seekable IO sources" begin
+    # These need the exact tier, which can't read an IO twice: the parser keeps
+    # the digits of an IO token instead.
+    toks = ("1.00000000000000011102230246251565404236316680908203125",
+            "1.00000000000000011102230246251565404236316680908203126",
+            "1.000000000000000126855e300", "65519.999999999999",
+            "1.000000059604644775390625", "-1.000000059604644775390625" * "0"^300 * "1",
+            "0." * "1"^5000, "1" * "0"^400, "4503599627370497.5", "0.1")
+    sources = (s -> (io = PipeBuffer(); write(io, s); io),
+               s -> (io = Base.BufferStream(); write(io, s); close(io); io),
+               s -> IOContext(IOBuffer(s)),
+               s -> (io = IOBuffer("xyz" * s); mark(io); skip(io, 3); io))
+    for T in (Float16, Float32, Float64, Number), tok in toks, source in sources
+        want = Parsers.parse(T, tok)
+        @test isequal(Parsers.parse(T, source(tok)), want)
+        @test isequal(Parsers.tryparse(T, source(tok)), want)
+    end
+    # a delimited stream of such values
+    io = PipeBuffer()
+    write(io, join(toks, ","))
+    for tok in toks
+        res = Parsers.xparse(Float64, io, 1, 0, Parsers.Options(delim=','))
+        @test res.val === Parsers.parse(Float64, tok)
+    end
+    @test eof(io)
+end
+
 @testset "groupmark" begin
     # `parse` is used for parsing inputs with a single value in them,
     # so when delims==groupmarks, we assume what we see are groupmarks

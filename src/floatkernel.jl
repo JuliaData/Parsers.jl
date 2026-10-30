@@ -910,7 +910,7 @@ end
 end
 
 # The tiers past Clinger's case. The digits are read again only for a value
-# that the 64-bit tiers cannot place, so an IO source is re-read only then.
+# that the 64-bit tiers cannot place.
 @noinline function _finishfloatslow(::Type{T}, parts::DecParts, source, startpos,
                                     pos, options) where {T <: Union{Float64, Float32}}
     value, done = _convertparts(T, parts)
@@ -942,23 +942,15 @@ end
                                   options.decimal, lowerbits, options.groupmark)
 end
 
-# The token bytes source[startpos:pos-1] as a byte span. An IO source is
-# re-read from its current position, which follows the token.
+# The token bytes source[startpos:pos-1] as a byte span.
 @inline _tokenspan(source::AbstractVector{UInt8}, startpos, pos) =
     (source, Int(startpos), Int(pos) - 1)
 @inline _tokenspan(source::AbstractString, startpos, pos) =
     (codeunits(source), Int(startpos), Int(pos) - 1)
-# `scale` called directly has exact digits `v` and exponent `e` instead of a token.
+# Exact digits `v` and exponent `e` in place of a token: from `scale` called
+# directly, or from an `IO` source, which can't be read twice.
 @noinline function _tokenspan(source::Tuple{Integer, Integer}, startpos, pos)
     buf = Vector{UInt8}(string(source[1], "e", source[2]))
-    return (buf, 1, length(buf))
-end
-@noinline function _tokenspan(source::IO, startpos, pos)
-    n = Int(pos - startpos)
-    current = position(source)
-    seek(source, current - n)
-    buf = read(source, n)
-    seek(source, current)
     return (buf, 1, length(buf))
 end
 

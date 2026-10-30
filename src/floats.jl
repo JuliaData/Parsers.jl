@@ -52,17 +52,21 @@ const FloatConf = DefaultConf{<:Union{Float16, Float32, Float64}}
 @inline _countdigit(::AbstractConf, ndigits, b) = ndigits + (!iszero(ndigits) || !iszero(b))
 @inline _countdigit(::Union{FloatConf, DefaultConf{Number}}, ndigits, b) = ndigits
 
-# The built-in float targets keep only a long coefficient's leading digits;
-# `Number` integers and other parsers built on `parsedigits` (which receive the
-# digits in their `scale`/`noscale` methods) keep every digit.
-_widen(::AbstractConf, x) = _widen(x)
-_widen(::FloatConf, x::UInt64) = LongMantissa(x, 0, false)
+# The built-in float targets keep only a long coefficient's leading digits and
+# read the token again if those can't decide the rounding. `Number` integers,
+# other parsers built on `parsedigits` (which receive the digits in their
+# `scale`/`noscale` methods), and `IO` sources, which can't be read twice, keep
+# every digit.
+_widen(::AbstractConf, source, x) = _widen(x)
+_widen(::FloatConf, source, x::UInt64) = LongMantissa(x, 0, false)
+_widen(::FloatConf, source::IO, x::UInt64) = _widen(x)
 # Fraction digits make a `Number` result a float, so it keeps leading digits too.
-_widenfrac(conf::AbstractConf, x) = _widen(conf, x)
-function _widenfrac(::DefaultConf{Number}, x::Union{Int64, Int128})
+_widenfrac(conf::AbstractConf, source, x) = _widen(conf, source, x)
+function _widenfrac(::DefaultConf{Number}, source, x::Union{Int64, Int128})
     mant, dropped, sticky, _ = _mantissa(x)
     return LongMantissa(mant, dropped, sticky)
 end
+_widenfrac(::DefaultConf{Number}, source::IO, x::Union{Int64, Int128}) = _widen(x)
 
 @enum FloatType FLOAT16 FLOAT32 FLOAT64 BIGFLOAT
 
@@ -352,7 +356,7 @@ getx(x, f) = f === nothing ? x : nothing
         while true
             if b <= 0x09
                 if overflows(IntType) && digits > overflowval(IntType)
-                    return _parsedigits(conf, source, pos, len, b + UInt8('0'), code, options, _widen(conf, digits), neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
+                    return _parsedigits(conf, source, pos, len, b + UInt8('0'), code, options, _widen(conf, source, digits), neg, startpos, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
                 elseif ndigits > maxdigits(T)
                     # if input is way too big, just bail
                     fastseek!(source, startpos - 1)
@@ -433,7 +437,7 @@ getx(x, f) = f === nothing ? x : nothing
     # `digits` still receives any fractional digits, `frac` just keeps track of how many digits
     # were parsed to combine with any "e123" exponent numbers to determine final exponent value
     if overflows(IntType) && digits > overflowval(IntType)
-        x, code, pos = _parsefrac(conf, source, pos, len, b, code, options, _widen(conf, digits), neg, startpos, UInt64(0), overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
+        x, code, pos = _parsefrac(conf, source, pos, len, b, code, options, _widen(conf, source, digits), neg, startpos, UInt64(0), overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
     else
         x, code, pos = parsefrac(conf, source, pos, len, b, code, options, digits, neg, startpos, UInt64(0), overflow_invalid, ndigits, f)
     end
@@ -477,7 +481,7 @@ end
             b = peekbyte(source, pos) - UInt8('0')
             b > 0x09 && break
             if overflows(IntType) && digits > overflowval(IntType)
-                return _parsefrac(conf, source, pos, len, b + UInt8('0'), code, options, _widenfrac(conf, digits), neg, startpos, frac, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
+                return _parsefrac(conf, source, pos, len, b + UInt8('0'), code, options, _widenfrac(conf, source, digits), neg, startpos, frac, overflow_invalid, ndigits, f)::Tuple{rettype(T), ReturnCode, Int}
             end
         end
         b += UInt8('0')
@@ -611,14 +615,26 @@ end
     mant, dropped, truncated, exact = _mantissa(v)
     parts = DecParts(mant, _decpartsexp32(Int128(exp) + dropped),
                      exact ? Int32(19) : Int32(20), truncated, neg)
-    return _finishfloat(T, parts, source, startpos, pos, options)
+    return _finishfloat(T, parts, _exactsource(source, v, exp), startpos, pos, options)
 end
+
+# Where the exact tier reads the digits: the token in the source, or for an `IO`
+# source the exact digits kept while parsing.
+@inline _exactsource(source, v, exp) = source
+@inline _exactsource(::IO, v::Integer, exp) = (v, exp)
 
 # (leading digits, dropped digit count, any dropped digit nonzero, all digits kept)
 @inline _mantissa(v::UInt64) = (v, 0, false, true)
 @inline _mantissa(v::Int64) = (unsigned(v), 0, false, true)
 @inline _mantissa(v::LongMantissa) = (v.mant, v.dropped, v.sticky, false)
-# Coefficients wider than 64 bits (`Number`, or `scale` called directly) keep their first 19 digits.
+# Coefficients wider than 64 bits (`Number`, `IO` sources, or `scale` called
+# directly) keep their first 19 digits.
+function _mantissa(v::Union{Int128, UInt128})
+    dropped = ndigits(v) - 19
+    dropped <= 0 && return (UInt64(v), 0, false, true)
+    q, r = divrem(v, oftype(v, 10)^dropped)
+    return (UInt64(q), dropped, !iszero(r), false)
+end
 function _mantissa(v::Integer)
     dropped = ndigits(v) - 19
     dropped <= 0 && return (UInt64(v), 0, false, true)
