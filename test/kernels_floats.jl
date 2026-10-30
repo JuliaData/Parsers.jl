@@ -139,6 +139,68 @@ end
     end
 end
 
+# The midpoint between `x` and the next value up, as an integer `n` scaled by
+# 10^-f. Above floatmax the next value is floatmax plus one ulp, the overflow
+# threshold.
+function sdc_midpoint(x::T) where {T <: AbstractFloat}
+    lo = Rational{BigInt}(x)
+    hi = isfinite(nextfloat(x)) ? Rational{BigInt}(nextfloat(x)) :
+                                  2lo - Rational{BigInt}(prevfloat(x))
+    q = (lo + hi) // 2
+    f = trailing_zeros(denominator(q))     # q = n / 2^f = n * 5^f / 10^f
+    return numerator(q) * big(5)^f, f
+end
+sdc_decimal(n::BigInt, f::Int) =
+    (s = lpad(string(n), f + 1, '0'); s[1:end-f] * "." * s[end-f+1:end])
+
+# Cost of the simple-decimal-conversion tier relative to MPFR's correctly
+# rounded parse of the same tokens, which calibrates the bound to the machine.
+# The tokens have 22 digits and sit next to a Float64 rounding boundary at
+# large exponents; scaling them one bit per pass cost about 2800x MPFR.
+function sdc_cost_ratio()
+    toks = ("1.000000000000000126855e300", "1.000000000000000107949e-300",
+            "2.500000000000000100292e-200")
+    runparsers() = for _ in 1:100, t in toks; Parsers.parse(Float64, t); end
+    runmpfr() = setprecision(BigFloat, 256) do
+        for _ in 1:1000, t in toks; BigFloat(t); end
+    end
+    runparsers(); runmpfr()
+    tparsers = minimum(@elapsed(runparsers()) for _ in 1:3) / 100
+    tmpfr = minimum(@elapsed(runmpfr()) for _ in 1:3) / 1000
+    return tparsers / tmpfr
+end
+
+@testset "simple decimal conversion tier" begin
+    # Midpoints between neighbours that only the exact tier can separate: long
+    # tokens (past the 256-bit comparison) and short ones at large exponents.
+    for T in (Float16, Float32, Float64)
+        for x in (zero(T), nextfloat(zero(T)), prevfloat(floatmin(T)), floatmin(T),
+                  T(3) * floatmin(T), floatmax(T) / T(3), prevfloat(floatmax(T)), floatmax(T))
+            next = isfinite(nextfloat(x)) ? nextfloat(x) : T(Inf)
+            tie = iseven(reinterpret(Unsigned, x)) ? x : next
+            n, f = sdc_midpoint(x)
+            p = big(10)^100
+            cases = [sdc_decimal(n, f) => tie,
+                     sdc_decimal(n * p + 1, f + 100) => next,
+                     sdc_decimal(n * p - 1, f + 100) => x]
+            if T === Float64 && !iszero(x)
+                # 22 significant digits, truncated below the midpoint and one unit above it
+                digits = string(n)
+                cut = parse(BigInt, digits[1:22])
+                e = length(digits) - 22 - f
+                push!(cases, string(cut, "e", e) => x, string(cut + 1, "e", e) => next)
+            end
+            for (tok, want) in cases
+                buf = b(tok)
+                @test Parsers.parsefloat(T, buf, 1, length(buf))[1] === want
+                @test Parsers._sdc(T, buf, 1, length(buf), false, UInt8('.')) === want
+                @test Parsers._sdc(T, buf, 1, length(buf), true, UInt8('.')) === -want
+            end
+        end
+    end
+    @test sdc_cost_ratio() < 300
+end
+
 @testset "parsefloat64: exact-halfway band stays in Eisel-Lemire (round-half-even in-line)" begin
     # odd 16-digit integers just above 2^53 are exact ties between doubles;
     # they used to trip to the 800-digit tier (2.4 µs each). Bit-exact vs Base
