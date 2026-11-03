@@ -1422,6 +1422,13 @@ end
                                   decimal::UInt8) where {T <: Union{Float64, Float32}}
     v, rc, handled = _float_fast(T, buf, i, j, decimal) # dominant [sign]digits[.digits] shape
     handled && return (v, rc, true)
+    return _parsefloat_slow(T, buf, i, j, decimal)
+end
+
+# Everything past the fast path: kept out of line so that each entry point does not
+# carry its own copy of the general decimal decomposition and conversion.
+@noinline function _parsefloat_slow(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
+                                    decimal::UInt8) where {T <: Union{Float64, Float32}}
     if j - i >= 16 # long decimal spans: the word-at-a-time scanner
         @inbounds b = buf[i]
         @inbounds first = buf[i + ((b == UInt8('-')) | (b == UInt8('+')))]
