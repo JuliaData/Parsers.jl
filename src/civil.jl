@@ -1150,7 +1150,7 @@ end
     return _executecivil(buf, i, j, storage, Val(_EXECUTE_NUMERIC_DATE))
 end
 
-@inline function _fallbackcivil(buf, i::Int, j::Int, storage::CivilPlanBox)
+@noinline function _fallbackcivil(buf, i::Int, j::Int, storage::CivilPlanBox)
     fixed = storage.plan.fixed
     if fixed.nbytes != 0
         c, rc = _parsefixeddate(buf, i, j, fixed, storage.plan.flags)
@@ -1159,7 +1159,7 @@ end
     return _interpretcivil(buf, i, j, storage, storage.plan.flags)
 end
 
-@inline function _executecivil(buf, i::Int, j::Int, storage::CivilPlanBox,
+@noinline function _executecivil(buf, i::Int, j::Int, storage::CivilPlanBox,
                                ::Val{_EXECUTE_ISO_DATE})
     if j - i == 9
         c, rc = parseiso10(buf, i)
@@ -1168,14 +1168,14 @@ end
     return _fallbackcivil(buf, i, j, storage)
 end
 
-@inline _executecivil(buf, i::Int, j::Int, storage::CivilPlanBox,
+@noinline _executecivil(buf, i::Int, j::Int, storage::CivilPlanBox,
                        ::Val{_EXECUTE_ISO_DATETIME}) =
     _isodatetime(buf, i, j, storage, UInt8('T'))
-@inline _executecivil(buf, i::Int, j::Int, storage::CivilPlanBox,
+@noinline _executecivil(buf, i::Int, j::Int, storage::CivilPlanBox,
                        ::Val{_EXECUTE_ISO_DATETIME_SPACE}) =
     _isodatetime(buf, i, j, storage, UInt8(' '))
 
-@inline function _isodatetime(buf, i::Int, j::Int, storage::CivilPlanBox, sep::UInt8)
+@noinline function _isodatetime(buf, i::Int, j::Int, storage::CivilPlanBox, sep::UInt8)
     n = j - i + 1
     if n == 19
         c, rc = parseiso19(buf, i, sep)
@@ -1187,7 +1187,7 @@ end
     return _fallbackcivil(buf, i, j, storage)
 end
 
-@inline function _executecivil(buf, i::Int, j::Int, storage::CivilPlanBox,
+@noinline function _executecivil(buf, i::Int, j::Int, storage::CivilPlanBox,
                                ::Val{_EXECUTE_ISO_TIME})
     n = j - i + 1
     if n == 8
@@ -1205,7 +1205,7 @@ end
 @inline _readnumericdatefield(::Val, buf, i, j, width, fixed) =
     _readnum(buf, i, j, width, fixed)
 
-@inline function _executenumericdate(buf, i::Int, j::Int, storage::CivilPlanBox,
+@noinline function _executenumericdate(buf, i::Int, j::Int, storage::CivilPlanBox,
                                      ::Val{K1}, ::Val{K2}, ::Val{K3}) where {K1,K2,K3}
     pattern = storage.plan.numeric
     a, k, ok = _readnumericdatefield(Val(K1), buf, i, j, pattern.widths[1],
@@ -1225,7 +1225,7 @@ end
     return (CivilParts(y, Int8(mo), Int8(dy), 0, 0, 0, 0), RC_OK)
 end
 
-@inline function _executecivil(buf, i::Int, j::Int, storage::CivilPlanBox,
+@noinline function _executecivil(buf, i::Int, j::Int, storage::CivilPlanBox,
                                ::Val{_EXECUTE_NUMERIC_DATE})
     fixed = storage.plan.fixed
     if fixed.nbytes != 0 && j - i + 1 == Int(fixed.nbytes)
