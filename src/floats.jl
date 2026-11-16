@@ -786,6 +786,81 @@ function _u256midpointcmp(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
     return (_u256cmp(real, theoretical), true)
 end
 
+# `_u256midpointcmp` with arbitrary precision, for tokens it can't fit in 256 bits: up
+# to `_BIGMID_MAXDIG` significant digits and any exponent. It allocates, but it settles
+# in about a microsecond the near-midpoint tokens `_sdc` needs tens of microseconds for.
+const _BIGMID_MAXDIG = 800
+
+function _bigmidpointcmp(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
+                         decimal::UInt8, lowerbits::UInt64, groupmark=nothing) where
+                         {T <: Union{Float64, Float32, Float16}}
+    @inbounds if i <= j && (buf[i] == UInt8('-') || buf[i] == UInt8('+'))
+        i += 1
+    end
+    digits = UInt8[]
+    point = false
+    fraction = 0
+    pendingzeros = 0
+    exponent = Int128(0)
+    @inbounds while i <= j
+        byte = buf[i]
+        digit = byte - UInt8('0')
+        if digit <= 0x09
+            point && (fraction += 1)
+            if isempty(digits)
+                digit == 0 || push!(digits, byte)
+            elseif digit == 0
+                pendingzeros += 1
+            else
+                length(digits) + pendingzeros < _BIGMID_MAXDIG || return (0, false)
+                for _ in 1:pendingzeros
+                    push!(digits, UInt8('0'))
+                end
+                push!(digits, byte)
+                pendingzeros = 0
+            end
+        elseif byte == decimal
+            point = true
+        elseif groupmark !== nothing && byte == groupmark
+            # validated by the decomposer, as in `_u256decimal`
+        else
+            i += 1
+            eneg = false
+            @inbounds if i <= j && (buf[i] == UInt8('-') || buf[i] == UInt8('+'))
+                eneg = buf[i] == UInt8('-')
+                i += 1
+            end
+            e = zero(UInt64)
+            @inbounds while i <= j
+                e = _decimalexponentdigit(e, buf[i] - UInt8('0'))
+                i += 1
+            end
+            exponent = _signeddecimalexponent(e, eneg)
+            break
+        end
+        i += 1
+    end
+    isempty(digits) && return (0, false)
+    q = exponent - Int128(fraction - pendingzeros)
+    # The caller's bracket is finite, so a usable exponent is far inside this range.
+    -4000 <= q <= 4000 || return (0, false)
+    real = parse(BigInt, String(digits))
+    midpoint, exponent2 = _floatmidpoint(T, lowerbits)
+    theoretical = BigInt(midpoint)
+    if q >= 0
+        real *= big(5)^Int(q)
+    else
+        theoretical *= big(5)^Int(-q)
+    end
+    shift = Int(q) - exponent2
+    if shift >= 0
+        real <<= shift
+    else
+        theoretical <<= -shift
+    end
+    return (cmp(real, theoretical), true)
+end
+
 # Short Float16 boundaries fit in one UInt128. Reusing the exact decimal parts
 # avoids a second digit-by-digit fixed-limb parse on this latency-sensitive
 # midpoint path.
@@ -847,6 +922,8 @@ end
         if 0 <= lower < _infbits(T) && upper == lower + 1 <= _infbits(T)
             cmp, resolved = _u256midpointcmp(T, buf, i, j, decimal,
                                              UInt64(lower), groupmark)
+            resolved || ((cmp, resolved) = _bigmidpointcmp(T, buf, i, j, decimal,
+                                                           UInt64(lower), groupmark))
             if resolved
                 bits = cmp < 0 || (cmp == 0 && iseven(lower)) ? UInt64(lower) : UInt64(upper)
                 return _sign(T, bits, neg)
@@ -1501,6 +1578,8 @@ end
     if !resolved
         cmp, resolved = _u256midpointcmp(Float16, buf, i, j, decimal,
                                          lowerbits, groupmark)
+        resolved || ((cmp, resolved) = _bigmidpointcmp(Float16, buf, i, j, decimal,
+                                                       lowerbits, groupmark))
     end
     if resolved
         bits = cmp < 0 || (cmp == 0 && iseven(lowerbits)) ? lowerbits : lowerbits + 1

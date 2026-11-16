@@ -243,6 +243,46 @@ end
     Sys.WORD_SIZE == 64 && @test sdc_cost_ratio() < 1000
 end
 
+# Midpoint cut of `x` to k significant digits, plus d units in the last kept digit.
+function midpointcut(x::T, k::Int, d::Int) where {T}
+    hi = Rational{BigInt}(nextfloat(x))
+    m = (Rational{BigInt}(x) + hi) // 2
+    f = trailing_zeros(denominator(m))
+    digits = string(numerator(m) * big(5)^f)
+    length(digits) <= k && return string(digits, "e", -f)
+    return string(parse(BigInt, digits[1:k]) + d, "e", length(digits) - k - f)
+end
+
+@testset "exact midpoint check with big integers" begin
+    # Tokens next to a rounding boundary that don't fit `_u256midpointcmp`'s 256 bits.
+    for (T, tok) in ((Float64, "1.000000000000000126855e300"), (Float64, "1.000000000000000107949e-300"),
+                     (Float64, "2.500000000000000100292e-200"), (Float64, "2694487407828298809634e283"),
+                     (Float64, "112829091912822054530018e-321"), (Float32, "1313391940663205376071098e7"))
+        buf = Vector{UInt8}(tok)
+        v = Parsers.parse(T, tok)
+        @test v === Parsers._sdc(T, buf, 1, length(buf), false, UInt8('.'))
+        U = T === Float64 ? UInt64 : UInt32
+        above, ok1 = Parsers._bigmidpointcmp(T, buf, 1, length(buf), UInt8('.'), UInt64(reinterpret(U, prevfloat(v))))
+        below, ok2 = Parsers._bigmidpointcmp(T, buf, 1, length(buf), UInt8('.'), UInt64(reinterpret(U, v)))
+        @test ok1 && ok2 && above >= 0 && below <= 0
+    end
+    # Hard tokens across both ends of the exponent range agree with the decimal-shift tier.
+    rng = Random.Xoshiro(7)
+    agree = true
+    for T in (Float64, Float32), _ in 1:400
+        lo, hi = exponent(floatmin(T)), exponent(floatmax(T)) - 1
+        x = ldexp(one(T) + T(rand(rng)), rand(rng) < 0.5 ? rand(rng, hi-30:hi) : rand(rng, lo:lo+30))
+        tok = midpointcut(x, rand(rng, 17:30), rand(rng, -1:1))
+        buf = Vector{UInt8}(tok)
+        agree &= Parsers.parse(T, tok) === Parsers._sdc(T, buf, 1, length(buf), false, UInt8('.'))
+    end
+    @test agree
+    # Past the digit limit the decimal-shift tier decides.
+    long = "1." * "0"^(Parsers._BIGMID_MAXDIG + 50) * "1"
+    @test !Parsers._bigmidpointcmp(Float64, Vector{UInt8}(long), 1, length(long), UInt8('.'), reinterpret(UInt64, 1.0))[2]
+    @test Parsers.parse(Float64, long) === 1.0
+end
+
 @testset "parsefloat64: exact-halfway band stays in Eisel-Lemire (round-half-even in-line)" begin
     # odd 16-digit integers just above 2^53 are exact ties between doubles;
     # they used to trip to the 800-digit tier (2.4 µs each). Bit-exact vs Base
