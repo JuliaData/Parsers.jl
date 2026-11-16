@@ -787,8 +787,9 @@ function _u256midpointcmp(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
 end
 
 # `_u256midpointcmp` with arbitrary precision, for tokens it can't fit in 256 bits: up
-# to `_BIGMID_MAXDIG` significant digits and any exponent. It allocates, but it settles
-# in about a microsecond the near-midpoint tokens `_sdc` needs tens of microseconds for.
+# to `_BIGMID_MAXDIG` significant digits and decimal exponents within ±4000. It
+# allocates, but it settles in about a microsecond the near-midpoint tokens `_sdc`
+# needs tens of microseconds for.
 const _BIGMID_MAXDIG = 800
 
 function _bigmidpointcmp(::Type{T}, buf::AbstractVector{UInt8}, i::Int, j::Int,
