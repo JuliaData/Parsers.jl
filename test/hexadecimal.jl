@@ -32,8 +32,8 @@ using Parsers
         @test Parsers.ok(res.code)
         @test res.val == u
 
-        # '\xff' exercises the table's last entry
-        for i in 1:36, c in ('g', '\xff')
+        # "\xff" exercises the table's last entry
+        for i in 1:36, c in ("g", "\xff")
             bad_input = swapchar(us, i, c)
             res = Parsers.xparse(UUID, bad_input, 1, 36, _OPTIONS)
             @test Parsers.invalid(res.code)
@@ -74,8 +74,8 @@ using Parsers
         @test Parsers.ok(res.code)
         @test res.val == s
 
-        # '\xff' exercises the table's last entry
-        for i in 1:40, c in ('g', '\xff')
+        # "\xff" exercises the table's last entry
+        for i in 1:40, c in ("g", "\xff")
             bad_input = swapchar(ss, i, c)
             res = Parsers.xparse(Parsers.SHA1, bad_input, 1, 40, _OPTIONS)
             @test Parsers.invalid(res.code)
