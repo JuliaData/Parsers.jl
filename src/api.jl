@@ -767,9 +767,15 @@ Supported `T`: `Int8`…`Int128`, `UInt8`…`UInt128`, `Bool`, `Float16`,
 `Time`.
 """
 function parse end
-function tryparse end
 
-@doc (@doc parse) tryparse
+"""
+    Parsers.tryparse(T, s; kw...) -> Union{T, Nothing}
+    Parsers.tryparse(T, bytes, first, last; kw...) -> Union{T, Nothing}
+
+Like [`Parsers.parse`](@ref), with the same keywords and supported types, but
+returns `nothing` instead of throwing when the input is not a valid `T`.
+"""
+function tryparse end
 
 # every entry funnels to one (T, buf, i, j, Val(throwing)) dispatcher
 _dispatch(::Type{T}, buf, i, j, throwing; base=nothing, groupmark=nothing) where {T <: _INTS} =
