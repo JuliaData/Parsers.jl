@@ -1348,6 +1348,11 @@ end
         elseif kind == 7
             v, k2, ok = _readnum(buf, k, j, width, fixed)
             ok || return (CivilParts(), RC_INVALID)
+            # A variable-width fraction reads its whole digit run, as in Dates.
+            # Nine digits is a precision limit, so a tenth digit is invalid
+            # rather than the start of the next op.
+            !fixed && k2 <= j && buf[k2] - UInt8('0') <= 0x09 &&
+                return (CivilParts(), RC_INVALID)
             nd = k2 - k
             ns = v * Int(10)^(9 - nd)
             k = k2
