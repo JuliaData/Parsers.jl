@@ -8,6 +8,8 @@ const _HEX_LUT = UInt32[
     in UInt8(0):UInt8(255)
 ]
 
+@inline _hexval(b::UInt8) = @inbounds _HEX_LUT[Int(b) + 1]
+
 const _HEX_LUT_INV = UInt8.((
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
 ))
@@ -41,7 +43,7 @@ _set_tup5_at(t::NTuple{5,UInt32}, i, x::UInt32) = ntuple(j -> j == i ? x : t[j],
 
 function typeparser(::AbstractConf{SHA1}, source, pos, len, b, code, pl, options)
     if len - pos + 1 < 40
-        @inbounds while pos <= len && _HEX_LUT[peekbyte(source, pos) + 0x01] != 0xFFFF
+        @inbounds while pos <= len && _hexval(peekbyte(source, pos)) != 0xFFFF
             pos += 1
             incr!(source)
         end
@@ -55,7 +57,7 @@ function typeparser(::AbstractConf{SHA1}, source, pos, len, b, code, pl, options
         h = UInt32(0)
         for _ in 0:7 # Maybe unroll?
             b = peekbyte(source, pos)
-            c = _HEX_LUT[b + 0x01]
+            c = _hexval(b)
             check |= c
             h = ((h << 4) | c)
             pos += 1
@@ -65,7 +67,7 @@ function typeparser(::AbstractConf{SHA1}, source, pos, len, b, code, pl, options
         if check == 0xFFFF
             pos -= 8 # Backtrack to the start of the invalid hex
             fastseek!(source, pos - 1)
-            while _HEX_LUT[peekbyte(source, pos) + 0x01] != 0xFFFF
+            while _hexval(peekbyte(source, pos)) != 0xFFFF
                 pos += 1
                 incr!(source)
             end
@@ -88,7 +90,7 @@ function typeparser(::AbstractConf{UUID}, source, pos, len, b, code, pl, options
 
     @inbounds begin
         if len - pos + 1 < 36
-            while (_HEX_LUT[b + 0x01] != 0xFFFF || b == UInt8('-'))
+            while (_hexval(b) != 0xFFFF || b == UInt8('-'))
                 pos += 1
                 incr!(source)
                 pos <= len || break
@@ -101,7 +103,7 @@ function typeparser(::AbstractConf{UUID}, source, pos, len, b, code, pl, options
         segment_len = 8
         for _ in 1:segment_len
             b = peekbyte(source, pos)
-            c = _HEX_LUT[b + 0x01]
+            c = _hexval(b)
             check |= c
             hi = ((hi << 4) | c)
             pos += 1
@@ -115,7 +117,7 @@ function typeparser(::AbstractConf{UUID}, source, pos, len, b, code, pl, options
         segment_len = 4
         for _ in 1:segment_len
             b = peekbyte(source, pos)
-            c = _HEX_LUT[b + 0x01]
+            c = _hexval(b)
             check |= c
             hi = ((hi << 4) | c)
             pos += 1
@@ -129,7 +131,7 @@ function typeparser(::AbstractConf{UUID}, source, pos, len, b, code, pl, options
         segment_len = 4
         for _ in 1:segment_len
             b = peekbyte(source, pos)
-            c = _HEX_LUT[b + 0x01]
+            c = _hexval(b)
             check |= c
             hi = ((hi << 4) | c)
             pos += 1
@@ -143,7 +145,7 @@ function typeparser(::AbstractConf{UUID}, source, pos, len, b, code, pl, options
         segment_len = 4
         for _ in 1:segment_len
             b = peekbyte(source, pos)
-            c = _HEX_LUT[b + 0x01]
+            c = _hexval(b)
             check |= c
             lo = ((lo << 4) | c)
             pos += 1
@@ -157,7 +159,7 @@ function typeparser(::AbstractConf{UUID}, source, pos, len, b, code, pl, options
         segment_len = 12
         for _ in 1:segment_len
             b = peekbyte(source, pos)
-            c = _HEX_LUT[b + 0x01]
+            c = _hexval(b)
             check |= c
             lo = ((lo << 4) | c)
             pos += 1
@@ -178,7 +180,7 @@ end
     pos -= segment_len # Backtrack to the start of the invalid hex
     fastseek!(source, pos - 1)
     b = peekbyte(source, pos)
-    while (_HEX_LUT[b + 0x01] != 0xFFFF || b == UInt8('-'))
+    while (_hexval(b) != 0xFFFF || b == UInt8('-'))
         pos += 1
         incr!(source)
         pos <= len || break
