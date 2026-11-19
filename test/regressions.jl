@@ -520,6 +520,15 @@ end
     end
 end
 
+@testset "a variable-width fraction does not lend digits to a digit literal" begin
+    # The fraction reads the whole digit run, as Dates does, so ten digits are
+    # an invalid fraction even when the format continues with a digit.
+    @test Dates.tryparse(Time, "01:02:03.1234567891", DateFormat("HH:MM:SS.s1")) === nothing
+    for T in (Time, DateTime), format in ("HH:MM:SS.s1", DateFormat("HH:MM:SS.s1"))
+        @test Parsers.tryparse(T, "01:02:03.1234567891"; dateformat=format) === nothing
+    end
+end
+
 @testset "signed prefixed typemin for every width" begin
     for T in (Int8, Int16, Int32, Int64, Int128)
         magnitude = -big(typemin(T))
