@@ -1983,3 +1983,17 @@ end
         @test iszero(v) && signbit(v) && precision(v) == 64
     end
 end
+
+@testset "loading Parsers does not read the docs registry (#240)" begin
+    # A sysimage built with `--strip-metadata` keeps `Base.Docs.modules` but
+    # empties each module's docs table, so any docs lookup while a package
+    # loads throws. A registry entry that throws when read stands in for that.
+    script = """
+        poisoned = Module()
+        Core.eval(poisoned, :(const \$(Base.Docs.META) = nothing))
+        pushfirst!(Base.Docs.modules, poisoned)
+        using Parsers
+        """
+    cmd = `$(Base.julia_cmd()) --startup-file=no --compiled-modules=no --project=$(Base.active_project()) -e $script`
+    @test success(pipeline(cmd; stdout=devnull, stderr=stderr))
+end
