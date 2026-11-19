@@ -8,6 +8,7 @@
 
 const _INTS = Union{_SIGNED, _UNSIGNED}
 const _FLOATS = Union{Float64, Float32, Float16}
+const _TEMPORALS = Union{Dates.Date, Dates.DateTime, Dates.Time}
 
 # --- byte views of the input ----------------------------------------------------
 # The kernels take AbstractVector{UInt8}. Strings use their allocation-free
@@ -784,9 +785,7 @@ _dispatch(::Type{BigFloat}, buf, i, j, throwing; decimal::Char='.', groupmark=no
           rounding=Base.MPFR.rounding_raw(BigFloat)) =
     _tryparsebig(BigFloat, buf, i, j, _decimalbyte(decimal), groupmark, rounding, throwing)
 _dispatch(::Type{Base.UUID}, buf, i, j, throwing) = _tryparseuuid(buf, i, j, throwing)
-_dispatch(::Type{T}, buf, i, j, throwing; dateformat=nothing) where {T <: Dates.TimeType} =
-    _tryparsedate(T, buf, i, j, dateformat, throwing)
-_dispatch(::Type{T}, buf, i, j, throwing) where {T} =
+_dispatch(::Type{T}, buf, i, j, throwing; kw...) where {T} =
     throw(ArgumentError("Parsers does not know how to parse $T (supported: integers of every " *
                         "width, Bool, Float16/32/64, BigInt, BigFloat, UUID, Date, DateTime, Time)"))
 
@@ -806,8 +805,6 @@ _dispatch(::Type{T}, buf, i, j, throwing) where {T} =
                  Base.MPFR.rounding_raw(BigFloat), throwing)
 @inline _dispatchdefault(::Type{Base.UUID}, buf, i, j, throwing) =
     _tryparseuuid(buf, i, j, throwing)
-@inline _dispatchdefault(::Type{T}, buf, i, j, throwing) where {T <: Dates.TimeType} =
-    _tryparsedate(T, buf, i, j, nothing, throwing)
 @inline _dispatchdefault(::Type{T}, buf, i, j, throwing) where {T} =
     _dispatch(T, buf, i, j, throwing)
 
@@ -978,12 +975,12 @@ end
 end
 
 @inline function parse(::Type{T}, s::Union{AbstractString, AbstractVector{UInt8}};
-                       dateformat=nothing) where {T <: Dates.TimeType}
+                       dateformat=nothing) where {T <: _TEMPORALS}
     return _parsedatewhole(T, s, dateformat, Val(true))::T
 end
 
 @inline function tryparse(::Type{T}, s::Union{AbstractString, AbstractVector{UInt8}};
-                          dateformat=nothing) where {T <: Dates.TimeType}
+                          dateformat=nothing) where {T <: _TEMPORALS}
     return _parsedatewhole(T, s, dateformat, Val(false))
 end
 
@@ -1034,13 +1031,13 @@ end
 
 @inline function parse(::Type{T}, buf::AbstractVector{UInt8},
                        first::Integer, last::Integer;
-                       dateformat=nothing) where {T <: Dates.TimeType}
+                       dateformat=nothing) where {T <: _TEMPORALS}
     return _parsedatespan(T, buf, first, last, dateformat, Val(true))::T
 end
 
 @inline function tryparse(::Type{T}, buf::AbstractVector{UInt8},
                           first::Integer, last::Integer;
-                          dateformat=nothing) where {T <: Dates.TimeType}
+                          dateformat=nothing) where {T <: _TEMPORALS}
     return _parsedatespan(T, buf, first, last, dateformat, Val(false))
 end
 
