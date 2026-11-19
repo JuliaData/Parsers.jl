@@ -1501,6 +1501,24 @@ end
     end
 end
 
+struct UnsupportedTimeType <: Dates.TimeType end
+
+@testset "unsupported targets are configuration errors, with or without keywords" begin
+    targets = Any[UnsupportedTimeType, Char]
+    isdefined(Dates, :Timestamp) && push!(targets, Dates.Timestamp{Nanosecond})
+    for T in targets
+        @test_throws ArgumentError Parsers.parse(T, "2024-01-02")
+        @test_throws ArgumentError Parsers.tryparse(T, "2024-01-02")
+        @test_throws ArgumentError Parsers.tryparse(T, "2024-01-02"; dateformat="yyyy-mm-dd")
+        @test_throws ArgumentError Parsers.tryparse(T, b("2024-01-02"), 1, 10)
+        @test_throws ArgumentError Parsers.tryparse(T, b("2024-01-02"), 1, 10; base=10)
+        # CSV.jl uses a type's own `Base.tryparse` unless a Parsers span method
+        # other than this fallback applies to it.
+        @test which(Parsers.tryparse, Tuple{Type{T}, Vector{UInt8}, Int, Int}) ===
+              which(Parsers.tryparse, Tuple{Type{Any}, Vector{UInt8}, Int, Int})
+    end
+end
+
 @testset "float prefixes commit only complete grammar" begin
     cases = (
         ("1e,", 1.0, 2, Parsers.RC_OK),
