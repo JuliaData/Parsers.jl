@@ -785,8 +785,6 @@ _dispatch(::Type{BigFloat}, buf, i, j, throwing; decimal::Char='.', groupmark=no
           rounding=Base.MPFR.rounding_raw(BigFloat)) =
     _tryparsebig(BigFloat, buf, i, j, _decimalbyte(decimal), groupmark, rounding, throwing)
 _dispatch(::Type{Base.UUID}, buf, i, j, throwing) = _tryparseuuid(buf, i, j, throwing)
-_dispatch(::Type{T}, buf, i, j, throwing; dateformat=nothing) where {T <: _TEMPORALS} =
-    _tryparsedate(T, buf, i, j, dateformat, throwing)
 _dispatch(::Type{T}, buf, i, j, throwing; kw...) where {T} =
     throw(ArgumentError("Parsers does not know how to parse $T (supported: integers of every " *
                         "width, Bool, Float16/32/64, BigInt, BigFloat, UUID, Date, DateTime, Time)"))
@@ -807,8 +805,6 @@ _dispatch(::Type{T}, buf, i, j, throwing; kw...) where {T} =
                  Base.MPFR.rounding_raw(BigFloat), throwing)
 @inline _dispatchdefault(::Type{Base.UUID}, buf, i, j, throwing) =
     _tryparseuuid(buf, i, j, throwing)
-@inline _dispatchdefault(::Type{T}, buf, i, j, throwing) where {T <: _TEMPORALS} =
-    _tryparsedate(T, buf, i, j, nothing, throwing)
 @inline _dispatchdefault(::Type{T}, buf, i, j, throwing) where {T} =
     _dispatch(T, buf, i, j, throwing)
 
