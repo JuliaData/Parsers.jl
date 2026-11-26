@@ -263,6 +263,11 @@ end
     h = Parsers.HPD()
     @test_throws BoundsError Parsers._digit(h, 0)
     @test_throws BoundsError Parsers._setdigit!(h, Parsers.SDC_MAXDIG + 1, 0x00)
+    h = sdc_hpd("5", 0)
+    @test_throws "shift 0 is outside 1:$(Parsers._SDC_MAXSHIFT)" Parsers._hpdleftshift!(h, 0)
+    @test_throws "outside" Parsers._hpdleftshift!(h, Parsers._SDC_MAXSHIFT + 1)
+    @test_throws "outside" Parsers._hpdrightshift!(h, 0)
+    @test_throws "outside" Parsers._hpdrightshift!(h, Parsers._SDC_MAXSHIFT + 1)
 end
 
 @testset "parsefloat64: exact-halfway band stays in Eisel-Lemire (round-half-even in-line)" begin

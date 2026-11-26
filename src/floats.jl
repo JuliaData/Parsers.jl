@@ -964,6 +964,11 @@ end
 # k up to the word size minus 4 (60 bits on 64-bit hosts, 28 on 32-bit ones).
 const _SDC_MAXSHIFT = Sys.WORD_SIZE - 4
 
+# The shift helpers check 1 ≤ k ≤ _SDC_MAXSHIFT on entry. Besides failing fast,
+# the check tells the compiler that k is below the word size, so the shifts by k
+# in their digit loops compile to single shift instructions.
+@noinline _sdcshifterror(k::Int) = throw(ArgumentError(lazy"shift $k is outside 1:$_SDC_MAXSHIFT"))
+
 # 5^k as decimal digits, most significant first
 function _pow5decimal(k::Int)
     d = UInt8[1]
@@ -994,6 +999,7 @@ end
 
 # value *= 2^k for 1 ≤ k ≤ _SDC_MAXSHIFT
 @inline function _hpdleftshift!(h::HPD, k::Int)
+    1 <= k <= _SDC_MAXSHIFT || _sdcshifterror(k)
     delta = @inbounds _LSHIFTDIGITS[k]
     _hpdbelow(h, @inbounds _LSHIFTCUTOFF[k]) && (delta -= 1)
     r = h.n            # next digit to read, from the right
@@ -1020,6 +1026,7 @@ end
 
 # value /= 2^k for 1 ≤ k ≤ _SDC_MAXSHIFT
 @inline function _hpdrightshift!(h::HPD, k::Int)
+    1 <= k <= _SDC_MAXSHIFT || _sdcshifterror(k)
     r = 0
     n = zero(UInt)
     while n >> k == 0  # read until the first quotient digit is nonzero
