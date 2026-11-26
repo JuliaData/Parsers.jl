@@ -173,14 +173,25 @@ end
 
 # HPD digits d₁…dₙ and point dp hold 0.d₁…dₙ × 10^dp.
 function sdc_hpd(digits::AbstractString, dp::Int)
-    d = zeros(UInt8, Parsers.SDC_MAXDIG)
-    for (k, c) in enumerate(digits)
-        d[k] = UInt8(c - '0')
+    h = Parsers.HPD()
+    for k in 1:Parsers.SDC_MAXDIG
+        Parsers._setdigit!(h, k, 0x00)
     end
-    return Parsers.HPD(d, length(digits), dp, false)
+    for (k, c) in enumerate(digits)
+        Parsers._setdigit!(h, k, UInt8(c - '0'))
+    end
+    h.n = length(digits)
+    h.dp = dp
+    h.sticky = false
+    return h
 end
+function sdc_allocated(::Type{T}, buf) where {T}
+    Parsers._sdc(T, buf, 1, length(buf), false, UInt8('.'))
+    return @allocated Parsers._sdc(T, buf, 1, length(buf), false, UInt8('.'))
+end
+sdc_digits(h) = [Parsers._digit(h, k) for k in 1:h.n]
 sdc_value(h) = h.n == 0 ? big(0) // 1 :
-    parse(BigInt, String(h.d[1:h.n] .+ UInt8('0'))) * (big(10)^max(h.dp, 0) // big(10)^(h.n - min(h.dp, 0)))
+    parse(BigInt, String(sdc_digits(h) .+ UInt8('0'))) * (big(10)^max(h.dp, 0) // big(10)^(h.n - min(h.dp, 0)))
 
 @testset "simple decimal conversion: binary shifts" begin
     rng = Random.MersenneTwister(0x5dc)
@@ -197,11 +208,11 @@ sdc_value(h) = h.n == 0 ? big(0) // 1 :
                 v = sdc_value(h)
                 Parsers._hpdleftshift!(h, k)
                 @test sdc_value(h) == v * big(2)^k
-                @test h.d[1] != 0 && h.d[h.n] != 0 && !h.sticky
+                @test Parsers._digit(h, 1) != 0 && Parsers._digit(h, h.n) != 0 && !h.sticky
                 h = sdc_hpd(s, dp)
                 Parsers._hpdrightshift!(h, k)
                 @test sdc_value(h) == v / big(2)^k
-                @test h.d[1] != 0 && h.d[h.n] != 0 && !h.sticky
+                @test Parsers._digit(h, 1) != 0 && Parsers._digit(h, h.n) != 0 && !h.sticky
             end
         end
     end
@@ -241,6 +252,22 @@ end
     end
     # The bound is calibrated on 64-bit hosts.
     Sys.WORD_SIZE == 64 && @test sdc_cost_ratio() < 1000
+    # The exact tier keeps its digits on the stack.
+    for T in (Float16, Float32, Float64)
+        for tok in ("1.000000000000000126855e300", "2.500000000000000100292e-200",
+                    sdc_decimal(sdc_midpoint(floatmin(T))...))
+            buf = b(tok)
+            @test sdc_allocated(T, buf) == 0
+        end
+    end
+    h = Parsers.HPD()
+    @test_throws BoundsError Parsers._digit(h, 0)
+    @test_throws BoundsError Parsers._setdigit!(h, Parsers.SDC_MAXDIG + 1, 0x00)
+    h = sdc_hpd("5", 0)
+    @test_throws "shift 0 is outside 1:$(Parsers._SDC_MAXSHIFT)" Parsers._hpdleftshift!(h, 0)
+    @test_throws "outside" Parsers._hpdleftshift!(h, Parsers._SDC_MAXSHIFT + 1)
+    @test_throws "outside" Parsers._hpdrightshift!(h, 0)
+    @test_throws "outside" Parsers._hpdrightshift!(h, Parsers._SDC_MAXSHIFT + 1)
 end
 
 # Midpoint cut of `x` to k significant digits, plus d units in the last kept digit.

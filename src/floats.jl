@@ -940,16 +940,40 @@ const SDC_MAXDIG = 800   # 768-digit worst case + slack
 # nonzero digit. Binary shifts are exact except that digits past the 800th are
 # dropped; `sticky` records a dropped nonzero digit, which matters only when the
 # kept digits sit exactly halfway between two results.
+#
+# The digits live inline in the object, so an `HPD` that never leaves `_sdc` is
+# not heap-allocated: the compiler places it on the stack. That holds only while
+# every function receiving it is inlined into `_sdc` (hence the `@inline` on
+# `_hpd` and the `_hpd*` helpers) and no path stores it or hands it to a call
+# that is not inlined, including an exception constructor.
 mutable struct HPD
-    d::Vector{UInt8}
+    d::NTuple{SDC_MAXDIG, UInt8}   # read and written only through _digit/_setdigit!
     n::Int
     dp::Int
     sticky::Bool
+    HPD() = new()   # digits start undefined, as an uninitialized buffer would
 end
 
-function _hpd(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8,
-              groupmark=nothing)
-    d = Vector{UInt8}(undef, SDC_MAXDIG)
+@noinline _hpdboundserror(k::Int) = throw(BoundsError(Base.OneTo(SDC_MAXDIG), k))
+
+# Valid only inside `GC.@preserve h`.
+@inline _digitptr(h::HPD) = Ptr{UInt8}(pointer_from_objref(h)) + fieldoffset(HPD, 1)
+
+# Digit k of h, with the bounds check that indexing a Vector would perform.
+Base.@propagate_inbounds function _digit(h::HPD, k::Int)
+    @boundscheck 1 <= k <= SDC_MAXDIG || _hpdboundserror(k)
+    return GC.@preserve h unsafe_load(_digitptr(h), k)
+end
+
+Base.@propagate_inbounds function _setdigit!(h::HPD, k::Int, v::UInt8)
+    @boundscheck 1 <= k <= SDC_MAXDIG || _hpdboundserror(k)
+    GC.@preserve h unsafe_store!(_digitptr(h), v, k)
+    return h
+end
+
+@inline function _hpd(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8,
+                      groupmark=nothing)
+    h = HPD()
     n = 0
     dp = 0
     sticky = false
@@ -969,7 +993,7 @@ function _hpd(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8,
             else
                 if n < SDC_MAXDIG
                     n += 1
-                    d[n] = dig
+                    _setdigit!(h, n, dig)
                 else
                     sticky |= dig != 0
                 end
@@ -996,14 +1020,17 @@ function _hpd(buf::AbstractVector{UInt8}, i::Int, j::Int, decimal::UInt8,
         end
         k += 1
     end
-    while n > 0 && d[n] == 0
+    while n > 0 && _digit(h, n) == 0
         n -= 1
     end
-    return HPD(d, n, dp, sticky)
+    h.n = n
+    h.dp = dp
+    h.sticky = sticky
+    return h
 end
 
 @inline function _hpdtrim!(h::HPD)
-    @inbounds while h.n > 0 && h.d[h.n] == 0
+    @inbounds while h.n > 0 && _digit(h, h.n) == 0
         h.n -= 1
     end
     h.n == 0 && (h.dp = 0)
@@ -1014,6 +1041,11 @@ end
 # times 2^k plus a carry below 2^k stays below 10 · 2^k, which fits a word for
 # k up to the word size minus 4 (60 bits on 64-bit hosts, 28 on 32-bit ones).
 const _SDC_MAXSHIFT = Sys.WORD_SIZE - 4
+
+# The shift helpers check 1 ≤ k ≤ _SDC_MAXSHIFT on entry. Besides failing fast,
+# the check tells the compiler that k is below the word size, so the shifts by k
+# in their digit loops compile to single shift instructions.
+@noinline _sdcshifterror(k::Int) = throw(ArgumentError(lazy"shift $k is outside 1:$_SDC_MAXSHIFT"))
 
 # 5^k as decimal digits, most significant first
 function _pow5decimal(k::Int)
@@ -1038,13 +1070,14 @@ const _LSHIFTCUTOFF = [_pow5decimal(k) for k in 1:_SDC_MAXSHIFT]
 @inline function _hpdbelow(h::HPD, cutoff::Vector{UInt8})
     @inbounds for k in eachindex(cutoff)
         k > h.n && return true
-        h.d[k] == cutoff[k] || return h.d[k] < cutoff[k]
+        _digit(h, k) == cutoff[k] || return _digit(h, k) < cutoff[k]
     end
     return false
 end
 
 # value *= 2^k for 1 ≤ k ≤ _SDC_MAXSHIFT
-function _hpdleftshift!(h::HPD, k::Int)
+@inline function _hpdleftshift!(h::HPD, k::Int)
+    1 <= k <= _SDC_MAXSHIFT || _sdcshifterror(k)
     delta = @inbounds _LSHIFTDIGITS[k]
     _hpdbelow(h, @inbounds _LSHIFTCUTOFF[k]) && (delta -= 1)
     r = h.n            # next digit to read, from the right
@@ -1052,12 +1085,12 @@ function _hpdleftshift!(h::HPD, k::Int)
     n = zero(UInt)
     while r > 0 || n > 0
         if r > 0
-            n += UInt(@inbounds(h.d[r])) << k
+            n += UInt(@inbounds(_digit(h, r))) << k
             r -= 1
         end
         q = n ÷ 10
         if w <= SDC_MAXDIG
-            h.d[w] = UInt8(n - 10q)
+            _setdigit!(h, w, UInt8(n - 10q))
         else
             h.sticky |= n != 10q
         end
@@ -1070,13 +1103,14 @@ function _hpdleftshift!(h::HPD, k::Int)
 end
 
 # value /= 2^k for 1 ≤ k ≤ _SDC_MAXSHIFT
-function _hpdrightshift!(h::HPD, k::Int)
+@inline function _hpdrightshift!(h::HPD, k::Int)
+    1 <= k <= _SDC_MAXSHIFT || _sdcshifterror(k)
     r = 0
     n = zero(UInt)
     while n >> k == 0  # read until the first quotient digit is nonzero
         if r < h.n
             r += 1
-            n = 10n + @inbounds(h.d[r])
+            n = 10n + @inbounds(_digit(h, r))
         elseif n == 0
             h.n = 0
             h.dp = 0
@@ -1091,15 +1125,15 @@ function _hpdrightshift!(h::HPD, k::Int)
     w = 0
     while r < h.n
         r += 1
-        c = @inbounds h.d[r]
+        c = @inbounds _digit(h, r)
         w += 1
-        h.d[w] = UInt8(n >> k)
+        _setdigit!(h, w, UInt8(n >> k))
         n = 10 * (n & mask) + c
     end
     while n > 0
         if w < SDC_MAXDIG
             w += 1
-            h.d[w] = UInt8(n >> k)
+            _setdigit!(h, w, UInt8(n >> k))
         else
             h.sticky |= n >> k != 0
         end
@@ -1110,7 +1144,7 @@ function _hpdrightshift!(h::HPD, k::Int)
 end
 
 # value *= 2^k for any k, in passes of at most _SDC_MAXSHIFT bits
-function _hpdshift!(h::HPD, k::Int)
+@inline function _hpdshift!(h::HPD, k::Int)
     while k > 0
         s = min(k, _SDC_MAXSHIFT)
         _hpdleftshift!(h, s)
@@ -1125,19 +1159,19 @@ function _hpdshift!(h::HPD, k::Int)
 end
 
 # The integer nearest the value, ties to even; a sticky tail breaks a tie upward.
-function _hpdroundedinteger(h::HPD)
+@inline function _hpdroundedinteger(h::HPD)
     n = zero(UInt64)
     k = 0
     while k < h.dp
         k += 1
-        n = 10n + (k <= h.n ? @inbounds(h.d[k]) : 0x00)
+        n = 10n + (k <= h.n ? @inbounds(_digit(h, k)) : 0x00)
     end
     nd = h.dp
     roundup = false
     if 0 <= nd < h.n
-        d = @inbounds h.d[nd + 1]
+        d = @inbounds _digit(h, nd + 1)
         roundup = d > 5 || (d == 5 && (nd + 1 < h.n || h.sticky ||
-                                       (nd > 0 && isodd(@inbounds h.d[nd]))))
+                                       (nd > 0 && isodd(@inbounds _digit(h, nd)))))
     end
     return n + roundup
 end
@@ -1170,8 +1204,8 @@ _sdc(buf::AbstractVector{UInt8}, i::Int, j::Int, neg::Bool, decimal::UInt8,
         _hpdrightshift!(h, s)
         e2 += s
     end
-    while h.dp < 0 || (h.dp == 0 && @inbounds(h.d[1]) < 5)
-        s = h.dp < 0 ? _sdcshift(-h.dp) : @inbounds(h.d[1]) < 2 ? 2 : 1
+    while h.dp < 0 || (h.dp == 0 && @inbounds(_digit(h, 1)) < 5)
+        s = h.dp < 0 ? _sdcshift(-h.dp) : @inbounds(_digit(h, 1)) < 2 ? 2 : 1
         _hpdleftshift!(h, s)
         e2 -= s
     end
